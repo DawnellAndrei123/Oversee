@@ -216,6 +216,43 @@ function getTodayOffset(timeline) {
   return (elapsedDays / totalDays) * timeline.columns.length * timeline.colWidth;
 }
 
+function renderGanttRow(project, timeline, todayOffset) {
+  const placement = projectPlacement(project, timeline);
+  const plannedValue = clamp(plannedPercent(project), 0, 100);
+  const actualValue = clamp(Number(project.actualPercent), 0, 100);
+  const actualColor = actualColorClass(project);
+  const plannedColor = statusClass(project.status);
+  return `
+    <div class="gantt-row">
+      <button class="project-name-btn" data-action="edit-project" data-id="${project.id}">
+        <strong>${escapeHtml(project.name)}</strong>
+        <span>${escapeHtml(project.type)} | Planned ${plannedPercent(project).toFixed(2)}% | Actual ${Number(project.actualPercent).toFixed(2)}%</span>
+      </button>
+      <div class="bar-grid">
+        ${todayOffset !== null ? `<div class="today-line" style="left:${todayOffset}px"><span>Today</span></div>` : ""}
+        <div class="track planned"></div>
+        <div class="track actual"></div>
+        <div
+          class="bar planned ${plannedColor} ${plannedValue >= 99.5 ? "complete" : ""}"
+          style="grid-column:${placement.start} / span ${placement.plannedSpan}; --progress:${plannedValue}%"
+          aria-label="Planned progress ${plannedValue.toFixed(0)} percent"
+        >
+          <span class="bar-percent">${plannedValue.toFixed(0)}%</span>
+          <span class="bar-meter"><span class="bar-fill"></span></span>
+        </div>
+        <div
+          class="bar actual ${actualColor} ${actualValue >= 99.5 ? "complete" : ""}"
+          style="grid-column:${placement.start} / span ${placement.plannedSpan}; --progress:${actualValue}%"
+          aria-label="Actual progress ${actualValue.toFixed(0)} percent"
+        >
+          <span class="bar-percent">${actualValue.toFixed(0)}%</span>
+          <span class="bar-meter"><span class="bar-fill"></span></span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function projectEndDate(project) {
   return addDays(parseDate(project.startDate), Number(project.durationDays) - 1);
 }
