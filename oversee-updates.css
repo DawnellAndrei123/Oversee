@@ -1,0 +1,66 @@
+.app-layout {
+  grid-template-columns: 270px minmax(0, 1fr);
+}
+
+.side-dock {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.main-stage {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.gantt-head-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.year-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.year-picker select {
+  min-height: 30px;
+  border-radius: 8px;
+  color: var(--ink);
+  background: #14001f;
+  border: 1px solid var(--border);
+  padding: 0 8px;
+  outline: 0;
+}
+
+.year-picker select:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px var(--cyan-soft);
+}
+
+@media (max-width: 920px) {
+  .side-dock,
+  .main-stage {
+    grid-column: 1;
+  }
+
+  .side-dock {
+    grid-row: 1;
+  }
+
+  .main-stage {
+    grid-row: 2;
+  }
+}
