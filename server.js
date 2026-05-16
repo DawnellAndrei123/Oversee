@@ -16,7 +16,7 @@ const HOST = process.env.HOST || (process.env.RENDER || process.env.NODE_ENV ===
 const OTP_TTL_MINUTES = Number(process.env.OTP_TTL_MINUTES || 10);
 const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS || 30);
 const MAX_JSON_BODY_BYTES = Number(process.env.MAX_JSON_BODY_BYTES || 65536);
-const SUPABASE_URL = String(process.env.SUPABASE_URL || "").replace(/\/+$/, "");
+const SUPABASE_URL = normalizeSupabaseUrl(process.env.SUPABASE_URL);
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const SUPABASE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
 const IS_PRODUCTION = process.env.NODE_ENV === "production" || Boolean(process.env.RENDER);
@@ -131,6 +131,13 @@ function loadDotEnv(filePath) {
     }
     if (key && process.env[key] === undefined) process.env[key] = value;
   });
+}
+
+function normalizeSupabaseUrl(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/rest\/v1$/i, "");
 }
 
 function emptyStore() {
