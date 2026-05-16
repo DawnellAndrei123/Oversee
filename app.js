@@ -37,7 +37,6 @@ const state = {
   backendNotice: "",
   activeSwaSheetId: "draft",
   dashboardFilter: { projectId: "all", year: "all" },
-  showEstimateTemplates: false,
   activePriceStore: "",
   theme: readTheme()
 };
@@ -108,13 +107,7 @@ document.addEventListener("click", (event) => {
     "update-swa": updateSwa,
     "add-estimate-row": addEstimateRow,
     "save-estimate-template": saveEstimateTemplate,
-    "toggle-estimate-templates": () => {
-      state.showEstimateTemplates = !state.showEstimateTemplates;
-      render();
-    },
     "use-estimate-template": () => useEstimateTemplate(id),
-    "rename-estimate-template": () => renameEstimateTemplate(id),
-    "delete-estimate-template": () => deleteEstimateTemplate(id),
     "delete-estimate-row": () => deleteEstimateRow(id),
     "add-price-row": addPriceRow,
     "save-price-list": savePriceList,
@@ -144,6 +137,11 @@ document.addEventListener("input", (event) => {
   const estimateTitle = event.target.closest("[data-estimate-title]");
   if (estimateTitle) {
     saveEstimateDraft(collectEstimateDraftFromDom());
+    return;
+  }
+  const templatePicker = event.target.closest("[data-template-picker]");
+  if (templatePicker) {
+    handleTemplatePicker(templatePicker.value);
     return;
   }
   const estimateInput = event.target.closest("[data-estimate-input]");
@@ -674,13 +672,16 @@ function renderEstimateView() {
       <div class="estimate-actions">
         <button class="secondary-btn" data-action="add-estimate-row">Add Material</button>
         <button class="primary-btn" data-action="save-estimate-template">Save as Template</button>
-        <button class="secondary-btn" data-action="toggle-estimate-templates">Templates</button>
       </div>
     </div>
     <div class="estimate-title-bar">
       <label class="estimate-title-field">
         <span>Template Title</span>
         <input data-estimate-title value="${escapeAttribute(draft.title)}" placeholder="Road Concreting Estimate Template">
+      </label>
+      <label class="estimate-template-picker">
+        <span>Use Template</span>
+        <input data-template-picker list="estimate-template-options" placeholder="Search saved template">
       </label>
       <label class="estimate-store-filter">
         <span>Select Store</span>
@@ -696,6 +697,9 @@ function renderEstimateView() {
     </div>
     <datalist id="material-price-options">
       ${prices.map((price) => `<option value="${escapeAttribute(materialPriceOptionLabel(price))}"></option>`).join("")}
+    </datalist>
+    <datalist id="estimate-template-options">
+      ${templates.map((template) => `<option value="${escapeAttribute(estimateTemplateOptionLabel(template))}"></option>`).join("")}
     </datalist>
     <div class="table-wrap estimate-table-wrap">
       <table class="estimate-table">
@@ -721,7 +725,6 @@ function renderEstimateView() {
         </tfoot>
       </table>
     </div>
-    ${state.showEstimateTemplates ? renderEstimateTemplates(templates) : ""}
   `;
 }
 
@@ -753,52 +756,6 @@ function renderEstimateRow(row) {
         <button class="ghost-btn danger compact-btn" data-action="delete-estimate-row" data-id="${escapeAttribute(row.id)}" ${row.isBlank ? "disabled" : ""}>Delete</button>
       </td>
     </tr>
-  `;
-}
-
-function renderEstimateTemplates(templates) {
-  return `
-    <section class="estimate-template-panel">
-      <div class="dashboard-panel-head">
-        <div>
-          <span class="eyebrow">Saved Templates</span>
-          <h3>Estimate Templates</h3>
-        </div>
-        <strong>${templates.length}</strong>
-      </div>
-      <div class="table-wrap estimate-template-wrap">
-        <table class="estimate-template-table">
-          <thead>
-            <tr>
-              <th>Template Title</th>
-              <th>Materials</th>
-              <th>Total Estimate</th>
-              <th>Last Saved</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${templates.length ? templates.map((template) => `
-              <tr>
-                <td>
-                  <input class="template-title-input" data-template-title data-id="${escapeAttribute(template.id)}" value="${escapeAttribute(template.title)}">
-                </td>
-                <td>${template.rows.length}</td>
-                <td>${formatCurrency(estimateTotal(template.rows))}</td>
-                <td>${formatDate(template.updatedAt || template.createdAt)}</td>
-                <td>
-                  <div class="estimate-row-actions">
-                    <button class="ghost-btn" data-action="rename-estimate-template" data-id="${escapeAttribute(template.id)}">Rename</button>
-                    <button class="secondary-btn" data-action="use-estimate-template" data-id="${escapeAttribute(template.id)}">Use</button>
-                    <button class="ghost-btn danger" data-action="delete-estimate-template" data-id="${escapeAttribute(template.id)}">Delete</button>
-                  </div>
-                </td>
-              </tr>
-            `).join("") : `<tr><td colspan="5">No estimate templates saved yet.</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-    </section>
   `;
 }
 
@@ -1737,11 +1694,10 @@ function saveEstimateTemplate() {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
-  saveEstimateDraft({ ...draft, title });
   saveEstimateTemplates([...templates, template]);
-  state.showEstimateTemplates = true;
+  saveEstimateDraft(defaultEstimateDraft());
   render();
-  toast(`${title} saved.`);
+  toast(`${title} saved. Estimate cleared for a new template.`);
 }
 
 function updateEstimateStore(store) {
@@ -1760,6 +1716,12 @@ function deleteEstimateRow(rowId) {
   toast("Estimate material deleted.");
 }
 
+function handleTemplatePicker(value) {
+  const template = findEstimateTemplateByOption(value);
+  if (!template) return;
+  useEstimateTemplate(template.id);
+}
+
 function useEstimateTemplate(templateId) {
   const template = getEstimateTemplates().find((item) => item.id === templateId);
   if (!template) return;
@@ -1769,32 +1731,8 @@ function useEstimateTemplate(templateId) {
     rows: template.rows.map((row) => normalizeEstimateRow({ ...row, id: cryptoId() })),
     updatedAt: new Date().toISOString()
   });
-  state.showEstimateTemplates = false;
   render();
   toast(`${template.title} loaded.`);
-}
-
-function renameEstimateTemplate(templateId) {
-  const input = [...document.querySelectorAll("[data-template-title]")]
-    .find((node) => node.dataset.id === templateId);
-  const nextTitle = input ? input.value.trim() : "";
-  if (!nextTitle) {
-    toast("Template title is required.");
-    return;
-  }
-  const templates = getEstimateTemplates().map((template) => template.id === templateId
-    ? { ...template, title: nextTitle, updatedAt: new Date().toISOString() }
-    : template);
-  saveEstimateTemplates(templates);
-  render();
-  toast("Template renamed.");
-}
-
-function deleteEstimateTemplate(templateId) {
-  const template = getEstimateTemplates().find((item) => item.id === templateId);
-  saveEstimateTemplates(getEstimateTemplates().filter((item) => item.id !== templateId));
-  render();
-  toast(template ? `${template.title} deleted.` : "Template deleted.");
 }
 
 function addPriceRow() {
@@ -2571,6 +2509,16 @@ function materialPriceOptionLabel(price) {
   const store = price.store ? ` | ${price.store}` : "";
   const unit = price.unit ? ` | ${price.unit}` : "";
   return `${price.description}${store}${unit} | ${formatCurrency(price.costPerUnit)}`;
+}
+
+function estimateTemplateOptionLabel(template) {
+  const total = estimateTotal(template.rows || []);
+  return `${template.title} | ${formatCurrency(total)}`;
+}
+
+function findEstimateTemplateByOption(optionValue) {
+  const value = String(optionValue || "");
+  return getEstimateTemplates().find((template) => estimateTemplateOptionLabel(template) === value) || null;
 }
 
 function materialStoreOptions() {

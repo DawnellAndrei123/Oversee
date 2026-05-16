@@ -1079,6 +1079,7 @@ tfoot td {
 }
 
 .estimate-title-field,
+.estimate-template-picker,
 .estimate-store-filter,
 .price-store-field,
 .price-store-picker,
@@ -1099,6 +1100,7 @@ tfoot td {
   padding: 8px 10px;
 }
 
+.estimate-template-picker,
 .estimate-store-filter,
 .price-store-picker {
   min-width: 220px;
@@ -1126,6 +1128,7 @@ tfoot td {
 }
 
 .estimate-title-field span,
+.estimate-template-picker span,
 .estimate-store-filter span,
 .price-store-field span,
 .price-store-picker span,
@@ -1136,6 +1139,7 @@ tfoot td {
 }
 
 .estimate-title-field input,
+.estimate-template-picker input,
 .price-store-field input,
 .estimate-store-filter select,
 .price-store-picker select {
@@ -1150,6 +1154,7 @@ tfoot td {
 }
 
 .estimate-title-field input:focus,
+.estimate-template-picker input:focus,
 .price-store-field input:focus,
 .estimate-store-filter select:focus,
 .price-store-picker select:focus,
@@ -1749,6 +1754,7 @@ body[data-theme="light"] .dashboard-filter,
 body[data-theme="light"] .dashboard-kpi,
 body[data-theme="light"] .dashboard-panel,
 body[data-theme="light"] .estimate-title-field,
+body[data-theme="light"] .estimate-template-picker,
 body[data-theme="light"] .estimate-store-filter,
 body[data-theme="light"] .price-store-field,
 body[data-theme="light"] .price-store-picker,
@@ -1797,6 +1803,7 @@ body[data-theme="light"] .swa-project-picker select,
 body[data-theme="light"] .dashboard-filter select,
 body[data-theme="light"] .swa-input,
 body[data-theme="light"] .estimate-title-field input,
+body[data-theme="light"] .estimate-template-picker input,
 body[data-theme="light"] .estimate-store-filter select,
 body[data-theme="light"] .price-store-field input,
 body[data-theme="light"] .price-store-picker select,
