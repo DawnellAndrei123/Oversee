@@ -241,7 +241,7 @@ function defaultSwaState() {
 }
 
 function readTheme() {
-  return localStorage.getItem(STORAGE.theme) === "light" ? "light" : "dark";
+  return localStorage.getItem(STORAGE.theme) === "dark" ? "dark" : "light";
 }
 
 function applyTheme(theme) {
