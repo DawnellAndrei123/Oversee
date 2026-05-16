@@ -1,0 +1,10 @@
+{
+  "name": "oversee-construction-monitoring",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "dev": "PORT=8010 node server.js",
+    "supabase:migrate": "node supabase/migrate-store.js"
+  }
+}
