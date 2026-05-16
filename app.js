@@ -133,6 +133,13 @@ document.addEventListener("submit", (event) => {
   event.preventDefault();
 });
 
+document.addEventListener("keydown", (event) => {
+  const priceInput = event.target.closest("[data-price-input]");
+  if (!priceInput || event.key !== "Enter") return;
+  event.preventDefault();
+  handlePriceListEnter(priceInput);
+});
+
 document.addEventListener("input", (event) => {
   const estimateTitle = event.target.closest("[data-estimate-title]");
   if (estimateTitle) {
@@ -786,7 +793,7 @@ function renderMaterialPriceListView() {
       <label class="price-store-picker">
         <span>Saved Store</span>
         <select data-action="select-price-store" aria-label="Select price list store">
-          <option value="" ${selectedStore ? "" : "selected"}>New Store</option>
+          ${selectedStore ? "" : `<option value="" selected disabled>Store needs a name</option>`}
           ${stores.map((store) => `<option value="${escapeAttribute(store)}" ${sameStore(store, selectedStore) ? "selected" : ""}>${escapeHtml(store)}</option>`).join("")}
         </select>
       </label>
@@ -1754,8 +1761,9 @@ function savePriceList() {
     return;
   }
   persistCurrentPriceRows();
+  state.activePriceStore = NEW_PRICE_STORE;
   render();
-  toast("Material price list saved.");
+  toast("Material price list saved. Store entry cleared.");
 }
 
 function duplicatePriceStore() {
@@ -1806,6 +1814,28 @@ function persistCurrentPriceRows() {
   state.activePriceStore = storeName;
 }
 
+function handlePriceListEnter(input) {
+  const rowNode = input.closest("[data-price-row]");
+  ensurePriceTrailingBlankRow(rowNode, true);
+  persistCurrentPriceRows();
+}
+
+function ensurePriceTrailingBlankRow(rowNode, focusNewRow = false) {
+  if (!rowNode || !rowNode.classList.contains("estimate-add-row")) return;
+  const storeName = priceStoreNameFromDom();
+  const row = readPriceRowFromDom(rowNode, storeName);
+  if (!hasPriceRowData(row)) return;
+  rowNode.classList.remove("estimate-add-row");
+  const deleteButton = rowNode.querySelector('[data-action="delete-price-row"]');
+  if (deleteButton) deleteButton.disabled = false;
+  const tableBody = rowNode.parentElement;
+  if (!tableBody) return;
+  tableBody.insertAdjacentHTML("beforeend", renderPriceRow(blankPriceRow(storeName)));
+  if (!focusNewRow) return;
+  const nextInput = tableBody.lastElementChild && tableBody.lastElementChild.querySelector('[data-field="description"]');
+  if (nextInput && typeof nextInput.focus === "function") nextInput.focus();
+}
+
 function collectEstimateDraftFromDom() {
   const current = getEstimateDraft();
   const titleInput = document.querySelector("[data-estimate-title]");
@@ -1835,15 +1865,18 @@ function readEstimateRowFromDom(rowNode) {
 
 function collectPriceRowsFromDom(storeName = priceStoreNameFromDom()) {
   return [...document.querySelectorAll("[data-price-row]")].map((rowNode) => {
-    const row = {
-      id: rowNode.dataset.priceRow || cryptoId(),
-      store: storeName,
-      description: getRowInputValue(rowNode, "description"),
-      unit: getRowInputValue(rowNode, "unit"),
-      costPerUnit: getRowInputNumber(rowNode, "costPerUnit")
-    };
-    return normalizePriceRow(row);
+    return readPriceRowFromDom(rowNode, storeName);
   }).filter(hasPriceRowData);
+}
+
+function readPriceRowFromDom(rowNode, storeName = priceStoreNameFromDom()) {
+  return normalizePriceRow({
+    id: rowNode.dataset.priceRow || cryptoId(),
+    store: storeName,
+    description: getRowInputValue(rowNode, "description"),
+    unit: getRowInputValue(rowNode, "unit"),
+    costPerUnit: getRowInputNumber(rowNode, "costPerUnit")
+  });
 }
 
 function getRowInputValue(rowNode, field) {
