@@ -942,8 +942,9 @@ tfoot td {
   border: 1px solid rgba(255, 255, 255, 0.18);
 }
 
-.swa-table td:first-child,
-.swa-table th:first-child {
+.swa-table tbody td:first-child,
+.swa-table tfoot td:first-child,
+.swa-table thead tr:first-child th:first-child {
   min-width: 280px;
   position: sticky;
   left: 0;
@@ -952,7 +953,7 @@ tfoot td {
   box-shadow: 10px 0 0 #12001d, 11px 0 0 rgba(40, 244, 255, 0.24);
 }
 
-.swa-table thead th:first-child {
+.swa-table thead tr:first-child th:first-child {
   z-index: 9;
 }
 
@@ -962,6 +963,10 @@ tfoot td {
 
 .swa-table tbody tr:hover td {
   background: rgba(40, 244, 255, 0.045);
+}
+
+.swa-table tbody tr:hover td:first-child {
+  background: #12001d;
 }
 
 .swa-table tbody td:nth-child(6),
@@ -1827,8 +1832,9 @@ body[data-theme="light"] .status-pie::after {
 
 body[data-theme="light"] .gantt-header-wrap,
 body[data-theme="light"] .gantt-left-head,
-body[data-theme="light"] .swa-table td:first-child,
-body[data-theme="light"] .swa-table th:first-child {
+body[data-theme="light"] .swa-table tbody td:first-child,
+body[data-theme="light"] .swa-table tfoot td:first-child,
+body[data-theme="light"] .swa-table thead tr:first-child th:first-child {
   background: #f8fcff;
   box-shadow: 10px 0 0 #f8fcff, 11px 0 0 rgba(0, 143, 168, 0.18);
 }
@@ -1874,6 +1880,10 @@ body[data-theme="light"] .swa-table td {
 
 body[data-theme="light"] .swa-table tbody tr:hover td {
   background: rgba(0, 143, 168, 0.06);
+}
+
+body[data-theme="light"] .swa-table tbody tr:hover td:first-child {
+  background: #f8fcff;
 }
 
 body[data-theme="light"] .swa-add-row td {
