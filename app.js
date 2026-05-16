@@ -109,7 +109,7 @@ document.addEventListener("click", (event) => {
     "save-estimate-template": saveEstimateTemplate,
     "use-estimate-template": () => useEstimateTemplate(id),
     "delete-estimate-row": () => deleteEstimateRow(id),
-    "add-price-row": addPriceRow,
+    "duplicate-price-store": duplicatePriceStore,
     "save-price-list": savePriceList,
     "delete-price-row": () => deletePriceRow(id),
     "select-swa-sheet": () => {
@@ -774,7 +774,7 @@ function renderMaterialPriceListView() {
         <h2>Material Price List</h2>
       </div>
       <div class="estimate-actions">
-        <button class="secondary-btn" data-action="add-price-row">Add Material</button>
+        <button class="secondary-btn" data-action="duplicate-price-store">Duplicate</button>
         <button class="primary-btn" data-action="save-price-list">Save Price List</button>
       </div>
     </div>
@@ -1735,11 +1735,6 @@ function useEstimateTemplate(templateId) {
   toast(`${template.title} loaded.`);
 }
 
-function addPriceRow() {
-  persistCurrentPriceRows();
-  render();
-}
-
 function savePriceList() {
   const storeName = priceStoreNameFromDom();
   if (!storeName) {
@@ -1749,6 +1744,32 @@ function savePriceList() {
   persistCurrentPriceRows();
   render();
   toast("Material price list saved.");
+}
+
+function duplicatePriceStore() {
+  const sourceStore = priceStoreNameFromDom();
+  if (!sourceStore) {
+    toast("Select or enter a store before duplicating.");
+    return;
+  }
+  const currentRows = collectPriceRowsFromDom(sourceStore);
+  if (!currentRows.length) {
+    toast("Add at least one material before duplicating this store.");
+    return;
+  }
+  const existingRows = getMaterialPrices();
+  const previousStore = state.activePriceStore || sourceStore;
+  const nextStore = duplicateStoreName(sourceStore, [...existingRows, ...currentRows]);
+  const otherRows = existingRows.filter((row) => !sameStore(row.store, previousStore) && !sameStore(row.store, sourceStore));
+  const duplicateRows = currentRows.map((row) => ({
+    ...row,
+    id: cryptoId(),
+    store: nextStore
+  }));
+  saveMaterialPrices([...otherRows, ...currentRows, ...duplicateRows]);
+  state.activePriceStore = nextStore;
+  render();
+  toast(`${nextStore} created.`);
 }
 
 function deletePriceRow(rowId) {
@@ -2533,6 +2554,19 @@ function selectedPriceStore(stores = materialStoreOptions()) {
   return stores[0] || "";
 }
 
+function duplicateStoreName(storeName, rows = getMaterialPrices()) {
+  const baseName = String(storeName || "").trim().replace(/\s+Duplicate No\.\s*\d+$/i, "").trim() || "Store";
+  const pattern = new RegExp(`^${escapeRegExp(baseName)} Duplicate No\\.\\s*(\\d+)$`, "i");
+  const duplicateNumbers = [...new Set(rows.map((row) => row.store).filter(Boolean))]
+    .map((store) => {
+      const match = String(store).trim().match(pattern);
+      return match ? Number(match[1]) || 0 : 0;
+    })
+    .filter((number) => number > 0);
+  const nextNumber = duplicateNumbers.length ? Math.max(...duplicateNumbers) + 1 : 1;
+  return `${baseName} Duplicate No. ${nextNumber}`;
+}
+
 function sameStore(firstStore, secondStore) {
   return String(firstStore || "").trim().toLowerCase() === String(secondStore || "").trim().toLowerCase();
 }
@@ -2745,4 +2779,8 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value).replaceAll("`", "&#096;");
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
