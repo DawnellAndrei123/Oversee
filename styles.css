@@ -1079,6 +1079,9 @@ tfoot td {
 }
 
 .estimate-title-field,
+.estimate-store-filter,
+.price-store-field,
+.price-store-picker,
 .estimate-summary {
   min-height: 58px;
   border-radius: 8px;
@@ -1096,14 +1099,46 @@ tfoot td {
   padding: 8px 10px;
 }
 
+.estimate-store-filter,
+.price-store-picker {
+  min-width: 220px;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.price-store-bar {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.price-store-field {
+  flex: 1 1 420px;
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
 .estimate-title-field span,
+.estimate-store-filter span,
+.price-store-field span,
+.price-store-picker span,
 .estimate-summary span {
   font-size: 12px;
   font-weight: 900;
   text-transform: uppercase;
 }
 
-.estimate-title-field input {
+.estimate-title-field input,
+.price-store-field input,
+.estimate-store-filter select,
+.price-store-picker select {
   width: 100%;
   min-height: 38px;
   border-radius: 8px;
@@ -1115,6 +1150,9 @@ tfoot td {
 }
 
 .estimate-title-field input:focus,
+.price-store-field input:focus,
+.estimate-store-filter select:focus,
+.price-store-picker select:focus,
 .estimate-input:focus,
 .price-input:focus,
 .template-title-input:focus {
@@ -1144,7 +1182,7 @@ tfoot td {
 
 .estimate-table,
 .price-list-table {
-  min-width: 980px;
+  min-width: 1040px;
 }
 
 .estimate-template-table {
@@ -1206,6 +1244,11 @@ tfoot td {
   color: var(--red);
   border-color: rgba(255, 31, 63, 0.32);
   background: rgba(255, 31, 63, 0.08);
+}
+
+.compact-btn {
+  min-height: 32px;
+  padding: 0 10px;
 }
 
 .badge {
@@ -1706,6 +1749,9 @@ body[data-theme="light"] .dashboard-filter,
 body[data-theme="light"] .dashboard-kpi,
 body[data-theme="light"] .dashboard-panel,
 body[data-theme="light"] .estimate-title-field,
+body[data-theme="light"] .estimate-store-filter,
+body[data-theme="light"] .price-store-field,
+body[data-theme="light"] .price-store-picker,
 body[data-theme="light"] .estimate-summary,
 body[data-theme="light"] .estimate-template-panel,
 body[data-theme="light"] .risk-item,
@@ -1751,6 +1797,9 @@ body[data-theme="light"] .swa-project-picker select,
 body[data-theme="light"] .dashboard-filter select,
 body[data-theme="light"] .swa-input,
 body[data-theme="light"] .estimate-title-field input,
+body[data-theme="light"] .estimate-store-filter select,
+body[data-theme="light"] .price-store-field input,
+body[data-theme="light"] .price-store-picker select,
 body[data-theme="light"] .estimate-input,
 body[data-theme="light"] .price-input,
 body[data-theme="light"] .template-title-input {
@@ -1876,6 +1925,10 @@ body[data-theme="light"] .toast {
   }
 
   .estimate-title-field {
+    grid-template-columns: 1fr;
+  }
+
+  .price-store-field {
     grid-template-columns: 1fr;
   }
 

@@ -22,6 +22,7 @@ const STATUS_OPTIONS = ["Not yet Started", "On-going", "On-Hold", "Completed"];
 const YEAR_WEEKS_PER_MONTH = 4;
 const GANTT_BAR_SIDE_MARGIN = 8;
 const GANTT_BAR_INNER_PADDING = 4;
+const NEW_PRICE_STORE = "__new_store__";
 
 const state = {
   authTab: "signup",
@@ -37,6 +38,7 @@ const state = {
   activeSwaSheetId: "draft",
   dashboardFilter: { projectId: "all", year: "all" },
   showEstimateTemplates: false,
+  activePriceStore: "",
   theme: readTheme()
 };
 
@@ -113,8 +115,10 @@ document.addEventListener("click", (event) => {
     "use-estimate-template": () => useEstimateTemplate(id),
     "rename-estimate-template": () => renameEstimateTemplate(id),
     "delete-estimate-template": () => deleteEstimateTemplate(id),
+    "delete-estimate-row": () => deleteEstimateRow(id),
     "add-price-row": addPriceRow,
     "save-price-list": savePriceList,
+    "delete-price-row": () => deletePriceRow(id),
     "select-swa-sheet": () => {
       state.activeSwaSheetId = id || "draft";
       render();
@@ -149,7 +153,7 @@ document.addEventListener("input", (event) => {
   }
   const priceInput = event.target.closest("[data-price-input]");
   if (priceInput) {
-    saveMaterialPrices(collectPriceRowsFromDom());
+    persistCurrentPriceRows();
     return;
   }
   if (!event.target.closest("[data-swa-input]")) return;
@@ -169,6 +173,15 @@ document.addEventListener("change", (event) => {
   }
   if (target && target.dataset.action === "dashboard-year-filter") {
     state.dashboardFilter.year = target.value || "all";
+    render();
+    return;
+  }
+  if (target && target.dataset.action === "select-estimate-store") {
+    updateEstimateStore(target.value);
+    return;
+  }
+  if (target && target.dataset.action === "select-price-store") {
+    state.activePriceStore = target.value || NEW_PRICE_STORE;
     render();
     return;
   }
@@ -646,7 +659,11 @@ function renderEstimateView() {
   const draft = getEstimateDraft();
   const rowsForView = [...draft.rows, blankEstimateRow()];
   const templates = getEstimateTemplates();
-  const prices = getMaterialPrices().filter((price) => price.description);
+  const stores = materialStoreOptions();
+  const selectedStore = stores.some((store) => sameStore(store, draft.selectedStore)) ? draft.selectedStore : "";
+  const prices = getMaterialPrices()
+    .filter((price) => price.description)
+    .filter((price) => !selectedStore || sameStore(price.store, selectedStore));
 
   return `
     <div class="visual-head">
@@ -665,6 +682,13 @@ function renderEstimateView() {
         <span>Template Title</span>
         <input data-estimate-title value="${escapeAttribute(draft.title)}" placeholder="Road Concreting Estimate Template">
       </label>
+      <label class="estimate-store-filter">
+        <span>Select Store</span>
+        <select data-action="select-estimate-store" aria-label="Select estimate store">
+          <option value="" ${selectedStore ? "" : "selected"}>All Stores</option>
+          ${stores.map((store) => `<option value="${escapeAttribute(store)}" ${sameStore(store, selectedStore) ? "selected" : ""}>${escapeHtml(store)}</option>`).join("")}
+        </select>
+      </label>
       <div class="estimate-summary">
         <span>Total Estimate</span>
         <strong data-estimate-grand-total>${formatCurrency(estimateTotal(draft.rows))}</strong>
@@ -682,6 +706,7 @@ function renderEstimateView() {
             <th>Quantity</th>
             <th>Cost Per Unit</th>
             <th>Total Unit Cost</th>
+            <th>Action</th>
           </tr>
         </thead>
         <tbody>
@@ -691,6 +716,7 @@ function renderEstimateView() {
           <tr>
             <td colspan="4">Total Estimate</td>
             <td data-estimate-grand-total>${formatCurrency(estimateTotal(draft.rows))}</td>
+            <td></td>
           </tr>
         </tfoot>
       </table>
@@ -723,6 +749,9 @@ function renderEstimateRow(row) {
         <input class="estimate-input" data-estimate-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(row.costPerUnit)}" placeholder="0.00">
       </td>
       <td class="estimate-total-cell" data-estimate-total>${formatCurrency(total)}</td>
+      <td>
+        <button class="ghost-btn danger compact-btn" data-action="delete-estimate-row" data-id="${escapeAttribute(row.id)}" ${row.isBlank ? "disabled" : ""}>Delete</button>
+      </td>
     </tr>
   `;
 }
@@ -775,7 +804,12 @@ function renderEstimateTemplates(templates) {
 
 function renderMaterialPriceListView() {
   const prices = getMaterialPrices();
-  const rowsForView = [...prices, blankPriceRow()];
+  const stores = materialStoreOptions();
+  const selectedStore = selectedPriceStore(stores);
+  const rowsForView = [
+    ...prices.filter((price) => sameStore(price.store, selectedStore)),
+    blankPriceRow(selectedStore)
+  ];
   return `
     <div class="visual-head">
       <div>
@@ -787,14 +821,27 @@ function renderMaterialPriceListView() {
         <button class="primary-btn" data-action="save-price-list">Save Price List</button>
       </div>
     </div>
+    <div class="price-store-bar">
+      <label class="price-store-field">
+        <span>Store Name</span>
+        <input data-price-store-name value="${escapeAttribute(selectedStore)}" placeholder="Store name for these materials">
+      </label>
+      <label class="price-store-picker">
+        <span>Saved Store</span>
+        <select data-action="select-price-store" aria-label="Select price list store">
+          <option value="" ${selectedStore ? "" : "selected"}>New Store</option>
+          ${stores.map((store) => `<option value="${escapeAttribute(store)}" ${sameStore(store, selectedStore) ? "selected" : ""}>${escapeHtml(store)}</option>`).join("")}
+        </select>
+      </label>
+    </div>
     <div class="table-wrap price-list-table-wrap">
       <table class="price-list-table">
         <thead>
           <tr>
-            <th>Store</th>
             <th>Description of Materials</th>
             <th>Unit</th>
             <th>Cost Per Unit</th>
+            <th>Action</th>
           </tr>
         </thead>
         <tbody>
@@ -808,10 +855,12 @@ function renderMaterialPriceListView() {
 function renderPriceRow(row) {
   return `
     <tr data-price-row="${escapeAttribute(row.id)}" class="${row.isBlank ? "estimate-add-row" : ""}">
-      <td><input class="price-input" data-price-input data-field="store" value="${escapeAttribute(row.store)}" placeholder="Store name"></td>
       <td><input class="price-input description" data-price-input data-field="description" value="${escapeAttribute(row.description)}" placeholder="Material description"></td>
       <td><input class="price-input" data-price-input data-field="unit" value="${escapeAttribute(row.unit)}" placeholder="unit"></td>
       <td><input class="price-input" data-price-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(row.costPerUnit)}" placeholder="0.00"></td>
+      <td>
+        <button class="ghost-btn danger compact-btn" data-action="delete-price-row" data-id="${escapeAttribute(row.id)}" ${row.isBlank ? "disabled" : ""}>Delete</button>
+      </td>
     </tr>
   `;
 }
@@ -1639,7 +1688,7 @@ function getSwaInputNumber(rowNode, field) {
 function handleEstimateInput(input) {
   const rowNode = input.closest("[data-estimate-row]");
   if (rowNode && input.dataset.field === "description") {
-    const selectedPrice = findMaterialPriceByOption(input.value);
+    const selectedPrice = findMaterialPriceByOption(input.value, estimateSelectedStoreFromDom());
     if (selectedPrice) {
       input.value = selectedPrice.description;
       const unitInput = rowNode.querySelector('[data-field="unit"]');
@@ -1683,6 +1732,7 @@ function saveEstimateTemplate() {
   const template = {
     id: cryptoId(),
     title,
+    selectedStore: draft.selectedStore || "",
     rows: draft.rows.map((row) => ({ ...row })),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -1694,11 +1744,28 @@ function saveEstimateTemplate() {
   toast(`${title} saved.`);
 }
 
+function updateEstimateStore(store) {
+  const draft = collectEstimateDraftFromDom();
+  draft.selectedStore = store || "";
+  saveEstimateDraft(draft);
+  render();
+}
+
+function deleteEstimateRow(rowId) {
+  if (!rowId) return;
+  const draft = collectEstimateDraftFromDom();
+  draft.rows = draft.rows.filter((row) => row.id !== rowId);
+  saveEstimateDraft(draft);
+  render();
+  toast("Estimate material deleted.");
+}
+
 function useEstimateTemplate(templateId) {
   const template = getEstimateTemplates().find((item) => item.id === templateId);
   if (!template) return;
   saveEstimateDraft({
     title: template.title,
+    selectedStore: template.selectedStore || "",
     rows: template.rows.map((row) => normalizeEstimateRow({ ...row, id: cryptoId() })),
     updatedAt: new Date().toISOString()
   });
@@ -1731,15 +1798,41 @@ function deleteEstimateTemplate(templateId) {
 }
 
 function addPriceRow() {
-  saveMaterialPrices(collectPriceRowsFromDom());
+  persistCurrentPriceRows();
   render();
 }
 
 function savePriceList() {
-  const prices = collectPriceRowsFromDom();
-  saveMaterialPrices(prices);
+  const storeName = priceStoreNameFromDom();
+  if (!storeName) {
+    toast("Add a store name before saving the price list.");
+    return;
+  }
+  persistCurrentPriceRows();
   render();
   toast("Material price list saved.");
+}
+
+function deletePriceRow(rowId) {
+  if (!rowId) return;
+  const storeName = priceStoreNameFromDom();
+  const previousStore = state.activePriceStore || storeName;
+  const currentRows = collectPriceRowsFromDom(storeName).filter((row) => row.id !== rowId);
+  const otherRows = getMaterialPrices().filter((row) => !sameStore(row.store, previousStore) && !sameStore(row.store, storeName));
+  saveMaterialPrices([...otherRows, ...currentRows]);
+  state.activePriceStore = storeName;
+  render();
+  toast("Price list material deleted.");
+}
+
+function persistCurrentPriceRows() {
+  const storeName = priceStoreNameFromDom();
+  if (!storeName) return;
+  const previousStore = state.activePriceStore || storeName;
+  const currentRows = collectPriceRowsFromDom(storeName);
+  const otherRows = getMaterialPrices().filter((row) => !sameStore(row.store, previousStore) && !sameStore(row.store, storeName));
+  saveMaterialPrices([...otherRows, ...currentRows]);
+  state.activePriceStore = storeName;
 }
 
 function collectEstimateDraftFromDom() {
@@ -1747,6 +1840,7 @@ function collectEstimateDraftFromDom() {
   const titleInput = document.querySelector("[data-estimate-title]");
   return {
     title: titleInput ? titleInput.value.trim() : current.title,
+    selectedStore: estimateSelectedStoreFromDom(),
     rows: collectEstimateRowsFromDom(),
     updatedAt: new Date().toISOString()
   };
@@ -1765,11 +1859,11 @@ function collectEstimateRowsFromDom() {
   }).filter(hasEstimateRowData);
 }
 
-function collectPriceRowsFromDom() {
+function collectPriceRowsFromDom(storeName = priceStoreNameFromDom()) {
   return [...document.querySelectorAll("[data-price-row]")].map((rowNode) => {
     const row = {
       id: rowNode.dataset.priceRow || cryptoId(),
-      store: getRowInputValue(rowNode, "store"),
+      store: storeName,
       description: getRowInputValue(rowNode, "description"),
       unit: getRowInputValue(rowNode, "unit"),
       costPerUnit: getRowInputNumber(rowNode, "costPerUnit")
@@ -1786,6 +1880,18 @@ function getRowInputValue(rowNode, field) {
 function getRowInputNumber(rowNode, field) {
   const input = rowNode.querySelector(`[data-field="${field}"]`);
   return input ? Math.max(0, Number(input.value) || 0) : 0;
+}
+
+function estimateSelectedStoreFromDom() {
+  const select = document.querySelector('[data-action="select-estimate-store"]');
+  return select ? String(select.value || "").trim() : getEstimateDraft().selectedStore || "";
+}
+
+function priceStoreNameFromDom() {
+  const input = document.querySelector("[data-price-store-name]");
+  if (input) return String(input.value || "").trim();
+  if (state.activePriceStore === NEW_PRICE_STORE) return "";
+  return state.activePriceStore || selectedPriceStore(materialStoreOptions());
 }
 
 function openAccountModal() {
@@ -2347,6 +2453,7 @@ function getEstimateDraft() {
   if (saved && Array.isArray(saved.rows)) {
     return {
       title: saved.title || "Untitled Estimate",
+      selectedStore: saved.selectedStore || "",
       rows: saved.rows.map(normalizeEstimateRow).filter(hasEstimateRowData),
       updatedAt: saved.updatedAt || new Date().toISOString()
     };
@@ -2359,6 +2466,7 @@ function getEstimateDraft() {
 function saveEstimateDraft(draft) {
   localStorage.setItem(STORAGE.estimateDraft, JSON.stringify({
     title: draft.title || "Untitled Estimate",
+    selectedStore: draft.selectedStore || "",
     rows: Array.isArray(draft.rows) ? draft.rows.map(normalizeEstimateRow).filter(hasEstimateRowData) : [],
     updatedAt: draft.updatedAt || new Date().toISOString()
   }));
@@ -2367,6 +2475,7 @@ function saveEstimateDraft(draft) {
 function defaultEstimateDraft() {
   return {
     title: "Untitled Estimate",
+    selectedStore: "",
     rows: [],
     updatedAt: new Date().toISOString()
   };
@@ -2378,6 +2487,7 @@ function getEstimateTemplates() {
   return saved.map((template) => ({
     id: template.id || cryptoId(),
     title: template.title || "Untitled Estimate Template",
+    selectedStore: template.selectedStore || "",
     rows: Array.isArray(template.rows) ? template.rows.map(normalizeEstimateRow).filter(hasEstimateRowData) : [],
     createdAt: template.createdAt || new Date().toISOString(),
     updatedAt: template.updatedAt || template.createdAt || new Date().toISOString()
@@ -2410,10 +2520,10 @@ function blankEstimateRow() {
   };
 }
 
-function blankPriceRow() {
+function blankPriceRow(store = "") {
   return {
     id: cryptoId(),
-    store: "",
+    store,
     description: "",
     unit: "",
     costPerUnit: 0,
@@ -2446,7 +2556,7 @@ function hasEstimateRowData(row) {
 }
 
 function hasPriceRowData(row) {
-  return Boolean(row.store || row.description || row.unit || row.costPerUnit);
+  return Boolean(row.description || row.unit || row.costPerUnit);
 }
 
 function estimateRowTotal(row) {
@@ -2463,10 +2573,27 @@ function materialPriceOptionLabel(price) {
   return `${price.description}${store}${unit} | ${formatCurrency(price.costPerUnit)}`;
 }
 
-function findMaterialPriceByOption(optionValue) {
+function materialStoreOptions() {
+  return [...new Set(getMaterialPrices().map((price) => price.store).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function selectedPriceStore(stores = materialStoreOptions()) {
+  if (state.activePriceStore === NEW_PRICE_STORE) return "";
+  if (state.activePriceStore && stores.some((store) => sameStore(store, state.activePriceStore))) return state.activePriceStore;
+  if (state.activePriceStore && !stores.length) return state.activePriceStore;
+  return stores[0] || "";
+}
+
+function sameStore(firstStore, secondStore) {
+  return String(firstStore || "").trim().toLowerCase() === String(secondStore || "").trim().toLowerCase();
+}
+
+function findMaterialPriceByOption(optionValue, selectedStore = "") {
   const value = String(optionValue || "");
   return getMaterialPrices()
     .filter((price) => price.description)
+    .filter((price) => !selectedStore || sameStore(price.store, selectedStore))
     .find((price) => materialPriceOptionLabel(price) === value) || null;
 }
 
