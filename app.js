@@ -282,10 +282,13 @@ function render() {
 async function apiRequest(path, body) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 5000);
+  const token = sessionToken();
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
   try {
     const response = await fetch(`${API_ROOT}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
       signal: controller.signal
     });
@@ -300,6 +303,19 @@ async function apiRequest(path, body) {
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+function sessionToken() {
+  const session = readJson(STORAGE.session, null);
+  return session && session.token ? session.token : "";
+}
+
+function canUsePrototypeFallback() {
+  const host = window.location.hostname;
+  return window.location.protocol === "file:"
+    || host === "localhost"
+    || host === "127.0.0.1"
+    || host.startsWith("192.168.");
 }
 
 function renderAuthScreen() {
@@ -1005,6 +1021,12 @@ async function handleSignup() {
       render();
       return;
     }
+    if (!canUsePrototypeFallback()) {
+      state.backendNotice = "Signup is temporarily unavailable. Please try again in a moment.";
+      toast(state.backendNotice);
+      render();
+      return;
+    }
     state.backendNotice = "Backend unavailable, so this account was created in browser-only prototype mode.";
     console.warn(error);
   }
@@ -1121,6 +1143,12 @@ async function handleLogin() {
     if (error.fromBackend) {
       state.backendNotice = error.message;
       toast(error.message);
+      render();
+      return;
+    }
+    if (!canUsePrototypeFallback()) {
+      state.backendNotice = "Login is temporarily unavailable. Please try again in a moment.";
+      toast(state.backendNotice);
       render();
       return;
     }

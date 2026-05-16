@@ -15,9 +15,11 @@ const PORT = Number(process.env.PORT || 8000);
 const HOST = process.env.HOST || (process.env.RENDER || process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
 const OTP_TTL_MINUTES = Number(process.env.OTP_TTL_MINUTES || 10);
 const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS || 30);
+const MAX_JSON_BODY_BYTES = Number(process.env.MAX_JSON_BODY_BYTES || 65536);
 const SUPABASE_URL = String(process.env.SUPABASE_URL || "").replace(/\/+$/, "");
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const SUPABASE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+const IS_PRODUCTION = process.env.NODE_ENV === "production" || Boolean(process.env.RENDER);
 
 const ACCESS_KEYS = ["engineering", "procurement", "accounting", "administrative"];
 const PUBLIC_ACCOUNT_FIELDS = [
@@ -44,6 +46,17 @@ const MIME_TYPES = {
   ".jpeg": "image/jpeg",
   ".ico": "image/x-icon"
 };
+
+const PUBLIC_STATIC_FILES = new Set([
+  "/index.html",
+  "/app.js",
+  "/styles.css",
+  "/oversee-updates.js",
+  "/oversee-updates.css",
+  "/favicon.ico"
+]);
+
+const rateLimitBuckets = new Map();
 
 const SUPABASE_COLLECTIONS = [
   {
@@ -243,25 +256,113 @@ async function syncSupabaseCollection(collection, records) {
   }));
 }
 
-function jsonResponse(res, statusCode, body) {
+function securityHeaders() {
+  const headers = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Content-Security-Policy": [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "font-src 'self' data:",
+      "connect-src 'self'",
+      "base-uri 'none'",
+      "form-action 'self'",
+      "frame-ancestors 'none'"
+    ].join("; ")
+  };
+
+  if (IS_PRODUCTION) {
+    headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+  }
+
+  return headers;
+}
+
+function responseHeaders(extraHeaders = {}) {
+  return {
+    ...securityHeaders(),
+    ...extraHeaders
+  };
+}
+
+function sameOriginAllowed(req) {
+  const origin = req.headers.origin;
+  if (!origin) return false;
+
+  const allowedOrigins = new Set(
+    String(process.env.APP_ORIGINS || process.env.APP_ORIGIN || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+  );
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  const proto = req.headers["x-forwarded-proto"] || (IS_PRODUCTION ? "https" : "http");
+  if (host) allowedOrigins.add(`${proto}://${host}`);
+  if (!IS_PRODUCTION) {
+    allowedOrigins.add(`http://${host}`);
+    allowedOrigins.add("http://127.0.0.1:8000");
+    allowedOrigins.add("http://127.0.0.1:8010");
+    allowedOrigins.add("http://localhost:8000");
+    allowedOrigins.add("http://localhost:8010");
+  }
+
+  return allowedOrigins.has(origin);
+}
+
+function corsHeaders(req) {
+  if (!sameOriginAllowed(req)) return {};
+  return {
+    "Access-Control-Allow-Origin": req.headers.origin,
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Vary": "Origin"
+  };
+}
+
+function shouldRedirectToHttps(req) {
+  if (!IS_PRODUCTION) return false;
+  const proto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+  const host = String(req.headers.host || "");
+  if (!host || host.startsWith("localhost") || host.startsWith("127.0.0.1")) return false;
+  return proto === "http";
+}
+
+function jsonResponse(reqOrRes, resOrStatus, statusOrBody, maybeBody) {
+  const hasRequest = maybeBody !== undefined;
+  const req = hasRequest ? reqOrRes : null;
+  const res = hasRequest ? resOrStatus : reqOrRes;
+  const statusCode = hasRequest ? statusOrBody : resOrStatus;
+  const body = hasRequest ? maybeBody : statusOrBody;
   const payload = JSON.stringify(body);
-  res.writeHead(statusCode, {
+  res.writeHead(statusCode, responseHeaders({
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
-  });
+    ...(req ? corsHeaders(req) : {})
+  }));
   res.end(payload);
 }
 
-function notFound(res) {
-  jsonResponse(res, 404, { ok: false, error: "Not found" });
+function notFound(req, res) {
+  jsonResponse(req, res, 404, { ok: false, error: "Not found" });
 }
 
 async function readJsonBody(req) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_JSON_BODY_BYTES) {
+      const error = new Error("Request body is too large.");
+      error.statusCode = 413;
+      throw error;
+    }
+    chunks.push(chunk);
+  }
   const raw = Buffer.concat(chunks).toString("utf8");
   if (!raw) return {};
   try {
@@ -322,9 +423,78 @@ function generateOtp() {
 
 function requestMeta(req) {
   return {
-    ip: req.headers["x-forwarded-for"] || req.socket.remoteAddress || null,
+    ip: clientIp(req),
     userAgent: req.headers["user-agent"] || null
   };
+}
+
+function clientIp(req) {
+  return String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "")
+    .split(",")[0]
+    .trim() || "unknown";
+}
+
+function rateLimitKey(req, scope, identifier = "") {
+  return `${scope}:${clientIp(req)}:${String(identifier).toLowerCase()}`;
+}
+
+function isRateLimited(key, { limit, windowMs }) {
+  const now = Date.now();
+  const bucket = rateLimitBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    rateLimitBuckets.set(key, { count: 1, resetAt: now + windowMs });
+    return false;
+  }
+
+  bucket.count += 1;
+  return bucket.count > limit;
+}
+
+function checkRateLimit(req, res, scope, identifier, options) {
+  const key = rateLimitKey(req, scope, identifier);
+  if (!isRateLimited(key, options)) return false;
+
+  jsonResponse(req, res, 429, {
+    ok: false,
+    error: "Too many requests. Please wait a few minutes and try again."
+  });
+  return true;
+}
+
+function bearerToken(req) {
+  const header = String(req.headers.authorization || "");
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : "";
+}
+
+function safeTokenMatches(first, second) {
+  const firstBuffer = Buffer.from(String(first));
+  const secondBuffer = Buffer.from(String(second));
+  return firstBuffer.length === secondBuffer.length && crypto.timingSafeEqual(firstBuffer, secondBuffer);
+}
+
+function sessionAccountFromRequest(req, store) {
+  const token = bearerToken(req);
+  if (!token) return null;
+  const now = new Date();
+  const session = store.sessions.find((item) => {
+    return item.token && safeTokenMatches(item.token, token) && new Date(item.expiresAt) > now;
+  });
+  if (!session) return null;
+  return store.accounts.find((account) => account.id === session.accountId) || null;
+}
+
+function requireOwner(req, res, store) {
+  const account = sessionAccountFromRequest(req, store);
+  if (!account) {
+    jsonResponse(req, res, 401, { ok: false, error: "Sign in is required." });
+    return null;
+  }
+  if (account.role !== "owner") {
+    jsonResponse(req, res, 403, { ok: false, error: "Owner access is required." });
+    return null;
+  }
+  return account;
 }
 
 function audit(store, action, details = {}) {
@@ -558,13 +728,16 @@ async function requestSignupOtp(req, res) {
   const gmailLinked = Boolean(body.gmailLinked);
   const inviteToken = body.inviteToken ? String(body.inviteToken) : null;
 
-  if (!name) return jsonResponse(res, 400, { ok: false, error: "Full name is required." });
-  if (!validateEmail(email)) return jsonResponse(res, 400, { ok: false, error: "A valid email is required." });
-  if (password.length < 8) return jsonResponse(res, 400, { ok: false, error: "Password must be at least 8 characters." });
+  if (checkRateLimit(req, res, "signup-ip", "", { limit: 8, windowMs: 15 * 60 * 1000 })) return;
+  if (email && checkRateLimit(req, res, "signup-email", email, { limit: 4, windowMs: 30 * 60 * 1000 })) return;
+
+  if (!name) return jsonResponse(req, res, 400, { ok: false, error: "Full name is required." });
+  if (!validateEmail(email)) return jsonResponse(req, res, 400, { ok: false, error: "A valid email is required." });
+  if (password.length < 8) return jsonResponse(req, res, 400, { ok: false, error: "Password must be at least 8 characters." });
 
   const store = await readStore();
   if (store.accounts.some((account) => account.email === email)) {
-    return jsonResponse(res, 409, { ok: false, error: "An account already exists with that email." });
+    return jsonResponse(req, res, 409, { ok: false, error: "An account already exists with that email." });
   }
 
   const otp = generateOtp();
@@ -593,7 +766,7 @@ async function requestSignupOtp(req, res) {
   await writeStore(store);
 
   const delivery = await sendOtpEmail({ email, name, otp });
-  jsonResponse(res, 200, {
+  jsonResponse(req, res, 200, {
     ok: true,
     message: delivery.mode === "dev-outbox"
       ? "OTP created. Email sending is not configured, so check backend/data/email-outbox.jsonl."
@@ -606,18 +779,22 @@ async function verifySignupOtp(req, res) {
   const body = await readJsonBody(req);
   const email = normalizeEmail(body.email);
   const otp = String(body.otp || "").trim();
+
+  if (checkRateLimit(req, res, "verify-ip", "", { limit: 20, windowMs: 15 * 60 * 1000 })) return;
+  if (email && checkRateLimit(req, res, "verify-email", email, { limit: 10, windowMs: 15 * 60 * 1000 })) return;
+
   const store = await readStore();
   const pending = store.pendingSignups.find((item) => item.email === email);
 
-  if (!pending) return jsonResponse(res, 404, { ok: false, error: "No pending signup was found for that email." });
+  if (!pending) return jsonResponse(req, res, 404, { ok: false, error: "No pending signup was found for that email." });
   if (new Date(pending.otpExpiresAt) < new Date()) {
     store.pendingSignups = store.pendingSignups.filter((item) => item.email !== email);
     audit(store, "signup_otp_expired", { email });
     await writeStore(store);
-    return jsonResponse(res, 410, { ok: false, error: "OTP expired. Please request a new code." });
+    return jsonResponse(req, res, 410, { ok: false, error: "OTP expired. Please request a new code." });
   }
   if (pending.attempts >= 5) {
-    return jsonResponse(res, 429, { ok: false, error: "Too many OTP attempts. Please request a new code." });
+    return jsonResponse(req, res, 429, { ok: false, error: "Too many OTP attempts. Please request a new code." });
   }
 
   const otpMatches = verifyHash(otp, { hash: pending.otpHash, salt: pending.otpSalt });
@@ -625,13 +802,13 @@ async function verifySignupOtp(req, res) {
     pending.attempts += 1;
     audit(store, "signup_otp_failed", { email, attempts: pending.attempts });
     await writeStore(store);
-    return jsonResponse(res, 401, { ok: false, error: "OTP is incorrect." });
+    return jsonResponse(req, res, 401, { ok: false, error: "OTP is incorrect." });
   }
 
   if (store.accounts.some((account) => account.email === email)) {
     store.pendingSignups = store.pendingSignups.filter((item) => item.email !== email);
     await writeStore(store);
-    return jsonResponse(res, 409, { ok: false, error: "An account already exists with that email." });
+    return jsonResponse(req, res, 409, { ok: false, error: "An account already exists with that email." });
   }
 
   const invite = pending.inviteToken
@@ -665,7 +842,7 @@ async function verifySignupOtp(req, res) {
   audit(store, "account_created", { accountId: account.id, email, role: account.role });
   await writeStore(store);
 
-  jsonResponse(res, 201, { ok: true, account: publicAccount(account), session });
+  jsonResponse(req, res, 201, { ok: true, account: publicAccount(account), session });
 }
 
 function createSession(store, accountId, req) {
@@ -688,12 +865,16 @@ async function login(req, res) {
   const body = await readJsonBody(req);
   const email = normalizeEmail(body.email);
   const password = String(body.password || "");
+
+  if (checkRateLimit(req, res, "login-ip", "", { limit: 20, windowMs: 15 * 60 * 1000 })) return;
+  if (email && checkRateLimit(req, res, "login-email", email, { limit: 8, windowMs: 15 * 60 * 1000 })) return;
+
   const store = await readStore();
   const account = store.accounts.find((item) => item.email === email);
   if (!account || !verifyHash(password, { hash: account.passwordHash, salt: account.passwordSalt })) {
     audit(store, "login_failed", { email, meta: requestMeta(req) });
     await writeStore(store);
-    return jsonResponse(res, 401, { ok: false, error: "Email or password is incorrect." });
+    return jsonResponse(req, res, 401, { ok: false, error: "Email or password is incorrect." });
   }
 
   account.lastLoginAt = new Date().toISOString();
@@ -701,19 +882,23 @@ async function login(req, res) {
   audit(store, "login_succeeded", { accountId: account.id, email });
   await writeStore(store);
 
-  jsonResponse(res, 200, { ok: true, account: publicAccount(account), session });
+  jsonResponse(req, res, 200, { ok: true, account: publicAccount(account), session });
 }
 
-async function listAccounts(_req, res) {
+async function listAccounts(req, res) {
   const store = await readStore();
-  jsonResponse(res, 200, { ok: true, accounts: store.accounts.map(publicAccount) });
+  const owner = requireOwner(req, res, store);
+  if (!owner) return;
+  audit(store, "accounts_listed", { accountId: owner.id, meta: requestMeta(req) });
+  await writeStore(store);
+  jsonResponse(req, res, 200, { ok: true, accounts: store.accounts.map(publicAccount) });
 }
 
 async function routeApi(req, res, url) {
-  if (req.method === "OPTIONS") return jsonResponse(res, 204, {});
+  if (req.method === "OPTIONS") return jsonResponse(req, res, 204, {});
   try {
     if (req.method === "GET" && url.pathname === "/api/health") {
-      return jsonResponse(res, 200, {
+      return jsonResponse(req, res, 200, {
         ok: true,
         service: "oversee-backend",
         storage: SUPABASE_ENABLED ? "supabase" : "local-json",
@@ -732,18 +917,33 @@ async function routeApi(req, res, url) {
     if (req.method === "GET" && url.pathname === "/api/accounts") {
       return await listAccounts(req, res);
     }
-    return notFound(res);
+    return notFound(req, res);
   } catch (error) {
     console.error(error);
-    jsonResponse(res, error.statusCode || 500, { ok: false, error: error.message || "Server error" });
+    jsonResponse(req, res, error.statusCode || 500, { ok: false, error: error.message || "Server error" });
   }
 }
 
 async function serveStatic(req, res, url) {
-  const rawPath = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
-  const filePath = path.normalize(path.join(ROOT_DIR, rawPath));
-  if (!filePath.startsWith(ROOT_DIR) || filePath.includes(`${path.sep}backend${path.sep}data${path.sep}`)) {
-    res.writeHead(403);
+  let rawPath;
+  try {
+    rawPath = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
+  } catch (_error) {
+    res.writeHead(400, responseHeaders({ "Content-Type": "text/plain; charset=utf-8" }));
+    res.end("Bad request");
+    return;
+  }
+
+  if (!PUBLIC_STATIC_FILES.has(rawPath)) {
+    res.writeHead(404, responseHeaders({ "Content-Type": "text/plain; charset=utf-8" }));
+    res.end("Not found");
+    return;
+  }
+
+  const filePath = path.resolve(ROOT_DIR, `.${rawPath}`);
+  const relativePath = path.relative(ROOT_DIR, filePath);
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    res.writeHead(403, responseHeaders({ "Content-Type": "text/plain; charset=utf-8" }));
     res.end("Forbidden");
     return;
   }
@@ -751,30 +951,35 @@ async function serveStatic(req, res, url) {
   try {
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) {
-      res.writeHead(404);
+      res.writeHead(404, responseHeaders({ "Content-Type": "text/plain; charset=utf-8" }));
       res.end("Not found");
       return;
     }
     const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, {
+    res.writeHead(200, responseHeaders({
       "Content-Type": MIME_TYPES[ext] || "application/octet-stream",
       "Cache-Control": ext === ".html" ? "no-store" : "no-cache"
-    });
+    }));
     fsSync.createReadStream(filePath).pipe(res);
   } catch (error) {
     if (error.code === "ENOENT") {
-      res.writeHead(404);
+      res.writeHead(404, responseHeaders({ "Content-Type": "text/plain; charset=utf-8" }));
       res.end("Not found");
       return;
     }
     console.error(error);
-    res.writeHead(500);
+    res.writeHead(500, responseHeaders({ "Content-Type": "text/plain; charset=utf-8" }));
     res.end("Server error");
   }
 }
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  if (shouldRedirectToHttps(req)) {
+    res.writeHead(308, responseHeaders({ Location: `https://${req.headers.host}${url.pathname}${url.search}` }));
+    res.end();
+    return;
+  }
   if (url.pathname.startsWith("/api/")) {
     await routeApi(req, res, url);
     return;
