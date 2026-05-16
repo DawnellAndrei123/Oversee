@@ -1062,6 +1062,152 @@ tfoot td {
   border-color: transparent;
 }
 
+.estimate-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.estimate-title-bar {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.estimate-title-field,
+.estimate-summary {
+  min-height: 58px;
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--border);
+}
+
+.estimate-title-field {
+  flex: 1 1 420px;
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+.estimate-title-field span,
+.estimate-summary span {
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.estimate-title-field input {
+  width: 100%;
+  min-height: 38px;
+  border-radius: 8px;
+  color: var(--ink);
+  background: #14001f;
+  border: 1px solid var(--border);
+  outline: 0;
+  padding: 0 10px;
+}
+
+.estimate-title-field input:focus,
+.estimate-input:focus,
+.price-input:focus,
+.template-title-input:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px var(--cyan-soft);
+}
+
+.estimate-summary {
+  min-width: 250px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding: 8px 14px;
+}
+
+.estimate-summary strong {
+  color: var(--cyan);
+  font-size: 24px;
+  white-space: nowrap;
+}
+
+.estimate-table-wrap,
+.price-list-table-wrap,
+.estimate-template-wrap {
+  border-color: var(--border);
+}
+
+.estimate-table,
+.price-list-table {
+  min-width: 980px;
+}
+
+.estimate-template-table {
+  min-width: 940px;
+}
+
+.estimate-input,
+.price-input,
+.template-title-input {
+  width: 100%;
+  min-height: 34px;
+  border-radius: 8px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  outline: 0;
+  padding: 0 8px;
+}
+
+.estimate-input.description,
+.price-input.description {
+  min-width: 260px;
+}
+
+.estimate-total-cell {
+  color: var(--cyan);
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.estimate-add-row td {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.estimate-template-panel {
+  margin-top: 14px;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background:
+    linear-gradient(145deg, rgba(40, 244, 255, 0.075), transparent 54%),
+    rgba(255, 255, 255, 0.045);
+  box-shadow: 0 18px 54px var(--shadow);
+}
+
+.estimate-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.estimate-row-actions .secondary-btn,
+.estimate-row-actions .ghost-btn {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.ghost-btn.danger {
+  color: var(--red);
+  border-color: rgba(255, 31, 63, 0.32);
+  background: rgba(255, 31, 63, 0.08);
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -1559,6 +1705,9 @@ body[data-theme="light"] .swa-project-type,
 body[data-theme="light"] .dashboard-filter,
 body[data-theme="light"] .dashboard-kpi,
 body[data-theme="light"] .dashboard-panel,
+body[data-theme="light"] .estimate-title-field,
+body[data-theme="light"] .estimate-summary,
+body[data-theme="light"] .estimate-template-panel,
 body[data-theme="light"] .risk-item,
 body[data-theme="light"] .settings-panel,
 body[data-theme="light"] .account-row,
@@ -1600,7 +1749,11 @@ body[data-theme="light"] .search,
 body[data-theme="light"] .year-picker select,
 body[data-theme="light"] .swa-project-picker select,
 body[data-theme="light"] .dashboard-filter select,
-body[data-theme="light"] .swa-input {
+body[data-theme="light"] .swa-input,
+body[data-theme="light"] .estimate-title-field input,
+body[data-theme="light"] .estimate-input,
+body[data-theme="light"] .price-input,
+body[data-theme="light"] .template-title-input {
   color: var(--ink);
   background: rgba(255, 255, 255, 0.86);
   border-color: rgba(30, 48, 78, 0.18);
@@ -1668,6 +1821,10 @@ body[data-theme="light"] .swa-add-row td {
   background: rgba(30, 48, 78, 0.035);
 }
 
+body[data-theme="light"] .estimate-add-row td {
+  background: rgba(30, 48, 78, 0.035);
+}
+
 body[data-theme="light"] .modal-backdrop {
   background: rgba(20, 32, 51, 0.34);
 }
@@ -1715,6 +1872,14 @@ body[data-theme="light"] .toast {
   }
 
   .dashboard-filter {
+    width: 100%;
+  }
+
+  .estimate-title-field {
+    grid-template-columns: 1fr;
+  }
+
+  .estimate-summary {
     width: 100%;
   }
 

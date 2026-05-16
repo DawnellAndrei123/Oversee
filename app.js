@@ -5,6 +5,9 @@ const STORAGE = {
   invites: "oversee.invites",
   subscription: "oversee.subscription",
   swa: "oversee.swa",
+  estimateDraft: "oversee.estimateDraft",
+  estimateTemplates: "oversee.estimateTemplates",
+  materialPrices: "oversee.materialPrices",
   theme: "oversee.theme"
 };
 
@@ -33,6 +36,7 @@ const state = {
   backendNotice: "",
   activeSwaSheetId: "draft",
   dashboardFilter: { projectId: "all", year: "all" },
+  showEstimateTemplates: false,
   theme: readTheme()
 };
 
@@ -100,6 +104,17 @@ document.addEventListener("click", (event) => {
     "save-filter": saveFilter,
     "save-swa": saveSwa,
     "update-swa": updateSwa,
+    "add-estimate-row": addEstimateRow,
+    "save-estimate-template": saveEstimateTemplate,
+    "toggle-estimate-templates": () => {
+      state.showEstimateTemplates = !state.showEstimateTemplates;
+      render();
+    },
+    "use-estimate-template": () => useEstimateTemplate(id),
+    "rename-estimate-template": () => renameEstimateTemplate(id),
+    "delete-estimate-template": () => deleteEstimateTemplate(id),
+    "add-price-row": addPriceRow,
+    "save-price-list": savePriceList,
     "select-swa-sheet": () => {
       state.activeSwaSheetId = id || "draft";
       render();
@@ -122,6 +137,21 @@ document.addEventListener("submit", (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  const estimateTitle = event.target.closest("[data-estimate-title]");
+  if (estimateTitle) {
+    saveEstimateDraft(collectEstimateDraftFromDom());
+    return;
+  }
+  const estimateInput = event.target.closest("[data-estimate-input]");
+  if (estimateInput) {
+    handleEstimateInput(estimateInput);
+    return;
+  }
+  const priceInput = event.target.closest("[data-price-input]");
+  if (priceInput) {
+    saveMaterialPrices(collectPriceRowsFromDom());
+    return;
+  }
   if (!event.target.closest("[data-swa-input]")) return;
   markSwaDraftDirty();
 });
@@ -464,6 +494,8 @@ function renderEngineeringView(account) {
           ["gantt", "Gantt Chart"],
           ["project-list", "Project List"],
           ["swa", "SWA Chart"],
+          ["estimate", "Estimate Calculator"],
+          ["price-list", "Material Price List"],
           ["milestone", "Milestone"],
           ["dashboard", "Dashboard"],
           ["settings", "Settings"]
@@ -482,6 +514,8 @@ function renderEngineeringVisual() {
   if (state.engineeringView === "gantt") return renderGanttView();
   if (state.engineeringView === "project-list") return renderProjectList();
   if (state.engineeringView === "swa") return renderSwaView();
+  if (state.engineeringView === "estimate") return renderEstimateView();
+  if (state.engineeringView === "price-list") return renderMaterialPriceListView();
   if (state.engineeringView === "dashboard") return renderDashboardView();
   if (state.engineeringView === "settings") return renderSettingsView();
   const titles = {
@@ -605,6 +639,180 @@ function renderProjectList() {
         </tbody>
       </table>
     </div>
+  `;
+}
+
+function renderEstimateView() {
+  const draft = getEstimateDraft();
+  const rowsForView = [...draft.rows, blankEstimateRow()];
+  const templates = getEstimateTemplates();
+  const prices = getMaterialPrices().filter((price) => price.description);
+
+  return `
+    <div class="visual-head">
+      <div>
+        <span class="eyebrow">Engineering View</span>
+        <h2>Estimate Calculator</h2>
+      </div>
+      <div class="estimate-actions">
+        <button class="secondary-btn" data-action="add-estimate-row">Add Material</button>
+        <button class="primary-btn" data-action="save-estimate-template">Save as Template</button>
+        <button class="secondary-btn" data-action="toggle-estimate-templates">Templates</button>
+      </div>
+    </div>
+    <div class="estimate-title-bar">
+      <label class="estimate-title-field">
+        <span>Template Title</span>
+        <input data-estimate-title value="${escapeAttribute(draft.title)}" placeholder="Road Concreting Estimate Template">
+      </label>
+      <div class="estimate-summary">
+        <span>Total Estimate</span>
+        <strong data-estimate-grand-total>${formatCurrency(estimateTotal(draft.rows))}</strong>
+      </div>
+    </div>
+    <datalist id="material-price-options">
+      ${prices.map((price) => `<option value="${escapeAttribute(materialPriceOptionLabel(price))}"></option>`).join("")}
+    </datalist>
+    <div class="table-wrap estimate-table-wrap">
+      <table class="estimate-table">
+        <thead>
+          <tr>
+            <th>Description of Materials</th>
+            <th>Unit</th>
+            <th>Quantity</th>
+            <th>Cost Per Unit</th>
+            <th>Total Unit Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsForView.map((row) => renderEstimateRow(row)).join("")}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="4">Total Estimate</td>
+            <td data-estimate-grand-total>${formatCurrency(estimateTotal(draft.rows))}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    ${state.showEstimateTemplates ? renderEstimateTemplates(templates) : ""}
+  `;
+}
+
+function renderEstimateRow(row) {
+  const total = estimateRowTotal(row);
+  return `
+    <tr data-estimate-row="${escapeAttribute(row.id)}" class="${row.isBlank ? "estimate-add-row" : ""}">
+      <td>
+        <input
+          class="estimate-input description"
+          data-estimate-input
+          data-field="description"
+          list="material-price-options"
+          value="${escapeAttribute(row.description)}"
+          placeholder="${row.isBlank ? "Search price list or add material" : ""}"
+        >
+      </td>
+      <td>
+        <input class="estimate-input" data-estimate-input data-field="unit" value="${escapeAttribute(row.unit)}" placeholder="unit">
+      </td>
+      <td>
+        <input class="estimate-input" data-estimate-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(row.quantity)}" placeholder="0">
+      </td>
+      <td>
+        <input class="estimate-input" data-estimate-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(row.costPerUnit)}" placeholder="0.00">
+      </td>
+      <td class="estimate-total-cell" data-estimate-total>${formatCurrency(total)}</td>
+    </tr>
+  `;
+}
+
+function renderEstimateTemplates(templates) {
+  return `
+    <section class="estimate-template-panel">
+      <div class="dashboard-panel-head">
+        <div>
+          <span class="eyebrow">Saved Templates</span>
+          <h3>Estimate Templates</h3>
+        </div>
+        <strong>${templates.length}</strong>
+      </div>
+      <div class="table-wrap estimate-template-wrap">
+        <table class="estimate-template-table">
+          <thead>
+            <tr>
+              <th>Template Title</th>
+              <th>Materials</th>
+              <th>Total Estimate</th>
+              <th>Last Saved</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${templates.length ? templates.map((template) => `
+              <tr>
+                <td>
+                  <input class="template-title-input" data-template-title data-id="${escapeAttribute(template.id)}" value="${escapeAttribute(template.title)}">
+                </td>
+                <td>${template.rows.length}</td>
+                <td>${formatCurrency(estimateTotal(template.rows))}</td>
+                <td>${formatDate(template.updatedAt || template.createdAt)}</td>
+                <td>
+                  <div class="estimate-row-actions">
+                    <button class="ghost-btn" data-action="rename-estimate-template" data-id="${escapeAttribute(template.id)}">Rename</button>
+                    <button class="secondary-btn" data-action="use-estimate-template" data-id="${escapeAttribute(template.id)}">Use</button>
+                    <button class="ghost-btn danger" data-action="delete-estimate-template" data-id="${escapeAttribute(template.id)}">Delete</button>
+                  </div>
+                </td>
+              </tr>
+            `).join("") : `<tr><td colspan="5">No estimate templates saved yet.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderMaterialPriceListView() {
+  const prices = getMaterialPrices();
+  const rowsForView = [...prices, blankPriceRow()];
+  return `
+    <div class="visual-head">
+      <div>
+        <span class="eyebrow">Engineering View</span>
+        <h2>Material Price List</h2>
+      </div>
+      <div class="estimate-actions">
+        <button class="secondary-btn" data-action="add-price-row">Add Material</button>
+        <button class="primary-btn" data-action="save-price-list">Save Price List</button>
+      </div>
+    </div>
+    <div class="table-wrap price-list-table-wrap">
+      <table class="price-list-table">
+        <thead>
+          <tr>
+            <th>Store</th>
+            <th>Description of Materials</th>
+            <th>Unit</th>
+            <th>Cost Per Unit</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsForView.map((row) => renderPriceRow(row)).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderPriceRow(row) {
+  return `
+    <tr data-price-row="${escapeAttribute(row.id)}" class="${row.isBlank ? "estimate-add-row" : ""}">
+      <td><input class="price-input" data-price-input data-field="store" value="${escapeAttribute(row.store)}" placeholder="Store name"></td>
+      <td><input class="price-input description" data-price-input data-field="description" value="${escapeAttribute(row.description)}" placeholder="Material description"></td>
+      <td><input class="price-input" data-price-input data-field="unit" value="${escapeAttribute(row.unit)}" placeholder="unit"></td>
+      <td><input class="price-input" data-price-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(row.costPerUnit)}" placeholder="0.00"></td>
+    </tr>
   `;
 }
 
@@ -1428,6 +1636,158 @@ function getSwaInputNumber(rowNode, field) {
   return input ? Math.max(0, Number(input.value) || 0) : 0;
 }
 
+function handleEstimateInput(input) {
+  const rowNode = input.closest("[data-estimate-row]");
+  if (rowNode && input.dataset.field === "description") {
+    const selectedPrice = findMaterialPriceByOption(input.value);
+    if (selectedPrice) {
+      input.value = selectedPrice.description;
+      const unitInput = rowNode.querySelector('[data-field="unit"]');
+      const costInput = rowNode.querySelector('[data-field="costPerUnit"]');
+      if (unitInput) unitInput.value = selectedPrice.unit;
+      if (costInput) costInput.value = numberInputValue(selectedPrice.costPerUnit);
+    }
+  }
+  updateEstimateCalculatedCells(rowNode);
+  saveEstimateDraft(collectEstimateDraftFromDom());
+}
+
+function updateEstimateCalculatedCells(rowNode) {
+  if (rowNode) {
+    const quantity = getRowInputNumber(rowNode, "quantity");
+    const costPerUnit = getRowInputNumber(rowNode, "costPerUnit");
+    const totalCell = rowNode.querySelector("[data-estimate-total]");
+    if (totalCell) totalCell.textContent = formatCurrency(quantity * costPerUnit);
+  }
+  const rows = collectEstimateRowsFromDom();
+  const total = estimateTotal(rows);
+  document.querySelectorAll("[data-estimate-grand-total]").forEach((node) => {
+    node.textContent = formatCurrency(total);
+  });
+}
+
+function addEstimateRow() {
+  const draft = collectEstimateDraftFromDom();
+  saveEstimateDraft(draft);
+  render();
+}
+
+function saveEstimateTemplate() {
+  const draft = collectEstimateDraftFromDom();
+  if (!draft.rows.length) {
+    toast("Add at least one material before saving a template.");
+    return;
+  }
+  const templates = getEstimateTemplates();
+  const title = draft.title.trim() || `Estimate Template No. ${templates.length + 1}`;
+  const template = {
+    id: cryptoId(),
+    title,
+    rows: draft.rows.map((row) => ({ ...row })),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  saveEstimateDraft({ ...draft, title });
+  saveEstimateTemplates([...templates, template]);
+  state.showEstimateTemplates = true;
+  render();
+  toast(`${title} saved.`);
+}
+
+function useEstimateTemplate(templateId) {
+  const template = getEstimateTemplates().find((item) => item.id === templateId);
+  if (!template) return;
+  saveEstimateDraft({
+    title: template.title,
+    rows: template.rows.map((row) => normalizeEstimateRow({ ...row, id: cryptoId() })),
+    updatedAt: new Date().toISOString()
+  });
+  state.showEstimateTemplates = false;
+  render();
+  toast(`${template.title} loaded.`);
+}
+
+function renameEstimateTemplate(templateId) {
+  const input = [...document.querySelectorAll("[data-template-title]")]
+    .find((node) => node.dataset.id === templateId);
+  const nextTitle = input ? input.value.trim() : "";
+  if (!nextTitle) {
+    toast("Template title is required.");
+    return;
+  }
+  const templates = getEstimateTemplates().map((template) => template.id === templateId
+    ? { ...template, title: nextTitle, updatedAt: new Date().toISOString() }
+    : template);
+  saveEstimateTemplates(templates);
+  render();
+  toast("Template renamed.");
+}
+
+function deleteEstimateTemplate(templateId) {
+  const template = getEstimateTemplates().find((item) => item.id === templateId);
+  saveEstimateTemplates(getEstimateTemplates().filter((item) => item.id !== templateId));
+  render();
+  toast(template ? `${template.title} deleted.` : "Template deleted.");
+}
+
+function addPriceRow() {
+  saveMaterialPrices(collectPriceRowsFromDom());
+  render();
+}
+
+function savePriceList() {
+  const prices = collectPriceRowsFromDom();
+  saveMaterialPrices(prices);
+  render();
+  toast("Material price list saved.");
+}
+
+function collectEstimateDraftFromDom() {
+  const current = getEstimateDraft();
+  const titleInput = document.querySelector("[data-estimate-title]");
+  return {
+    title: titleInput ? titleInput.value.trim() : current.title,
+    rows: collectEstimateRowsFromDom(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function collectEstimateRowsFromDom() {
+  return [...document.querySelectorAll("[data-estimate-row]")].map((rowNode) => {
+    const row = {
+      id: rowNode.dataset.estimateRow || cryptoId(),
+      description: getRowInputValue(rowNode, "description"),
+      unit: getRowInputValue(rowNode, "unit"),
+      quantity: getRowInputNumber(rowNode, "quantity"),
+      costPerUnit: getRowInputNumber(rowNode, "costPerUnit")
+    };
+    return normalizeEstimateRow(row);
+  }).filter(hasEstimateRowData);
+}
+
+function collectPriceRowsFromDom() {
+  return [...document.querySelectorAll("[data-price-row]")].map((rowNode) => {
+    const row = {
+      id: rowNode.dataset.priceRow || cryptoId(),
+      store: getRowInputValue(rowNode, "store"),
+      description: getRowInputValue(rowNode, "description"),
+      unit: getRowInputValue(rowNode, "unit"),
+      costPerUnit: getRowInputNumber(rowNode, "costPerUnit")
+    };
+    return normalizePriceRow(row);
+  }).filter(hasPriceRowData);
+}
+
+function getRowInputValue(rowNode, field) {
+  const input = rowNode.querySelector(`[data-field="${field}"]`);
+  return input ? String(input.value || "").trim() : "";
+}
+
+function getRowInputNumber(rowNode, field) {
+  const input = rowNode.querySelector(`[data-field="${field}"]`);
+  return input ? Math.max(0, Number(input.value) || 0) : 0;
+}
+
 function openAccountModal() {
   const account = getSessionAccount();
   const subscription = getSubscription();
@@ -1980,6 +2340,134 @@ function trialDaysLeft(subscription) {
 
 function uniqueProjectTypes() {
   return [...new Set(getProjects().map((project) => project.type).filter(Boolean))].sort();
+}
+
+function getEstimateDraft() {
+  const saved = readJson(STORAGE.estimateDraft, null);
+  if (saved && Array.isArray(saved.rows)) {
+    return {
+      title: saved.title || "Untitled Estimate",
+      rows: saved.rows.map(normalizeEstimateRow).filter(hasEstimateRowData),
+      updatedAt: saved.updatedAt || new Date().toISOString()
+    };
+  }
+  const created = defaultEstimateDraft();
+  saveEstimateDraft(created);
+  return created;
+}
+
+function saveEstimateDraft(draft) {
+  localStorage.setItem(STORAGE.estimateDraft, JSON.stringify({
+    title: draft.title || "Untitled Estimate",
+    rows: Array.isArray(draft.rows) ? draft.rows.map(normalizeEstimateRow).filter(hasEstimateRowData) : [],
+    updatedAt: draft.updatedAt || new Date().toISOString()
+  }));
+}
+
+function defaultEstimateDraft() {
+  return {
+    title: "Untitled Estimate",
+    rows: [],
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function getEstimateTemplates() {
+  const saved = readJson(STORAGE.estimateTemplates, []);
+  if (!Array.isArray(saved)) return [];
+  return saved.map((template) => ({
+    id: template.id || cryptoId(),
+    title: template.title || "Untitled Estimate Template",
+    rows: Array.isArray(template.rows) ? template.rows.map(normalizeEstimateRow).filter(hasEstimateRowData) : [],
+    createdAt: template.createdAt || new Date().toISOString(),
+    updatedAt: template.updatedAt || template.createdAt || new Date().toISOString()
+  }));
+}
+
+function saveEstimateTemplates(templates) {
+  localStorage.setItem(STORAGE.estimateTemplates, JSON.stringify(templates));
+}
+
+function getMaterialPrices() {
+  const saved = readJson(STORAGE.materialPrices, []);
+  if (!Array.isArray(saved)) return [];
+  return saved.map(normalizePriceRow).filter(hasPriceRowData)
+    .sort((a, b) => a.description.localeCompare(b.description) || a.store.localeCompare(b.store) || a.costPerUnit - b.costPerUnit);
+}
+
+function saveMaterialPrices(prices) {
+  localStorage.setItem(STORAGE.materialPrices, JSON.stringify(prices.map(normalizePriceRow).filter(hasPriceRowData)));
+}
+
+function blankEstimateRow() {
+  return {
+    id: cryptoId(),
+    description: "",
+    unit: "",
+    quantity: 0,
+    costPerUnit: 0,
+    isBlank: true
+  };
+}
+
+function blankPriceRow() {
+  return {
+    id: cryptoId(),
+    store: "",
+    description: "",
+    unit: "",
+    costPerUnit: 0,
+    isBlank: true
+  };
+}
+
+function normalizeEstimateRow(row) {
+  return {
+    id: row.id || cryptoId(),
+    description: String(row.description || "").trim(),
+    unit: String(row.unit || "").trim(),
+    quantity: Math.max(0, Number(row.quantity) || 0),
+    costPerUnit: Math.max(0, Number(row.costPerUnit) || 0)
+  };
+}
+
+function normalizePriceRow(row) {
+  return {
+    id: row.id || cryptoId(),
+    store: String(row.store || "").trim(),
+    description: String(row.description || "").trim(),
+    unit: String(row.unit || "").trim(),
+    costPerUnit: Math.max(0, Number(row.costPerUnit) || 0)
+  };
+}
+
+function hasEstimateRowData(row) {
+  return Boolean(row.description || row.unit || row.quantity || row.costPerUnit);
+}
+
+function hasPriceRowData(row) {
+  return Boolean(row.store || row.description || row.unit || row.costPerUnit);
+}
+
+function estimateRowTotal(row) {
+  return (Number(row.quantity) || 0) * (Number(row.costPerUnit) || 0);
+}
+
+function estimateTotal(rows) {
+  return rows.reduce((total, row) => total + estimateRowTotal(row), 0);
+}
+
+function materialPriceOptionLabel(price) {
+  const store = price.store ? ` | ${price.store}` : "";
+  const unit = price.unit ? ` | ${price.unit}` : "";
+  return `${price.description}${store}${unit} | ${formatCurrency(price.costPerUnit)}`;
+}
+
+function findMaterialPriceByOption(optionValue) {
+  const value = String(optionValue || "");
+  return getMaterialPrices()
+    .filter((price) => price.description)
+    .find((price) => materialPriceOptionLabel(price) === value) || null;
 }
 
 function blankSwaRow() {
