@@ -1655,6 +1655,7 @@ function handleEstimateInput(input) {
     }
   }
   updateEstimateCalculatedCells(rowNode);
+  ensureEstimateTrailingBlankRow(rowNode);
   saveEstimateDraft(collectEstimateDraftFromDom());
 }
 
@@ -1676,6 +1677,17 @@ function addEstimateRow() {
   const draft = collectEstimateDraftFromDom();
   saveEstimateDraft(draft);
   render();
+}
+
+function ensureEstimateTrailingBlankRow(rowNode) {
+  if (!rowNode || !rowNode.classList.contains("estimate-add-row")) return;
+  const row = readEstimateRowFromDom(rowNode);
+  if (!hasEstimateRowData(row)) return;
+  rowNode.classList.remove("estimate-add-row");
+  const deleteButton = rowNode.querySelector('[data-action="delete-estimate-row"]');
+  if (deleteButton) deleteButton.disabled = false;
+  const tableBody = rowNode.parentElement;
+  if (tableBody) tableBody.insertAdjacentHTML("beforeend", renderEstimateRow(blankEstimateRow()));
 }
 
 function saveEstimateTemplate() {
@@ -1807,15 +1819,18 @@ function collectEstimateDraftFromDom() {
 
 function collectEstimateRowsFromDom() {
   return [...document.querySelectorAll("[data-estimate-row]")].map((rowNode) => {
-    const row = {
-      id: rowNode.dataset.estimateRow || cryptoId(),
-      description: getRowInputValue(rowNode, "description"),
-      unit: getRowInputValue(rowNode, "unit"),
-      quantity: getRowInputNumber(rowNode, "quantity"),
-      costPerUnit: getRowInputNumber(rowNode, "costPerUnit")
-    };
-    return normalizeEstimateRow(row);
+    return readEstimateRowFromDom(rowNode);
   }).filter(hasEstimateRowData);
+}
+
+function readEstimateRowFromDom(rowNode) {
+  return normalizeEstimateRow({
+    id: rowNode.dataset.estimateRow || cryptoId(),
+    description: getRowInputValue(rowNode, "description"),
+    unit: getRowInputValue(rowNode, "unit"),
+    quantity: getRowInputNumber(rowNode, "quantity"),
+    costPerUnit: getRowInputNumber(rowNode, "costPerUnit")
+  });
 }
 
 function collectPriceRowsFromDom(storeName = priceStoreNameFromDom()) {
