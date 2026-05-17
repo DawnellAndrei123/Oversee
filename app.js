@@ -110,6 +110,7 @@ document.addEventListener("click", (event) => {
     "add-estimate-row": addEstimateRow,
     "save-estimate-template": saveEstimateTemplate,
     "extract-estimate-v2-pdf": extractEstimateV2Pdf,
+    "extract-estimate-v2-ai": extractEstimateV2Ai,
     "clear-estimate-v2": clearEstimateV2Draft,
     "use-estimate-template": () => useEstimateTemplate(id),
     "delete-estimate-row": () => deleteEstimateRow(id),
@@ -779,7 +780,9 @@ function renderEstimateRow(row) {
 function renderEstimateV2View() {
   const draft = getEstimateV2Draft();
   const materials = draft.materials || [];
-  const totalMentions = materials.reduce((total, material) => total + (Number(material.mentions) || 0), 0);
+  const evidenceHits = materials.reduce((total, material) => {
+    return total + (Number(material.mentions) || (material.notes || material.source ? 1 : 0));
+  }, 0);
   const planType = PLAN_TYPES.includes(draft.planType) ? draft.planType : PLAN_TYPES[0];
   return `
     <div class="visual-head">
@@ -789,6 +792,7 @@ function renderEstimateV2View() {
       </div>
       <div class="estimate-actions">
         <button class="primary-btn" data-action="extract-estimate-v2-pdf">Extract PDF</button>
+        <button class="secondary-btn" data-action="extract-estimate-v2-ai">AI Vision Extract</button>
         <button class="ghost-btn danger" data-action="clear-estimate-v2">Clear</button>
       </div>
     </div>
@@ -807,7 +811,7 @@ function renderEstimateV2View() {
       </section>
       <section class="estimate-v2-summary-panel">
         ${renderEstimateV2Metric("Detected Materials", materials.length)}
-        ${renderEstimateV2Metric("Material Mentions", totalMentions)}
+        ${renderEstimateV2Metric("Evidence Hits", evidenceHits)}
         ${renderEstimateV2Metric("Text Lines", draft.lineCount || 0)}
         ${renderEstimateV2Metric("PDF Pages", draft.pageCount || 0)}
       </section>
@@ -820,6 +824,10 @@ function renderEstimateV2View() {
       <div>
         <span class="eyebrow">Last Extracted</span>
         <strong>${draft.extractedAt ? formatDateTime(draft.extractedAt) : "-"}</strong>
+      </div>
+      <div>
+        <span class="eyebrow">Extraction Mode</span>
+        <strong>${draft.extractionMode ? escapeHtml(draft.extractionMode) : "-"}</strong>
       </div>
     </div>
     ${materials.length ? renderEstimateV2Materials(materials) : `
@@ -856,8 +864,9 @@ function renderEstimateV2Materials(materials) {
           <tr>
             <th>Description of Materials</th>
             <th>Plan Group</th>
-            <th>Mentions</th>
-            <th>Sample Readable Lines</th>
+            <th>Detected Quantity</th>
+            <th>Evidence</th>
+            <th>Confidence</th>
           </tr>
         </thead>
         <tbody>
@@ -868,14 +877,26 @@ function renderEstimateV2Materials(materials) {
                 <small>${(material.matchedTerms || []).map(escapeHtml).join(", ")}</small>
               </td>
               <td>${escapeHtml(material.category || "General")}</td>
-              <td>${formatInteger(material.mentions)}</td>
-              <td>${(material.sampleLines || []).map((line) => `<div>${escapeHtml(line)}</div>`).join("") || "-"}</td>
+              <td>${formatEstimateV2Quantity(material)}</td>
+              <td>
+                ${(material.sampleLines || []).map((line) => `<div>${escapeHtml(line)}</div>`).join("") || escapeHtml(material.notes || material.source || "-")}
+              </td>
+              <td>${escapeHtml(material.confidence || "-")}</td>
             </tr>
           `).join("")}
         </tbody>
       </table>
     </div>
   `;
+}
+
+function formatEstimateV2Quantity(material) {
+  const quantity = Number(material.quantity);
+  if (Number.isFinite(quantity) && quantity > 0) {
+    return `${formatSwaNumber(quantity)} ${escapeHtml(material.unit || "")}`.trim();
+  }
+  const mentions = Number(material.mentions) || 0;
+  return mentions ? `${formatInteger(mentions)} hit${mentions === 1 ? "" : "s"}` : "-";
 }
 
 function renderMaterialPriceListView() {
@@ -1900,12 +1921,57 @@ async function extractEstimateV2Pdf() {
       characterCount: response.characterCount || 0,
       lineCount: response.lineCount || 0,
       textPreview: response.textPreview || "",
+      extractionMode: response.extractionMode || "Readable PDF",
       materials: response.materials || []
     }));
     render();
     toast(`${formatInteger((response.materials || []).length)} materials detected.`);
   } catch (error) {
     toast(error.message || "PDF extraction failed.");
+  }
+}
+
+async function extractEstimateV2Ai() {
+  const fileInput = document.querySelector("[data-estimate-v2-file]");
+  const planTypeInput = document.querySelector('[data-action="estimate-v2-plan-type"]');
+  const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+  if (!file) {
+    toast("Choose a PDF file first.");
+    return;
+  }
+  if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") {
+    toast("AI Vision accepts PDF files only.");
+    return;
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    toast("Use a PDF below 8 MB for AI Vision extraction.");
+    return;
+  }
+
+  const planType = PLAN_TYPES.includes(planTypeInput && planTypeInput.value) ? planTypeInput.value : PLAN_TYPES[0];
+  toast("Running AI Vision extraction...");
+  try {
+    const data = await fileToBase64(file);
+    const response = await apiRequest("/estimate-v2/extract-ai", {
+      fileName: file.name,
+      planType,
+      data
+    }, { timeoutMs: 90000 });
+    saveEstimateV2Draft(normalizeEstimateV2Draft({
+      planType,
+      fileName: response.fileName || file.name,
+      extractedAt: response.extractedAt || new Date().toISOString(),
+      pageCount: response.pageCount || 0,
+      characterCount: response.characterCount || 0,
+      lineCount: response.lineCount || 0,
+      textPreview: response.textPreview || "",
+      extractionMode: response.extractionMode || "AI Vision",
+      materials: response.materials || []
+    }));
+    render();
+    toast(`${formatInteger((response.materials || []).length)} AI materials detected.`);
+  } catch (error) {
+    toast(error.message || "AI Vision extraction failed.");
   }
 }
 
@@ -2669,6 +2735,7 @@ function defaultEstimateV2Draft() {
     planType: PLAN_TYPES[0],
     fileName: "",
     extractedAt: "",
+    extractionMode: "",
     pageCount: 0,
     characterCount: 0,
     lineCount: 0,
@@ -2683,6 +2750,7 @@ function normalizeEstimateV2Draft(draft) {
     planType: PLAN_TYPES.includes(source.planType) ? source.planType : PLAN_TYPES[0],
     fileName: String(source.fileName || "").trim(),
     extractedAt: String(source.extractedAt || "").trim(),
+    extractionMode: String(source.extractionMode || "").trim(),
     pageCount: Math.max(0, Number(source.pageCount) || 0),
     characterCount: Math.max(0, Number(source.characterCount) || 0),
     lineCount: Math.max(0, Number(source.lineCount) || 0),
@@ -2696,6 +2764,11 @@ function normalizeEstimateV2Material(material) {
     description: String(material.description || "").trim(),
     category: String(material.category || "General").trim(),
     mentions: Math.max(0, Number(material.mentions) || 0),
+    unit: String(material.unit || "").trim(),
+    quantity: Number.isFinite(Number(material.quantity)) ? Math.max(0, Number(material.quantity)) : 0,
+    confidence: String(material.confidence || "").trim(),
+    source: String(material.source || "").trim(),
+    notes: String(material.notes || "").trim(),
     matchedTerms: Array.isArray(material.matchedTerms) ? material.matchedTerms.map((term) => String(term || "").trim()).filter(Boolean).slice(0, 8) : [],
     sampleLines: Array.isArray(material.sampleLines) ? material.sampleLines.map((line) => String(line || "").trim()).filter(Boolean).slice(0, 3) : []
   };

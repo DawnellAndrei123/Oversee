@@ -20,6 +20,9 @@ const MAX_JSON_BODY_BYTES = Number(process.env.MAX_JSON_BODY_BYTES || 65536);
 const MAX_PDF_UPLOAD_BYTES = Number(process.env.MAX_PDF_UPLOAD_BYTES || 8 * 1024 * 1024);
 const MAX_PDF_JSON_BODY_BYTES = Math.ceil(MAX_PDF_UPLOAD_BYTES * 1.38) + 4096;
 const PDF_TEXT_PREVIEW_LIMIT = 12000;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || "gpt-4o";
+const OPENAI_API_BASE_URL = String(process.env.OPENAI_API_BASE_URL || "https://api.openai.com").replace(/\/+$/, "");
 const SUPABASE_URL = normalizeSupabaseUrl(process.env.SUPABASE_URL);
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const SUPABASE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
@@ -965,36 +968,20 @@ async function listAccounts(req, res) {
 }
 
 async function extractEstimateV2Pdf(req, res) {
-  const store = await readStore();
-  const account = sessionAccountFromRequest(req, store);
-  if (!account) {
-    return jsonResponse(req, res, 401, { ok: false, error: "Sign in is required." });
-  }
-  if (!hasEngineeringAccess(account)) {
-    return jsonResponse(req, res, 403, { ok: false, error: "Engineering access is required." });
-  }
+  const { store, account } = await requireEngineeringAccount(req, res);
+  if (!account) return;
   if (checkRateLimit(req, res, "estimate_v2_pdf", account.id, { limit: 20, windowMs: 15 * 60 * 1000 })) return;
 
   const body = await readJsonBody(req, MAX_PDF_JSON_BODY_BYTES);
-  const fileName = String(body.fileName || "Uploaded Plan.pdf").trim().slice(0, 180);
-  const planType = PLAN_TYPES.includes(body.planType) ? body.planType : PLAN_TYPES[0];
-  const base64 = String(body.data || "").replace(/^data:application\/pdf;base64,/i, "").trim();
-  if (!base64) return jsonResponse(req, res, 400, { ok: false, error: "PDF data is required." });
+  const upload = parseEstimatePdfUpload(body);
+  if (upload.error) return jsonResponse(req, res, upload.statusCode || 400, { ok: false, error: upload.error });
 
-  const pdfBuffer = Buffer.from(base64, "base64");
-  if (!pdfBuffer.length || !pdfBuffer.slice(0, 5).toString("latin1").startsWith("%PDF")) {
-    return jsonResponse(req, res, 400, { ok: false, error: "The uploaded file does not look like a PDF." });
-  }
-  if (pdfBuffer.length > MAX_PDF_UPLOAD_BYTES) {
-    return jsonResponse(req, res, 413, { ok: false, error: "PDF is too large for this first extractor." });
-  }
-
-  const extracted = extractReadablePdfText(pdfBuffer);
-  const materials = detectMaterialsFromText(extracted.text, planType);
+  const extracted = extractReadablePdfText(upload.pdfBuffer);
+  const materials = detectMaterialsFromText(extracted.text, upload.planType);
   audit(store, "estimate_v2_pdf_extracted", {
     accountId: account.id,
-    fileName,
-    planType,
+    fileName: upload.fileName,
+    planType: upload.planType,
     pageCount: extracted.pageCount,
     materialCount: materials.length,
     meta: requestMeta(req)
@@ -1003,8 +990,9 @@ async function extractEstimateV2Pdf(req, res) {
 
   jsonResponse(req, res, 200, {
     ok: true,
-    fileName,
-    planType,
+    fileName: upload.fileName,
+    planType: upload.planType,
+    extractionMode: "Readable PDF",
     extractedAt: new Date().toISOString(),
     pageCount: extracted.pageCount,
     characterCount: extracted.text.length,
@@ -1013,6 +1001,86 @@ async function extractEstimateV2Pdf(req, res) {
     textPreview: extracted.text.slice(0, PDF_TEXT_PREVIEW_LIMIT),
     materials
   });
+}
+
+async function extractEstimateV2Ai(req, res) {
+  const { store, account } = await requireEngineeringAccount(req, res);
+  if (!account) return;
+  if (!OPENAI_API_KEY) {
+    return jsonResponse(req, res, 503, {
+      ok: false,
+      error: "AI Vision is not configured yet. Add OPENAI_API_KEY in Render environment variables."
+    });
+  }
+  if (checkRateLimit(req, res, "estimate_v2_ai", account.id, { limit: 8, windowMs: 60 * 60 * 1000 })) return;
+
+  const body = await readJsonBody(req, MAX_PDF_JSON_BODY_BYTES);
+  const upload = parseEstimatePdfUpload(body);
+  if (upload.error) return jsonResponse(req, res, upload.statusCode || 400, { ok: false, error: upload.error });
+
+  const extracted = extractReadablePdfText(upload.pdfBuffer);
+  const aiResult = await detectMaterialsWithOpenAiVision({
+    fileName: upload.fileName,
+    planType: upload.planType,
+    base64: upload.base64,
+    readableText: extracted.text
+  });
+  const materials = normalizeAiMaterials(aiResult.materials);
+
+  audit(store, "estimate_v2_ai_extracted", {
+    accountId: account.id,
+    fileName: upload.fileName,
+    planType: upload.planType,
+    pageCount: extracted.pageCount,
+    materialCount: materials.length,
+    model: OPENAI_VISION_MODEL,
+    meta: requestMeta(req)
+  });
+  await writeStore(store);
+
+  jsonResponse(req, res, 200, {
+    ok: true,
+    fileName: upload.fileName,
+    planType: upload.planType,
+    extractionMode: `AI Vision (${OPENAI_VISION_MODEL})`,
+    extractedAt: new Date().toISOString(),
+    pageCount: extracted.pageCount,
+    characterCount: extracted.text.length,
+    lineCount: extracted.lineCount,
+    layerCount: extracted.layerNames.length,
+    textPreview: buildAiTextPreview(extracted, aiResult),
+    materials
+  });
+}
+
+async function requireEngineeringAccount(req, res) {
+  const store = await readStore();
+  const account = sessionAccountFromRequest(req, store);
+  if (!account) {
+    jsonResponse(req, res, 401, { ok: false, error: "Sign in is required." });
+    return { store, account: null };
+  }
+  if (!hasEngineeringAccess(account)) {
+    jsonResponse(req, res, 403, { ok: false, error: "Engineering access is required." });
+    return { store, account: null };
+  }
+  return { store, account };
+}
+
+function parseEstimatePdfUpload(body) {
+  const fileName = String(body.fileName || "Uploaded Plan.pdf").trim().slice(0, 180);
+  const planType = PLAN_TYPES.includes(body.planType) ? body.planType : PLAN_TYPES[0];
+  const base64 = String(body.data || "").replace(/^data:application\/pdf;base64,/i, "").trim();
+  if (!base64) return { error: "PDF data is required." };
+
+  const pdfBuffer = Buffer.from(base64, "base64");
+  if (!pdfBuffer.length || !pdfBuffer.slice(0, 5).toString("latin1").startsWith("%PDF")) {
+    return { error: "The uploaded file does not look like a PDF." };
+  }
+  if (pdfBuffer.length > MAX_PDF_UPLOAD_BYTES) {
+    return { statusCode: 413, error: "PDF is too large for this extractor." };
+  }
+  return { fileName, planType, base64, pdfBuffer };
 }
 
 function hasEngineeringAccess(account) {
@@ -1231,6 +1299,142 @@ function sampleMaterialLines(lines, terms) {
   return samples;
 }
 
+async function detectMaterialsWithOpenAiVision({ fileName, planType, base64, readableText }) {
+  const prompt = [
+    "You are an assistant for construction estimate takeoff.",
+    `Analyze this ${planType} PDF plan using both the visible drawing and any readable text.`,
+    "Goal: identify materials or construction elements used in the sheet. Do not estimate prices.",
+    "If exact quantities are visible in schedules, labels, callouts, or notes, include the quantity and unit.",
+    "If exact quantities are not visible, set quantity to null and explain the evidence in notes.",
+    "Return only JSON with this shape:",
+    "{\"materials\":[{\"description\":\"\",\"category\":\"\",\"unit\":\"\",\"quantity\":null,\"confidence\":\"high|medium|low\",\"source\":\"\",\"notes\":\"\"}],\"warnings\":[\"\"]}",
+    "Use concise material names. Include structural items such as concrete, reinforcing bars, footings, foundations, slabs, beams, columns, walls, joists, wire mesh, formworks, and embedded steel when visible.",
+    readableText ? `Readable text/layers extracted from the PDF:\n${readableText.slice(0, 6000)}` : "No reliable readable text was extracted before vision analysis."
+  ].join("\n\n");
+
+  const response = await fetch(`${OPENAI_API_BASE_URL}/v1/responses`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: OPENAI_VISION_MODEL,
+      input: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_file",
+              filename: fileName,
+              file_data: base64
+            },
+            {
+              type: "input_text",
+              text: prompt
+            }
+          ]
+        }
+      ],
+      max_output_tokens: 4000
+    }),
+    signal: AbortSignal.timeout(90000)
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = payload.error && payload.error.message ? payload.error.message : "AI Vision request failed.";
+    const error = new Error(message);
+    error.statusCode = response.status;
+    throw error;
+  }
+
+  const outputText = openAiOutputText(payload);
+  const parsed = parseJsonFromModelOutput(outputText);
+  return {
+    materials: Array.isArray(parsed.materials) ? parsed.materials : [],
+    warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
+    rawText: outputText
+  };
+}
+
+function openAiOutputText(payload) {
+  if (payload.output_text) return String(payload.output_text);
+  const parts = [];
+  (payload.output || []).forEach((item) => {
+    (item.content || []).forEach((content) => {
+      if (content.text) parts.push(content.text);
+      if (content.type === "output_text" && content.text) parts.push(content.text);
+    });
+  });
+  return parts.join("\n");
+}
+
+function parseJsonFromModelOutput(outputText) {
+  const text = String(outputText || "").trim();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch (_error) {
+    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced) {
+      try {
+        return JSON.parse(fenced[1].trim());
+      } catch (__error) {
+        return {};
+      }
+    }
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start !== -1 && end > start) {
+      try {
+        return JSON.parse(text.slice(start, end + 1));
+      } catch (__error) {
+        return {};
+      }
+    }
+    return {};
+  }
+}
+
+function normalizeAiMaterials(materials) {
+  return (materials || [])
+    .map((material) => {
+      const quantity = Number(material.quantity);
+      const notes = String(material.notes || "").trim();
+      const source = String(material.source || "AI Vision").trim();
+      return {
+        description: String(material.description || "").trim(),
+        category: String(material.category || "General").trim(),
+        unit: String(material.unit || "").trim(),
+        quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : null,
+        mentions: 0,
+        confidence: normalizeConfidence(material.confidence),
+        source,
+        notes,
+        matchedTerms: [],
+        sampleLines: [source, notes].filter(Boolean).slice(0, 3)
+      };
+    })
+    .filter((material) => material.description)
+    .slice(0, 120);
+}
+
+function normalizeConfidence(value) {
+  const confidence = String(value || "").trim().toLowerCase();
+  if (["high", "medium", "low"].includes(confidence)) return confidence;
+  return confidence || "medium";
+}
+
+function buildAiTextPreview(extracted, aiResult) {
+  const warnings = (aiResult.warnings || []).filter(Boolean);
+  const sections = [];
+  if (warnings.length) sections.push(`AI warnings:\n${warnings.join("\n")}`);
+  if (extracted.text) sections.push(`Readable PDF text/layers:\n${extracted.text}`);
+  if (!sections.length && aiResult.rawText) sections.push(aiResult.rawText);
+  return sections.join("\n\n").slice(0, PDF_TEXT_PREVIEW_LIMIT);
+}
+
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -1260,6 +1464,9 @@ async function routeApi(req, res, url) {
     }
     if (req.method === "POST" && url.pathname === "/api/estimate-v2/extract-pdf") {
       return await extractEstimateV2Pdf(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/estimate-v2/extract-ai") {
+      return await extractEstimateV2Ai(req, res);
     }
     return notFound(req, res);
   } catch (error) {
@@ -1345,4 +1552,5 @@ server.listen(PORT, HOST, () => {
   } else {
     console.log("Email mode: development outbox. OTP emails are written to backend/data/email-outbox.jsonl");
   }
+  console.log(`AI Vision: ${OPENAI_API_KEY ? `enabled (${OPENAI_VISION_MODEL})` : "not configured"}`);
 });
