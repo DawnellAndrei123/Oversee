@@ -421,6 +421,17 @@ function jsonResponse(reqOrRes, resOrStatus, statusOrBody, maybeBody) {
   res.end(payload);
 }
 
+function httpError(message, statusCode = 500) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function publicErrorMessage(error) {
+  if (!error) return "Server error";
+  return error.publicMessage || error.message || "Server error";
+}
+
 function notFound(req, res) {
   jsonResponse(req, res, 404, { ok: false, error: "Not found" });
 }
@@ -789,9 +800,27 @@ async function sendOtpEmail({ email, name, otp }) {
     return { mode: "email", provider: "resend" };
   }
 
+  if (IS_PRODUCTION) {
+    throw httpError("OTP email is not configured in Render. Add GMAIL_USER and GMAIL_APP_PASSWORD, then redeploy.", 503);
+  }
+
   await ensureDataDir();
   await fs.appendFile(OUTBOX_FILE, `${JSON.stringify({ to: email, subject, text, otp, at: new Date().toISOString() })}\n`);
   return { mode: "dev-outbox", outbox: OUTBOX_FILE };
+}
+
+function configuredEmailMode() {
+  if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) return "gmail-smtp";
+  if (process.env.RESEND_API_KEY) return "resend";
+  return IS_PRODUCTION ? "not-configured" : "dev-outbox";
+}
+
+function emailModeLabel() {
+  const mode = configuredEmailMode();
+  if (mode === "gmail-smtp") return "Gmail SMTP";
+  if (mode === "resend") return "Resend API";
+  if (mode === "not-configured") return "not configured";
+  return "development outbox. OTP emails are written to backend/data/email-outbox.jsonl";
 }
 
 async function requestSignupOtp(req, res) {
@@ -839,7 +868,26 @@ async function requestSignupOtp(req, res) {
   audit(store, "signup_otp_requested", { email, gmailLinked, inviteToken: Boolean(inviteToken), meta: requestMeta(req) });
   await writeStore(store);
 
-  const delivery = await sendOtpEmail({ email, name, otp });
+  let delivery;
+  try {
+    delivery = await sendOtpEmail({ email, name, otp });
+  } catch (error) {
+    console.error("OTP email delivery failed", error);
+    store.pendingSignups = store.pendingSignups.filter((item) => item.email !== email);
+    audit(store, "signup_otp_delivery_failed", {
+      email,
+      provider: configuredEmailMode(),
+      message: publicErrorMessage(error)
+    });
+    await writeStore(store).catch((writeError) => console.error("Unable to clean failed pending signup", writeError));
+
+    const deliveryError = httpError(
+      "OTP email could not be sent. Please check the Gmail SMTP environment variables in Render, especially GMAIL_USER and GMAIL_APP_PASSWORD.",
+      error.statusCode || 502
+    );
+    deliveryError.publicMessage = deliveryError.message;
+    throw deliveryError;
+  }
   jsonResponse(req, res, 200, {
     ok: true,
     message: delivery.mode === "dev-outbox"
@@ -1448,6 +1496,7 @@ async function routeApi(req, res, url) {
         ok: true,
         service: "oversee-backend",
         storage: SUPABASE_ENABLED ? "supabase" : "local-json",
+        email: configuredEmailMode(),
         dataDir: SUPABASE_ENABLED ? null : DATA_DIR
       });
     }
@@ -1472,7 +1521,7 @@ async function routeApi(req, res, url) {
     return notFound(req, res);
   } catch (error) {
     console.error(error);
-    jsonResponse(req, res, error.statusCode || 500, { ok: false, error: error.message || "Server error" });
+    jsonResponse(req, res, error.statusCode || 500, { ok: false, error: publicErrorMessage(error) });
   }
 }
 
@@ -1546,12 +1595,6 @@ server.listen(PORT, HOST, () => {
   } else {
     console.log(`Data storage: ${DATA_DIR}`);
   }
-  if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
-    console.log("Email mode: Gmail SMTP");
-  } else if (process.env.RESEND_API_KEY) {
-    console.log("Email mode: Resend API");
-  } else {
-    console.log("Email mode: development outbox. OTP emails are written to backend/data/email-outbox.jsonl");
-  }
+  console.log(`Email mode: ${emailModeLabel()}`);
   console.log(`AI Vision: ${OPENAI_API_KEY ? `enabled (${OPENAI_VISION_MODEL})` : "not configured"}`);
 });
