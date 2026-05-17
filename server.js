@@ -1327,7 +1327,7 @@ async function detectMaterialsWithOpenAiVision({ fileName, planType, base64, rea
             {
               type: "input_file",
               filename: fileName,
-              file_data: base64
+              file_data: `data:application/pdf;base64,${base64}`
             },
             {
               type: "input_text",
