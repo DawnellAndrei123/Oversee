@@ -33,6 +33,9 @@ const MATERIAL_TAKEOFF_TERMS = [
   { description: "Sand", category: "General", planTypes: ["Architectural", "Structural", "Civil"], terms: ["sand", "fine aggregate"] },
   { description: "Gravel / Aggregate", category: "General", planTypes: ["Architectural", "Structural", "Civil"], terms: ["gravel", "aggregate", "coarse aggregate", "base course"] },
   { description: "Rebar / Reinforcing Bar", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["rebar", "reinforcing bar", "deformed bar", "steel bar", "r.s.b.", "rsb"] },
+  { description: "Foundation / Footing", category: "Structural Element", planTypes: ["Structural", "Civil"], terms: ["foundation", "footing", "footings", "foundation plan"] },
+  { description: "Structural Wall", category: "Structural Element", planTypes: ["Structural", "Civil", "Architectural"], terms: ["wall", "walls", "xwall", "xwalls", "shear wall", "retaining wall"] },
+  { description: "Joist", category: "Structural Element", planTypes: ["Structural", "Architectural"], terms: ["joist", "joists"] },
   { description: "Wire Mesh", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["wire mesh", "welded wire mesh", "wwm"] },
   { description: "Formworks", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["formwork", "formworks", "forms", "plyform"] },
   { description: "Plywood", category: "Architectural", planTypes: ["Architectural", "Structural"], terms: ["plywood", "phenolic board"] },
@@ -1006,6 +1009,7 @@ async function extractEstimateV2Pdf(req, res) {
     pageCount: extracted.pageCount,
     characterCount: extracted.text.length,
     lineCount: extracted.lineCount,
+    layerCount: extracted.layerNames.length,
     textPreview: extracted.text.slice(0, PDF_TEXT_PREVIEW_LIMIT),
     materials
   });
@@ -1018,13 +1022,14 @@ function hasEngineeringAccess(account) {
 function extractReadablePdfText(pdfBuffer) {
   const raw = pdfBuffer.toString("latin1");
   const pageCount = (raw.match(/\/Type\s*\/Page\b/g) || []).length;
+  const layerNames = extractPdfLayerNames(raw);
   const chunks = [];
-  const streamPattern = /<<([\s\S]*?)>>\s*stream\r?\n?([\s\S]*?)\r?\n?endstream/g;
+  const streamPattern = /(\d+)\s+\d+\s+obj\s*([\s\S]*?)\s+stream\r?\n?([\s\S]*?)\r?\n?endstream/g;
   let match;
 
   while ((match = streamPattern.exec(raw)) !== null) {
-    const dictionary = match[1] || "";
-    const streamBuffer = trimPdfStreamBuffer(Buffer.from(match[2] || "", "latin1"));
+    const dictionary = match[2] || "";
+    const streamBuffer = trimPdfStreamBuffer(Buffer.from(match[3] || "", "latin1"));
     const decoded = decodePdfStream(streamBuffer, dictionary);
     if (!decoded || !decoded.length) continue;
     const text = extractTextFromPdfContent(decoded.toString("latin1"));
@@ -1036,12 +1041,30 @@ function extractReadablePdfText(pdfBuffer) {
     if (fallbackText) chunks.push(fallbackText);
   }
 
+  if (layerNames.length) {
+    chunks.push(`Detected PDF layers: ${layerNames.join(", ")}`);
+  }
+
   const text = cleanExtractedText(chunks.join("\n"));
   return {
     pageCount,
+    layerNames,
     text,
     lineCount: text ? text.split(/\n+/).filter(Boolean).length : 0
   };
+}
+
+function extractPdfLayerNames(raw) {
+  const layerNames = [];
+  const namePattern = /\/Name\s*\((?:\\.|[^\\()])*\)/g;
+  let match;
+  while ((match = namePattern.exec(raw)) !== null) {
+    const name = decodePdfLiteralString(match[0].replace(/^\/Name\s*/, "")).trim();
+    if (!name || /^\d+$/.test(name)) continue;
+    if (/^(Adobe|UCS|Normal)$/i.test(name)) continue;
+    layerNames.push(name);
+  }
+  return [...new Set(layerNames)];
 }
 
 function trimPdfStreamBuffer(buffer) {

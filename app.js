@@ -823,7 +823,7 @@ function renderEstimateV2View() {
       </div>
     </div>
     ${materials.length ? renderEstimateV2Materials(materials) : `
-      <div class="placeholder">Upload a selectable-text PDF to detect material names from the plan notes and schedules.</div>
+      <div class="placeholder">Upload a PDF to detect material names from readable text, schedules, and CAD layers.</div>
     `}
     ${draft.textPreview ? `
       <section class="estimate-v2-text-panel">
