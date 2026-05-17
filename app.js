@@ -217,6 +217,10 @@ document.addEventListener("input", (event) => {
 
 document.addEventListener("change", (event) => {
   const target = event.target.closest("[data-action]");
+  if (target && target.dataset.action === "toggle-password-visibility") {
+    togglePasswordVisibility(target);
+    return;
+  }
   if (target && target.dataset.action === "select-swa-project") {
     updateSwaProject(target.value);
     return;
@@ -294,6 +298,14 @@ function getSessionAccount() {
 function getSubscription() {
   const saved = readJson(STORAGE.subscription, null);
   if (saved) return saved;
+  return {
+    trialStartedAt: null,
+    status: "free",
+    cancelledAt: null
+  };
+}
+
+function createTrialSubscription() {
   const created = {
     trialStartedAt: new Date().toISOString(),
     status: "trial",
@@ -468,8 +480,16 @@ function renderSignupForm(invite) {
       </div>
       <div class="field">
         <label for="signup-password">Password</label>
-        <input id="signup-password" name="password" type="password" autocomplete="new-password" required>
+        <input id="signup-password" name="password" type="password" autocomplete="new-password" data-password-toggle-target required>
       </div>
+      <div class="field">
+        <label for="signup-confirm-password">Confirm Password</label>
+        <input id="signup-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" data-password-toggle-target required>
+      </div>
+      <label class="checkline">
+        <input id="signup-show-password" type="checkbox" data-action="toggle-password-visibility">
+        See password
+      </label>
       <label class="checkline">
         <input id="signup-gmail" name="gmail" type="checkbox">
         Link this account with Gmail
@@ -493,8 +513,12 @@ function renderLoginForm() {
       </div>
       <div class="field">
         <label for="login-password">Password</label>
-        <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" data-password-toggle-target required>
       </div>
+      <label class="checkline">
+        <input id="login-show-password" type="checkbox" data-action="toggle-password-visibility">
+        See password
+      </label>
       <button class="primary-btn" data-action="login">Log In</button>
       <p class="auth-note">Run the backend server for verified account storage. Browser-only login is kept as a prototype fallback.</p>
       ${state.backendNotice ? `<p class="auth-note">${escapeHtml(state.backendNotice)}</p>` : ""}
@@ -536,7 +560,7 @@ function renderWelcome(account) {
       <div class="dashboard-grid">
         <div class="mini-card"><span class="eyebrow">Projects</span><div class="value">${projects.length}</div></div>
         <div class="mini-card"><span class="eyebrow">Delayed</span><div class="value">${delayed}</div></div>
-        <div class="mini-card"><span class="eyebrow">Trial</span><div class="value">${trialDaysLeft(subscription)}</div><span class="hint">days left</span></div>
+        <div class="mini-card"><span class="eyebrow">Plan</span><div class="value">${accountPlanLabel(account, subscription)}</div><span class="hint">${planHint(account, subscription)}</span></div>
         <div class="mini-card"><span class="eyebrow">Role</span><div class="value">${account.role === "owner" ? "Owner" : "Member"}</div></div>
       </div>
     </section>
@@ -563,6 +587,8 @@ function renderEngineeringView(account) {
   if (!hasAccess(account, "engineering")) {
     return `<section class="visual-container"><div class="placeholder">Engineering access is not assigned to this account.</div></section>`;
   }
+  const lockedViews = premiumLockedViews(account);
+  if (lockedViews.includes(state.engineeringView)) state.engineeringView = "gantt";
   return `
     <section>
       <div class="toolbar-container" aria-label="Engineering toolbar">
@@ -576,22 +602,26 @@ function renderEngineeringView(account) {
           ["milestone", "Milestone"],
           ["dashboard", "Dashboard"],
           ["settings", "Settings"]
-        ].map(([view, label]) => `
-          <button class="toolbar-btn ${state.engineeringView === view ? "active" : ""}" data-action="engineering-tab" data-view="${view}">${label}</button>
-        `).join("")}
+        ].map(([view, label]) => {
+          const locked = lockedViews.includes(view);
+          return `
+            <button class="toolbar-btn ${state.engineeringView === view ? "active" : ""}" data-action="engineering-tab" data-view="${view}" ${locked ? "disabled" : ""} title="${locked ? "Subscribed accounts only" : ""}">${label}</button>
+          `;
+        }).join("")}
       </div>
       <div class="visual-container">
-        ${renderEngineeringVisual()}
+        ${renderEngineeringVisual(account)}
       </div>
     </section>
   `;
 }
 
-function renderEngineeringVisual() {
+function renderEngineeringVisual(account) {
   if (state.engineeringView === "gantt") return renderGanttView();
   if (state.engineeringView === "project-list") return renderProjectList();
   if (state.engineeringView === "swa") return renderSwaView();
   if (state.engineeringView === "estimate") return renderEstimateView();
+  if (premiumLockedViews(account).includes(state.engineeringView)) return renderPlanLockedView(state.engineeringView);
   if (state.engineeringView === "estimate-v2") return renderEstimateV2View();
   if (state.engineeringView === "price-list") return renderMaterialPriceListView();
   if (state.engineeringView === "dashboard") return renderDashboardView();
@@ -600,6 +630,11 @@ function renderEngineeringVisual() {
     milestone: "Milestone"
   };
   return `<div class="placeholder">${titles[state.engineeringView]} will be built in the next module.</div>`;
+}
+
+function renderPlanLockedView(view) {
+  const label = view === "estimate-v2" ? "Estimate v2" : "Dashboard";
+  return `<div class="placeholder">${label} is available for subscribed accounts only. This account is currently on the Free plan.</div>`;
 }
 
 function renderSettingsView() {
@@ -1428,10 +1463,17 @@ async function handleSignup() {
 
   const formData = new FormData(form);
   const email = String(formData.get("email")).trim().toLowerCase();
+  const password = String(formData.get("password"));
+  const confirmPassword = String(formData.get("confirmPassword"));
+  if (password !== confirmPassword) {
+    toast("Passwords do not match.");
+    return;
+  }
   const payload = {
     name: String(formData.get("name")).trim(),
     email,
-    password: String(formData.get("password")),
+    password,
+    confirmPassword,
     gmailLinked: formData.get("gmail") === "on",
     inviteToken: state.inviteToken
   };
@@ -1490,13 +1532,13 @@ function createLocalAccount(formData) {
     gmailLinked: formData.get("gmail") === "on",
     role: isInvitedAccount ? "member" : "owner",
     access,
+    plan: "free",
     invitedBy: invite ? invite.createdBy : null,
     createdAt: new Date().toISOString()
   };
 
   accounts.push(account);
   saveAccounts(accounts);
-  ensureSubscription();
   localStorage.setItem(STORAGE.session, JSON.stringify({ accountId: account.id }));
 
   if (invite) {
@@ -2361,10 +2403,10 @@ function openAccountModal() {
             ${account.gmailLinked ? "" : `<button class="secondary-btn" data-action="link-gmail">Link Gmail</button>`}
           </div>
           <div class="mini-card">
-            <span class="eyebrow">Subscription</span>
-            <h3>${subscription.status === "cancelled" ? "Cancelled" : "Free Trial"}</h3>
-            <p class="hint">${subscription.status === "cancelled" ? "Subscription access is marked cancelled in this prototype." : `${trialDaysLeft(subscription)} day(s) left in the first free month.`}</p>
-            <button class="secondary-btn" data-action="cancel-subscription">Cancel Subscription</button>
+            <span class="eyebrow">Plan</span>
+            <h3>${accountPlanLabel(account, subscription)}</h3>
+            <p class="hint">${planHint(account, subscription)}</p>
+            ${hasPremiumPlan(account) ? `<button class="secondary-btn" data-action="cancel-subscription">Cancel Subscription</button>` : ""}
           </div>
           ${isOwner ? renderOwnerAccountTools(account) : `<p class="hint">Only the owner account can view created accounts and send access invitations.</p>`}
         </div>
@@ -2840,6 +2882,36 @@ function statusClass(status) {
 
 function hasAccess(account, key) {
   return account.role === "owner" || Boolean(account.access && account.access[key]);
+}
+
+function hasPremiumPlan(account) {
+  return account && account.plan !== "free";
+}
+
+function premiumLockedViews(account) {
+  return hasPremiumPlan(account) ? [] : ["estimate-v2", "dashboard"];
+}
+
+function accountPlanLabel(account, subscription = getSubscription()) {
+  if (account && account.plan === "free") return "Free";
+  if (subscription.status === "trial") return "Trial";
+  if (subscription.status === "cancelled") return "Cancelled";
+  return "Subscribed";
+}
+
+function planHint(account, subscription = getSubscription()) {
+  if (account && account.plan === "free") return "Estimate v2 and Dashboard locked";
+  if (subscription.status === "trial") return `${trialDaysLeft(subscription)} day(s) left`;
+  if (subscription.status === "cancelled") return "Subscription access cancelled";
+  return "Full feature access";
+}
+
+function togglePasswordVisibility(toggle) {
+  const form = toggle.closest("form");
+  if (!form) return;
+  form.querySelectorAll("[data-password-toggle-target]").forEach((input) => {
+    input.type = toggle.checked ? "text" : "password";
+  });
 }
 
 function allAccess() {

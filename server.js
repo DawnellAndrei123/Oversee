@@ -95,6 +95,7 @@ const PUBLIC_ACCOUNT_FIELDS = [
   "gmailLinked",
   "role",
   "access",
+  "plan",
   "invitedBy",
   "createdAt",
   "emailVerifiedAt",
@@ -911,6 +912,7 @@ async function signupDirect(req, res) {
   const email = normalizeEmail(body.email);
   const name = String(body.name || "").trim();
   const password = String(body.password || "");
+  const confirmPassword = String(body.confirmPassword || "");
   const gmailLinked = Boolean(body.gmailLinked);
   const inviteToken = body.inviteToken ? String(body.inviteToken) : null;
 
@@ -920,6 +922,7 @@ async function signupDirect(req, res) {
   if (!name) return jsonResponse(req, res, 400, { ok: false, error: "Full name is required." });
   if (!validateEmail(email)) return jsonResponse(req, res, 400, { ok: false, error: "A valid email is required." });
   if (password.length < 8) return jsonResponse(req, res, 400, { ok: false, error: "Password must be at least 8 characters." });
+  if (confirmPassword !== password) return jsonResponse(req, res, 400, { ok: false, error: "Passwords do not match." });
 
   const store = await readStore();
   if (store.accounts.some((account) => account.email === email)) {
@@ -934,6 +937,7 @@ async function signupDirect(req, res) {
     passwordSalt: passwordSecret.salt,
     gmailLinked,
     inviteToken,
+    plan: "free",
     requestMeta: requestMeta(req),
     emailVerified: false
   });
@@ -992,6 +996,7 @@ async function verifySignupOtp(req, res) {
     passwordSalt: pending.passwordSalt,
     gmailLinked: pending.gmailLinked,
     inviteToken: pending.inviteToken,
+    plan: "free",
     requestMeta: pending.requestMeta,
     emailVerified: true
   });
@@ -1017,6 +1022,7 @@ function addAccountToStore(store, signup) {
     gmailLinked: signup.gmailLinked,
     role: isInvitedAccount ? "member" : "owner",
     access: isInvitedAccount ? invite.access : allAccess(),
+    plan: signup.plan || "free",
     invitedBy: invite ? invite.createdBy : null,
     createdAt: now,
     emailVerifiedAt: signup.emailVerified ? now : null,
@@ -1085,6 +1091,7 @@ async function listAccounts(req, res) {
 async function extractEstimateV2Pdf(req, res) {
   const { store, account } = await requireEngineeringAccount(req, res);
   if (!account) return;
+  if (!hasPaidPlan(account)) return jsonResponse(req, res, 403, { ok: false, error: "Estimate v2 is available for subscribed accounts only." });
   if (checkRateLimit(req, res, "estimate_v2_pdf", account.id, { limit: 20, windowMs: 15 * 60 * 1000 })) return;
 
   const body = await readJsonBody(req, MAX_PDF_JSON_BODY_BYTES);
@@ -1121,6 +1128,7 @@ async function extractEstimateV2Pdf(req, res) {
 async function extractEstimateV2Ai(req, res) {
   const { store, account } = await requireEngineeringAccount(req, res);
   if (!account) return;
+  if (!hasPaidPlan(account)) return jsonResponse(req, res, 403, { ok: false, error: "Estimate v2 is available for subscribed accounts only." });
   if (!OPENAI_API_KEY) {
     return jsonResponse(req, res, 503, {
       ok: false,
@@ -1200,6 +1208,10 @@ function parseEstimatePdfUpload(body) {
 
 function hasEngineeringAccess(account) {
   return account.role === "owner" || Boolean(account.access && account.access.engineering);
+}
+
+function hasPaidPlan(account) {
+  return account.plan !== "free";
 }
 
 function extractReadablePdfText(pdfBuffer) {
