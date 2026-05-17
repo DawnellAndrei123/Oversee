@@ -9,22 +9,22 @@ const zlib = require("node:zlib");
 const ROOT_DIR = __dirname;
 loadDotEnv(path.join(ROOT_DIR, ".env"));
 
-const DATA_DIR = process.env.OVERSEE_DATA_DIR || path.join(ROOT_DIR, "backend", "data");
+const DATA_DIR = cleanEnvValue(process.env.OVERSEE_DATA_DIR) || path.join(ROOT_DIR, "backend", "data");
 const STORE_FILE = path.join(DATA_DIR, "store.json");
 const OUTBOX_FILE = path.join(DATA_DIR, "email-outbox.jsonl");
 const PORT = Number(process.env.PORT || 8000);
-const HOST = process.env.HOST || (process.env.RENDER || process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
+const HOST = cleanEnvValue(process.env.HOST) || (process.env.RENDER || process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
 const OTP_TTL_MINUTES = Number(process.env.OTP_TTL_MINUTES || 10);
 const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS || 30);
 const MAX_JSON_BODY_BYTES = Number(process.env.MAX_JSON_BODY_BYTES || 65536);
 const MAX_PDF_UPLOAD_BYTES = Number(process.env.MAX_PDF_UPLOAD_BYTES || 8 * 1024 * 1024);
 const MAX_PDF_JSON_BODY_BYTES = Math.ceil(MAX_PDF_UPLOAD_BYTES * 1.38) + 4096;
 const PDF_TEXT_PREVIEW_LIMIT = 12000;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || "gpt-4o";
-const OPENAI_API_BASE_URL = String(process.env.OPENAI_API_BASE_URL || "https://api.openai.com").replace(/\/+$/, "");
-const SUPABASE_URL = normalizeSupabaseUrl(process.env.SUPABASE_URL);
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const OPENAI_API_KEY = cleanEnvValue(process.env.OPENAI_API_KEY);
+const OPENAI_VISION_MODEL = cleanEnvValue(process.env.OPENAI_VISION_MODEL) || "gpt-4o";
+const OPENAI_API_BASE_URL = String(cleanEnvValue(process.env.OPENAI_API_BASE_URL) || "https://api.openai.com").replace(/\/+$/, "");
+const SUPABASE_URL = normalizeSupabaseUrl(cleanEnvValue(process.env.SUPABASE_URL));
+const SUPABASE_SERVICE_ROLE_KEY = cleanEnvValue(process.env.SUPABASE_SERVICE_ROLE_KEY);
 const SUPABASE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
 const IS_PRODUCTION = process.env.NODE_ENV === "production" || Boolean(process.env.RENDER);
 
@@ -197,6 +197,14 @@ function loadDotEnv(filePath) {
     }
     if (key && process.env[key] === undefined) process.env[key] = value;
   });
+}
+
+function cleanEnvValue(value) {
+  let cleaned = String(value || "").trim();
+  if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+  return cleaned;
 }
 
 function normalizeSupabaseUrl(value) {
@@ -733,13 +741,13 @@ function connectGmailSmtp() {
 }
 
 async function sendGmailSmtpEmail({ email, subject, text }) {
-  const gmailUser = normalizeEmail(process.env.GMAIL_USER);
-  const appPassword = String(process.env.GMAIL_APP_PASSWORD || "").replace(/\s+/g, "");
+  const gmailUser = normalizeEmail(cleanEnvValue(process.env.GMAIL_USER));
+  const appPassword = cleanEnvValue(process.env.GMAIL_APP_PASSWORD).replace(/\s+/g, "");
   if (!validateEmail(gmailUser) || !appPassword) {
     throw new Error("Gmail SMTP is not configured correctly.");
   }
 
-  const from = process.env.OVERSEE_EMAIL_FROM || `Oversee <${gmailUser}>`;
+  const from = cleanEnvValue(process.env.OVERSEE_EMAIL_FROM) || `Oversee <${gmailUser}>`;
   const message = buildPlainEmail({ from, to: email, subject, text });
   const socket = await connectGmailSmtp();
   const smtp = createSmtpSession(socket);
@@ -772,20 +780,21 @@ async function sendOtpEmail({ email, name, otp }) {
     "If you did not create an Oversee account, you can ignore this email."
   ].join("\n");
 
-  if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+  if (cleanEnvValue(process.env.GMAIL_USER) && cleanEnvValue(process.env.GMAIL_APP_PASSWORD)) {
     await sendGmailSmtpEmail({ email, subject, text });
     return { mode: "email", provider: "gmail-smtp" };
   }
 
-  if (process.env.RESEND_API_KEY) {
+  const resendKey = cleanEnvValue(process.env.RESEND_API_KEY);
+  if (resendKey) {
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        Authorization: `Bearer ${resendKey}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        from: process.env.OVERSEE_EMAIL_FROM || "Oversee <onboarding@resend.dev>",
+        from: cleanEnvValue(process.env.OVERSEE_EMAIL_FROM) || "Oversee <onboarding@resend.dev>",
         to: [email],
         subject,
         text
@@ -810,8 +819,8 @@ async function sendOtpEmail({ email, name, otp }) {
 }
 
 function configuredEmailMode() {
-  if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) return "gmail-smtp";
-  if (process.env.RESEND_API_KEY) return "resend";
+  if (cleanEnvValue(process.env.GMAIL_USER) && cleanEnvValue(process.env.GMAIL_APP_PASSWORD)) return "gmail-smtp";
+  if (cleanEnvValue(process.env.RESEND_API_KEY)) return "resend";
   return IS_PRODUCTION ? "not-configured" : "dev-outbox";
 }
 
