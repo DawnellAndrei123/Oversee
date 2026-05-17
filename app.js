@@ -477,7 +477,7 @@ function renderSignupForm(invite) {
       <button class="primary-btn" data-action="signup">Create Account</button>
       <p class="auth-note">
         ${invite ? `This invited account will receive: ${escapeHtml(accessText(invite.access))}.` : "This direct signup will become an owner account and receive all module access."}
-        When the backend server is running, an email OTP is required before the account is created.
+        Accounts are created directly. Email OTP verification is disabled for now.
       </p>
       ${state.backendNotice ? `<p class="auth-note">${escapeHtml(state.backendNotice)}</p>` : ""}
     </form>
@@ -1437,10 +1437,18 @@ async function handleSignup() {
   };
 
   try {
-    const response = await apiRequest("/auth/signup/request-otp", payload);
-    state.backendNotice = response.message || "OTP sent to email.";
-    state.pendingSignupEmail = email;
-    openOtpModal(email, response.delivery);
+    const response = await apiRequest("/auth/signup", payload);
+    savePublicAccount(response.account);
+    localStorage.setItem(STORAGE.session, JSON.stringify({ accountId: response.account.id, token: response.session.token }));
+    state.pendingSignupEmail = null;
+    state.backendNotice = "";
+    state.currentView = "welcome";
+    if (state.inviteToken) {
+      state.inviteToken = null;
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+    render();
+    toast(response.message || "Account created.");
     return;
   } catch (error) {
     if (error.fromBackend) {

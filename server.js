@@ -906,6 +906,49 @@ async function requestSignupOtp(req, res) {
   });
 }
 
+async function signupDirect(req, res) {
+  const body = await readJsonBody(req);
+  const email = normalizeEmail(body.email);
+  const name = String(body.name || "").trim();
+  const password = String(body.password || "");
+  const gmailLinked = Boolean(body.gmailLinked);
+  const inviteToken = body.inviteToken ? String(body.inviteToken) : null;
+
+  if (checkRateLimit(req, res, "signup-ip", "", { limit: 8, windowMs: 15 * 60 * 1000 })) return;
+  if (email && checkRateLimit(req, res, "signup-email", email, { limit: 4, windowMs: 30 * 60 * 1000 })) return;
+
+  if (!name) return jsonResponse(req, res, 400, { ok: false, error: "Full name is required." });
+  if (!validateEmail(email)) return jsonResponse(req, res, 400, { ok: false, error: "A valid email is required." });
+  if (password.length < 8) return jsonResponse(req, res, 400, { ok: false, error: "Password must be at least 8 characters." });
+
+  const store = await readStore();
+  if (store.accounts.some((account) => account.email === email)) {
+    return jsonResponse(req, res, 409, { ok: false, error: "An account already exists with that email." });
+  }
+
+  const passwordSecret = hashValue(password);
+  const account = addAccountToStore(store, {
+    name,
+    email,
+    passwordHash: passwordSecret.hash,
+    passwordSalt: passwordSecret.salt,
+    gmailLinked,
+    inviteToken,
+    requestMeta: requestMeta(req),
+    emailVerified: false
+  });
+  const session = createSession(store, account.id, req);
+  audit(store, "account_created_without_otp", { accountId: account.id, email, role: account.role });
+  await writeStore(store);
+
+  jsonResponse(req, res, 201, {
+    ok: true,
+    message: "Account created.",
+    account: publicAccount(account),
+    session
+  });
+}
+
 async function verifySignupOtp(req, res) {
   const body = await readJsonBody(req);
   const email = normalizeEmail(body.email);
@@ -942,38 +985,52 @@ async function verifySignupOtp(req, res) {
     return jsonResponse(req, res, 409, { ok: false, error: "An account already exists with that email." });
   }
 
-  const invite = pending.inviteToken
-    ? store.invites.find((item) => item.token === pending.inviteToken)
-    : null;
-  const isInvitedAccount = Boolean(invite);
-  const account = {
-    id: randomId("acct"),
+  const account = addAccountToStore(store, {
     name: pending.name,
     email,
     passwordHash: pending.passwordHash,
     passwordSalt: pending.passwordSalt,
     gmailLinked: pending.gmailLinked,
-    role: isInvitedAccount ? "member" : "owner",
-    access: isInvitedAccount ? invite.access : allAccess(),
-    invitedBy: invite ? invite.createdBy : null,
-    createdAt: new Date().toISOString(),
-    emailVerifiedAt: new Date().toISOString(),
-    lastLoginAt: new Date().toISOString(),
-    requestMeta: pending.requestMeta
-  };
-
-  store.accounts.push(account);
-  store.pendingSignups = store.pendingSignups.filter((item) => item.email !== email);
-  if (invite) {
-    invite.acceptedBy = account.id;
-    invite.acceptedAt = new Date().toISOString();
-  }
-
+    inviteToken: pending.inviteToken,
+    requestMeta: pending.requestMeta,
+    emailVerified: true
+  });
   const session = createSession(store, account.id, req);
   audit(store, "account_created", { accountId: account.id, email, role: account.role });
   await writeStore(store);
 
   jsonResponse(req, res, 201, { ok: true, account: publicAccount(account), session });
+}
+
+function addAccountToStore(store, signup) {
+  const invite = signup.inviteToken
+    ? store.invites.find((item) => item.token === signup.inviteToken)
+    : null;
+  const isInvitedAccount = Boolean(invite);
+  const now = new Date().toISOString();
+  const account = {
+    id: randomId("acct"),
+    name: signup.name,
+    email: signup.email,
+    passwordHash: signup.passwordHash,
+    passwordSalt: signup.passwordSalt,
+    gmailLinked: signup.gmailLinked,
+    role: isInvitedAccount ? "member" : "owner",
+    access: isInvitedAccount ? invite.access : allAccess(),
+    invitedBy: invite ? invite.createdBy : null,
+    createdAt: now,
+    emailVerifiedAt: signup.emailVerified ? now : null,
+    lastLoginAt: now,
+    requestMeta: signup.requestMeta
+  };
+
+  store.accounts.push(account);
+  store.pendingSignups = store.pendingSignups.filter((item) => item.email !== signup.email);
+  if (invite) {
+    invite.acceptedBy = account.id;
+    invite.acceptedAt = now;
+  }
+  return account;
 }
 
 function createSession(store, accountId, req) {
@@ -1511,6 +1568,9 @@ async function routeApi(req, res, url) {
     }
     if (req.method === "POST" && url.pathname === "/api/auth/signup/request-otp") {
       return await requestSignupOtp(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/auth/signup") {
+      return await signupDirect(req, res);
     }
     if (req.method === "POST" && url.pathname === "/api/auth/signup/verify") {
       return await verifySignupOtp(req, res);
