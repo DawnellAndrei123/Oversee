@@ -1252,6 +1252,150 @@ tfoot td {
   padding: 0 10px;
 }
 
+.estimate-v2-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.92fr) minmax(320px, 1.08fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.estimate-v2-upload-panel,
+.estimate-v2-summary-panel,
+.estimate-v2-file-card,
+.estimate-v2-text-panel {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background:
+    linear-gradient(145deg, rgba(40, 244, 255, 0.075), transparent 58%),
+    rgba(255, 255, 255, 0.045);
+}
+
+.estimate-v2-upload-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.estimate-v2-field,
+.estimate-v2-upload {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.estimate-v2-field span,
+.estimate-v2-upload span,
+.estimate-v2-file-card span,
+.estimate-v2-metric span {
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.estimate-v2-field select,
+.estimate-v2-upload input {
+  width: 100%;
+  min-height: 42px;
+  border-radius: 8px;
+  color: var(--ink);
+  background: #14001f;
+  border: 1px solid var(--border);
+  outline: 0;
+  padding: 8px 10px;
+}
+
+.estimate-v2-field select:focus,
+.estimate-v2-upload input:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px var(--cyan-soft);
+}
+
+.estimate-v2-summary-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+
+.estimate-v2-metric {
+  min-height: 96px;
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+}
+
+.estimate-v2-metric strong {
+  color: var(--cyan);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.estimate-v2-file-card {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(220px, auto);
+  gap: 12px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.estimate-v2-file-card div {
+  display: grid;
+  gap: 5px;
+}
+
+.estimate-v2-file-card strong {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.estimate-v2-table-wrap {
+  border-color: var(--border);
+}
+
+.estimate-v2-table {
+  min-width: 980px;
+}
+
+.estimate-v2-table td strong,
+.estimate-v2-table td small {
+  display: block;
+}
+
+.estimate-v2-table td small {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.estimate-v2-text-panel {
+  margin-top: 12px;
+  padding: 14px;
+}
+
+.compact-head {
+  margin-bottom: 10px;
+}
+
+.estimate-v2-text-panel h3 {
+  margin: 4px 0 0;
+}
+
+.estimate-v2-text-panel pre {
+  max-height: 300px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
 .ghost-btn.danger {
   color: var(--red);
   border-color: rgba(255, 31, 63, 0.32);
@@ -1766,6 +1910,10 @@ body[data-theme="light"] .estimate-store-filter,
 body[data-theme="light"] .price-store-field,
 body[data-theme="light"] .price-store-picker,
 body[data-theme="light"] .estimate-summary,
+body[data-theme="light"] .estimate-v2-upload-panel,
+body[data-theme="light"] .estimate-v2-summary-panel,
+body[data-theme="light"] .estimate-v2-file-card,
+body[data-theme="light"] .estimate-v2-text-panel,
 body[data-theme="light"] .estimate-template-panel,
 body[data-theme="light"] .risk-item,
 body[data-theme="light"] .settings-panel,
@@ -1814,6 +1962,8 @@ body[data-theme="light"] .estimate-template-picker input,
 body[data-theme="light"] .estimate-store-filter select,
 body[data-theme="light"] .price-store-field input,
 body[data-theme="light"] .price-store-picker select,
+body[data-theme="light"] .estimate-v2-field select,
+body[data-theme="light"] .estimate-v2-upload input,
 body[data-theme="light"] .estimate-input,
 body[data-theme="light"] .price-input,
 body[data-theme="light"] .template-title-input {
@@ -1886,6 +2036,14 @@ body[data-theme="light"] .swa-table tbody tr:hover td:first-child {
   background: #f8fcff;
 }
 
+body[data-theme="light"] .estimate-v2-metric {
+  background: rgba(255, 255, 255, 0.58);
+}
+
+body[data-theme="light"] .estimate-v2-text-panel pre {
+  background: rgba(255, 255, 255, 0.62);
+}
+
 body[data-theme="light"] .swa-add-row td {
   background: rgba(30, 48, 78, 0.035);
 }
@@ -1926,6 +2084,7 @@ body[data-theme="light"] .toast {
   .dashboard-kpi-grid,
   .dashboard-layout,
   .status-chart-wrap,
+  .estimate-v2-grid,
   .form-grid,
   .access-grid,
   .theme-options {
@@ -1954,6 +2113,11 @@ body[data-theme="light"] .toast {
 
   .estimate-summary {
     width: 100%;
+  }
+
+  .estimate-v2-summary-panel,
+  .estimate-v2-file-card {
+    grid-template-columns: 1fr;
   }
 
   .dashboard-filter select {

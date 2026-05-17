@@ -6,6 +6,7 @@ const STORAGE = {
   subscription: "oversee.subscription",
   swa: "oversee.swa",
   estimateDraft: "oversee.estimateDraft",
+  estimateV2Draft: "oversee.estimateV2Draft",
   estimateTemplates: "oversee.estimateTemplates",
   materialPrices: "oversee.materialPrices",
   theme: "oversee.theme"
@@ -19,6 +20,7 @@ const ACCESS_KEYS = [
 ];
 
 const STATUS_OPTIONS = ["Not yet Started", "On-going", "On-Hold", "Completed"];
+const PLAN_TYPES = ["Architectural", "Structural", "Plumbing", "Electrical", "Mechanical", "Electronics", "Civil", "Fire Protection", "Other"];
 const YEAR_WEEKS_PER_MONTH = 4;
 const GANTT_BAR_SIDE_MARGIN = 8;
 const GANTT_BAR_INNER_PADDING = 4;
@@ -107,6 +109,8 @@ document.addEventListener("click", (event) => {
     "update-swa": updateSwa,
     "add-estimate-row": addEstimateRow,
     "save-estimate-template": saveEstimateTemplate,
+    "extract-estimate-v2-pdf": extractEstimateV2Pdf,
+    "clear-estimate-v2": clearEstimateV2Draft,
     "use-estimate-template": () => useEstimateTemplate(id),
     "delete-estimate-row": () => deleteEstimateRow(id),
     "duplicate-price-store": duplicatePriceStore,
@@ -183,6 +187,10 @@ document.addEventListener("change", (event) => {
   }
   if (target && target.dataset.action === "select-estimate-store") {
     updateEstimateStore(target.value);
+    return;
+  }
+  if (target && target.dataset.action === "estimate-v2-plan-type") {
+    updateEstimateV2PlanType(target.value);
     return;
   }
   if (target && target.dataset.action === "select-price-store") {
@@ -327,9 +335,9 @@ function render() {
   app.innerHTML = renderAppShell(account);
 }
 
-async function apiRequest(path, body) {
+async function apiRequest(path, body, options = {}) {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 5000);
+  const timeout = window.setTimeout(() => controller.abort(), Number(options.timeoutMs) || 5000);
   const token = sessionToken();
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -513,6 +521,7 @@ function renderEngineeringView(account) {
           ["project-list", "Project List"],
           ["swa", "SWA Chart"],
           ["estimate", "Estimate Calculator"],
+          ["estimate-v2", "Estimate v2"],
           ["price-list", "Material Price List"],
           ["milestone", "Milestone"],
           ["dashboard", "Dashboard"],
@@ -533,6 +542,7 @@ function renderEngineeringVisual() {
   if (state.engineeringView === "project-list") return renderProjectList();
   if (state.engineeringView === "swa") return renderSwaView();
   if (state.engineeringView === "estimate") return renderEstimateView();
+  if (state.engineeringView === "estimate-v2") return renderEstimateV2View();
   if (state.engineeringView === "price-list") return renderMaterialPriceListView();
   if (state.engineeringView === "dashboard") return renderDashboardView();
   if (state.engineeringView === "settings") return renderSettingsView();
@@ -763,6 +773,108 @@ function renderEstimateRow(row) {
         <button class="ghost-btn danger compact-btn" data-action="delete-estimate-row" data-id="${escapeAttribute(row.id)}" ${row.isBlank ? "disabled" : ""}>Delete</button>
       </td>
     </tr>
+  `;
+}
+
+function renderEstimateV2View() {
+  const draft = getEstimateV2Draft();
+  const materials = draft.materials || [];
+  const totalMentions = materials.reduce((total, material) => total + (Number(material.mentions) || 0), 0);
+  const planType = PLAN_TYPES.includes(draft.planType) ? draft.planType : PLAN_TYPES[0];
+  return `
+    <div class="visual-head">
+      <div>
+        <span class="eyebrow">Engineering View</span>
+        <h2>Estimate v2</h2>
+      </div>
+      <div class="estimate-actions">
+        <button class="primary-btn" data-action="extract-estimate-v2-pdf">Extract PDF</button>
+        <button class="ghost-btn danger" data-action="clear-estimate-v2">Clear</button>
+      </div>
+    </div>
+    <div class="estimate-v2-grid">
+      <section class="estimate-v2-upload-panel">
+        <label class="estimate-v2-field">
+          <span>Plan Type</span>
+          <select data-action="estimate-v2-plan-type" aria-label="Plan type">
+            ${PLAN_TYPES.map((type) => `<option value="${escapeAttribute(type)}" ${type === planType ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="estimate-v2-upload">
+          <span>PDF Upload</span>
+          <input type="file" accept="application/pdf,.pdf" data-estimate-v2-file>
+        </label>
+      </section>
+      <section class="estimate-v2-summary-panel">
+        ${renderEstimateV2Metric("Detected Materials", materials.length)}
+        ${renderEstimateV2Metric("Material Mentions", totalMentions)}
+        ${renderEstimateV2Metric("Text Lines", draft.lineCount || 0)}
+        ${renderEstimateV2Metric("PDF Pages", draft.pageCount || 0)}
+      </section>
+    </div>
+    <div class="estimate-v2-file-card">
+      <div>
+        <span class="eyebrow">Current PDF</span>
+        <strong>${draft.fileName ? escapeHtml(draft.fileName) : "No PDF extracted yet"}</strong>
+      </div>
+      <div>
+        <span class="eyebrow">Last Extracted</span>
+        <strong>${draft.extractedAt ? formatDateTime(draft.extractedAt) : "-"}</strong>
+      </div>
+    </div>
+    ${materials.length ? renderEstimateV2Materials(materials) : `
+      <div class="placeholder">Upload a selectable-text PDF to detect material names from the plan notes and schedules.</div>
+    `}
+    ${draft.textPreview ? `
+      <section class="estimate-v2-text-panel">
+        <div class="visual-head compact-head">
+          <div>
+            <span class="eyebrow">Readable Data</span>
+            <h3>PDF Text Preview</h3>
+          </div>
+        </div>
+        <pre>${escapeHtml(draft.textPreview)}</pre>
+      </section>
+    ` : ""}
+  `;
+}
+
+function renderEstimateV2Metric(label, value) {
+  return `
+    <div class="estimate-v2-metric">
+      <span>${escapeHtml(label)}</span>
+      <strong>${formatInteger(value)}</strong>
+    </div>
+  `;
+}
+
+function renderEstimateV2Materials(materials) {
+  return `
+    <div class="table-wrap estimate-v2-table-wrap">
+      <table class="estimate-v2-table">
+        <thead>
+          <tr>
+            <th>Description of Materials</th>
+            <th>Plan Group</th>
+            <th>Mentions</th>
+            <th>Sample Readable Lines</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${materials.map((material) => `
+            <tr>
+              <td>
+                <strong>${escapeHtml(material.description)}</strong>
+                <small>${(material.matchedTerms || []).map(escapeHtml).join(", ")}</small>
+              </td>
+              <td>${escapeHtml(material.category || "General")}</td>
+              <td>${formatInteger(material.mentions)}</td>
+              <td>${(material.sampleLines || []).map((line) => `<div>${escapeHtml(line)}</div>`).join("") || "-"}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -1754,6 +1866,62 @@ function useEstimateTemplate(templateId) {
   toast(`${template.title} loaded.`);
 }
 
+async function extractEstimateV2Pdf() {
+  const fileInput = document.querySelector("[data-estimate-v2-file]");
+  const planTypeInput = document.querySelector('[data-action="estimate-v2-plan-type"]');
+  const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+  if (!file) {
+    toast("Choose a PDF file first.");
+    return;
+  }
+  if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") {
+    toast("Estimate v2 accepts PDF files only.");
+    return;
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    toast("Use a PDF below 8 MB for this first extractor.");
+    return;
+  }
+
+  const planType = PLAN_TYPES.includes(planTypeInput && planTypeInput.value) ? planTypeInput.value : PLAN_TYPES[0];
+  toast("Extracting readable PDF data...");
+  try {
+    const data = await fileToBase64(file);
+    const response = await apiRequest("/estimate-v2/extract-pdf", {
+      fileName: file.name,
+      planType,
+      data
+    }, { timeoutMs: 45000 });
+    saveEstimateV2Draft(normalizeEstimateV2Draft({
+      planType,
+      fileName: response.fileName || file.name,
+      extractedAt: response.extractedAt || new Date().toISOString(),
+      pageCount: response.pageCount || 0,
+      characterCount: response.characterCount || 0,
+      lineCount: response.lineCount || 0,
+      textPreview: response.textPreview || "",
+      materials: response.materials || []
+    }));
+    render();
+    toast(`${formatInteger((response.materials || []).length)} materials detected.`);
+  } catch (error) {
+    toast(error.message || "PDF extraction failed.");
+  }
+}
+
+function updateEstimateV2PlanType(planType) {
+  const draft = getEstimateV2Draft();
+  draft.planType = PLAN_TYPES.includes(planType) ? planType : PLAN_TYPES[0];
+  saveEstimateV2Draft(draft);
+  render();
+}
+
+function clearEstimateV2Draft() {
+  saveEstimateV2Draft(defaultEstimateV2Draft());
+  render();
+  toast("Estimate v2 cleared.");
+}
+
 function savePriceList() {
   const storeName = priceStoreNameFromDom();
   if (!storeName) {
@@ -2488,6 +2656,51 @@ function defaultEstimateDraft() {
   };
 }
 
+function getEstimateV2Draft() {
+  return normalizeEstimateV2Draft(readJson(STORAGE.estimateV2Draft, defaultEstimateV2Draft()));
+}
+
+function saveEstimateV2Draft(draft) {
+  localStorage.setItem(STORAGE.estimateV2Draft, JSON.stringify(normalizeEstimateV2Draft(draft)));
+}
+
+function defaultEstimateV2Draft() {
+  return {
+    planType: PLAN_TYPES[0],
+    fileName: "",
+    extractedAt: "",
+    pageCount: 0,
+    characterCount: 0,
+    lineCount: 0,
+    textPreview: "",
+    materials: []
+  };
+}
+
+function normalizeEstimateV2Draft(draft) {
+  const source = draft && typeof draft === "object" ? draft : {};
+  return {
+    planType: PLAN_TYPES.includes(source.planType) ? source.planType : PLAN_TYPES[0],
+    fileName: String(source.fileName || "").trim(),
+    extractedAt: String(source.extractedAt || "").trim(),
+    pageCount: Math.max(0, Number(source.pageCount) || 0),
+    characterCount: Math.max(0, Number(source.characterCount) || 0),
+    lineCount: Math.max(0, Number(source.lineCount) || 0),
+    textPreview: String(source.textPreview || "").slice(0, 8000),
+    materials: Array.isArray(source.materials) ? source.materials.map(normalizeEstimateV2Material).filter((item) => item.description) : []
+  };
+}
+
+function normalizeEstimateV2Material(material) {
+  return {
+    description: String(material.description || "").trim(),
+    category: String(material.category || "General").trim(),
+    mentions: Math.max(0, Number(material.mentions) || 0),
+    matchedTerms: Array.isArray(material.matchedTerms) ? material.matchedTerms.map((term) => String(term || "").trim()).filter(Boolean).slice(0, 8) : [],
+    sampleLines: Array.isArray(material.sampleLines) ? material.sampleLines.map((line) => String(line || "").trim()).filter(Boolean).slice(0, 3) : []
+  };
+}
+
 function getEstimateTemplates() {
   const saved = readJson(STORAGE.estimateTemplates, []);
   if (!Array.isArray(saved)) return [];
@@ -2627,6 +2840,17 @@ function findMaterialPriceByOption(optionValue, selectedStore = "") {
     .find((price) => materialPriceOptionLabel(price) === value) || null;
 }
 
+async function fileToBase64(file) {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+
 function blankSwaRow() {
   return {
     id: cryptoId(),
@@ -2713,6 +2937,10 @@ function formatCurrencyCompact(value) {
   }).format(Number(value) || 0);
 }
 
+function formatInteger(value) {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Number(value) || 0);
+}
+
 function formatPercent(value) {
   return `${((Number(value) || 0) * 100).toFixed(2)}%`;
 }
@@ -2729,6 +2957,18 @@ function numberInputValue(value) {
 function formatDate(value) {
   const date = value instanceof Date ? value : new Date(value);
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(date);
+}
+
+function formatDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(date);
 }
 
 function todayInputValue() {

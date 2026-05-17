@@ -4,6 +4,7 @@ const fsSync = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const tls = require("node:tls");
+const zlib = require("node:zlib");
 
 const ROOT_DIR = __dirname;
 loadDotEnv(path.join(ROOT_DIR, ".env"));
@@ -16,12 +17,71 @@ const HOST = process.env.HOST || (process.env.RENDER || process.env.NODE_ENV ===
 const OTP_TTL_MINUTES = Number(process.env.OTP_TTL_MINUTES || 10);
 const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS || 30);
 const MAX_JSON_BODY_BYTES = Number(process.env.MAX_JSON_BODY_BYTES || 65536);
+const MAX_PDF_UPLOAD_BYTES = Number(process.env.MAX_PDF_UPLOAD_BYTES || 8 * 1024 * 1024);
+const MAX_PDF_JSON_BODY_BYTES = Math.ceil(MAX_PDF_UPLOAD_BYTES * 1.38) + 4096;
+const PDF_TEXT_PREVIEW_LIMIT = 12000;
 const SUPABASE_URL = normalizeSupabaseUrl(process.env.SUPABASE_URL);
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const SUPABASE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
 const IS_PRODUCTION = process.env.NODE_ENV === "production" || Boolean(process.env.RENDER);
 
 const ACCESS_KEYS = ["engineering", "procurement", "accounting", "administrative"];
+const PLAN_TYPES = ["Architectural", "Structural", "Plumbing", "Electrical", "Mechanical", "Electronics", "Civil", "Fire Protection", "Other"];
+const MATERIAL_TAKEOFF_TERMS = [
+  { description: "Concrete", category: "Structural", planTypes: ["Structural", "Civil", "Architectural"], terms: ["concrete", "ready mix", "pcc", "reinforced concrete"] },
+  { description: "Cement", category: "General", planTypes: ["Architectural", "Structural", "Civil"], terms: ["cement", "portland cement"] },
+  { description: "Sand", category: "General", planTypes: ["Architectural", "Structural", "Civil"], terms: ["sand", "fine aggregate"] },
+  { description: "Gravel / Aggregate", category: "General", planTypes: ["Architectural", "Structural", "Civil"], terms: ["gravel", "aggregate", "coarse aggregate", "base course"] },
+  { description: "Rebar / Reinforcing Bar", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["rebar", "reinforcing bar", "deformed bar", "steel bar", "r.s.b.", "rsb"] },
+  { description: "Wire Mesh", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["wire mesh", "welded wire mesh", "wwm"] },
+  { description: "Formworks", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["formwork", "formworks", "forms", "plyform"] },
+  { description: "Plywood", category: "Architectural", planTypes: ["Architectural", "Structural"], terms: ["plywood", "phenolic board"] },
+  { description: "Concrete Hollow Block", category: "Architectural", planTypes: ["Architectural", "Civil"], terms: ["concrete hollow block", "hollow block", "chb"] },
+  { description: "Mortar", category: "Architectural", planTypes: ["Architectural", "Civil"], terms: ["mortar", "plaster"] },
+  { description: "Tiles", category: "Architectural", planTypes: ["Architectural"], terms: ["tile", "tiles", "ceramic tile", "porcelain tile"] },
+  { description: "Paint", category: "Architectural", planTypes: ["Architectural"], terms: ["paint", "primer", "skim coat", "elastomeric"] },
+  { description: "Gypsum Board", category: "Architectural", planTypes: ["Architectural"], terms: ["gypsum board", "drywall", "gypsum"] },
+  { description: "Metal Stud / Framing", category: "Architectural", planTypes: ["Architectural"], terms: ["metal stud", "metal framing", "furring channel"] },
+  { description: "Glass", category: "Architectural", planTypes: ["Architectural"], terms: ["glass", "tempered glass", "glazing"] },
+  { description: "Aluminum", category: "Architectural", planTypes: ["Architectural"], terms: ["aluminum", "aluminium"] },
+  { description: "Doors", category: "Architectural", planTypes: ["Architectural"], terms: ["door", "doors", "door jamb"] },
+  { description: "Windows", category: "Architectural", planTypes: ["Architectural"], terms: ["window", "windows", "window frame"] },
+  { description: "Roofing", category: "Architectural", planTypes: ["Architectural"], terms: ["roofing", "roof panel", "long span", "flashing"] },
+  { description: "Waterproofing", category: "Architectural", planTypes: ["Architectural", "Civil"], terms: ["waterproofing", "membrane", "sealant"] },
+  { description: "PVC Pipe", category: "Plumbing", planTypes: ["Plumbing", "Fire Protection"], terms: ["pvc pipe", "pvc pipes", "polyvinyl chloride"] },
+  { description: "PPR Pipe", category: "Plumbing", planTypes: ["Plumbing"], terms: ["ppr pipe", "ppr pipes"] },
+  { description: "HDPE Pipe", category: "Plumbing", planTypes: ["Plumbing", "Civil"], terms: ["hdpe pipe", "hdpe pipes"] },
+  { description: "GI Pipe", category: "Plumbing", planTypes: ["Plumbing", "Fire Protection"], terms: ["gi pipe", "g.i. pipe", "galvanized iron pipe"] },
+  { description: "Valves", category: "Plumbing", planTypes: ["Plumbing", "Mechanical", "Fire Protection"], terms: ["valve", "valves", "gate valve", "ball valve", "check valve"] },
+  { description: "Floor Drain", category: "Plumbing", planTypes: ["Plumbing"], terms: ["floor drain", "fd"] },
+  { description: "Water Closet", category: "Plumbing", planTypes: ["Plumbing", "Architectural"], terms: ["water closet", "toilet", "wc"] },
+  { description: "Lavatory", category: "Plumbing", planTypes: ["Plumbing", "Architectural"], terms: ["lavatory", "lav.", "wash basin"] },
+  { description: "Faucet", category: "Plumbing", planTypes: ["Plumbing", "Architectural"], terms: ["faucet", "tap"] },
+  { description: "Conduit", category: "Electrical", planTypes: ["Electrical", "Electronics"], terms: ["conduit", "emt", "imc", "pvc conduit", "rigid conduit"] },
+  { description: "Wires / Cables", category: "Electrical", planTypes: ["Electrical", "Electronics"], terms: ["wire", "wires", "cable", "cables", "thhn", "thwn"] },
+  { description: "Panel Board", category: "Electrical", planTypes: ["Electrical"], terms: ["panel board", "panelboard", "distribution panel", "load center"] },
+  { description: "Circuit Breaker", category: "Electrical", planTypes: ["Electrical"], terms: ["breaker", "circuit breaker", "mccb", "mcb"] },
+  { description: "Outlet", category: "Electrical", planTypes: ["Electrical"], terms: ["outlet", "receptacle", "convenience outlet"] },
+  { description: "Switch", category: "Electrical", planTypes: ["Electrical"], terms: ["switch", "switches", "light switch"] },
+  { description: "Lighting Fixture", category: "Electrical", planTypes: ["Electrical"], terms: ["lighting fixture", "light fixture", "luminaire", "downlight"] },
+  { description: "Junction Box", category: "Electrical", planTypes: ["Electrical", "Electronics"], terms: ["junction box", "pull box", "utility box"] },
+  { description: "Duct", category: "Mechanical", planTypes: ["Mechanical"], terms: ["duct", "ducting", "air duct"] },
+  { description: "Diffuser / Grille", category: "Mechanical", planTypes: ["Mechanical"], terms: ["diffuser", "grille", "return air grille", "supply air diffuser"] },
+  { description: "Damper", category: "Mechanical", planTypes: ["Mechanical"], terms: ["damper", "fire damper", "volume damper"] },
+  { description: "Insulation", category: "Mechanical", planTypes: ["Mechanical", "Architectural"], terms: ["insulation", "thermal insulation", "acoustic insulation"] },
+  { description: "Exhaust Fan", category: "Mechanical", planTypes: ["Mechanical", "Electrical"], terms: ["exhaust fan", "ventilating fan"] },
+  { description: "Copper Tube", category: "Mechanical", planTypes: ["Mechanical"], terms: ["copper tube", "copper pipe", "refrigerant pipe"] },
+  { description: "Air Conditioning Unit", category: "Mechanical", planTypes: ["Mechanical"], terms: ["aircon", "air conditioning", "ahu", "fcu", "split type"] },
+  { description: "CAT6 Cable", category: "Electronics", planTypes: ["Electronics"], terms: ["cat6", "cat 6", "utp cable", "data cable"] },
+  { description: "Data Outlet", category: "Electronics", planTypes: ["Electronics"], terms: ["data outlet", "information outlet", "io outlet"] },
+  { description: "CCTV Camera", category: "Electronics", planTypes: ["Electronics"], terms: ["cctv", "camera", "ip camera"] },
+  { description: "Smoke Detector", category: "Electronics", planTypes: ["Electronics", "Fire Protection"], terms: ["smoke detector", "detector", "heat detector"] },
+  { description: "Speaker", category: "Electronics", planTypes: ["Electronics"], terms: ["speaker", "pa speaker"] },
+  { description: "Access Point", category: "Electronics", planTypes: ["Electronics"], terms: ["access point", "wireless access point", "wap"] },
+  { description: "Cable Tray", category: "Electrical", planTypes: ["Electrical", "Electronics"], terms: ["cable tray", "ladder tray"] },
+  { description: "Fire Sprinkler", category: "Fire Protection", planTypes: ["Fire Protection"], terms: ["sprinkler", "sprinkler head", "fire sprinkler"] },
+  { description: "Fire Hose Cabinet", category: "Fire Protection", planTypes: ["Fire Protection"], terms: ["fire hose cabinet", "fhc"] }
+];
 const PUBLIC_ACCOUNT_FIELDS = [
   "id",
   "name",
@@ -358,12 +418,12 @@ function notFound(req, res) {
   jsonResponse(req, res, 404, { ok: false, error: "Not found" });
 }
 
-async function readJsonBody(req) {
+async function readJsonBody(req, maxBytes = MAX_JSON_BODY_BYTES) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > MAX_JSON_BODY_BYTES) {
+    if (size > maxBytes) {
       const error = new Error("Request body is too large.");
       error.statusCode = 413;
       throw error;
@@ -901,6 +961,257 @@ async function listAccounts(req, res) {
   jsonResponse(req, res, 200, { ok: true, accounts: store.accounts.map(publicAccount) });
 }
 
+async function extractEstimateV2Pdf(req, res) {
+  const store = await readStore();
+  const account = sessionAccountFromRequest(req, store);
+  if (!account) {
+    return jsonResponse(req, res, 401, { ok: false, error: "Sign in is required." });
+  }
+  if (!hasEngineeringAccess(account)) {
+    return jsonResponse(req, res, 403, { ok: false, error: "Engineering access is required." });
+  }
+  if (checkRateLimit(req, res, "estimate_v2_pdf", account.id, { limit: 20, windowMs: 15 * 60 * 1000 })) return;
+
+  const body = await readJsonBody(req, MAX_PDF_JSON_BODY_BYTES);
+  const fileName = String(body.fileName || "Uploaded Plan.pdf").trim().slice(0, 180);
+  const planType = PLAN_TYPES.includes(body.planType) ? body.planType : PLAN_TYPES[0];
+  const base64 = String(body.data || "").replace(/^data:application\/pdf;base64,/i, "").trim();
+  if (!base64) return jsonResponse(req, res, 400, { ok: false, error: "PDF data is required." });
+
+  const pdfBuffer = Buffer.from(base64, "base64");
+  if (!pdfBuffer.length || !pdfBuffer.slice(0, 5).toString("latin1").startsWith("%PDF")) {
+    return jsonResponse(req, res, 400, { ok: false, error: "The uploaded file does not look like a PDF." });
+  }
+  if (pdfBuffer.length > MAX_PDF_UPLOAD_BYTES) {
+    return jsonResponse(req, res, 413, { ok: false, error: "PDF is too large for this first extractor." });
+  }
+
+  const extracted = extractReadablePdfText(pdfBuffer);
+  const materials = detectMaterialsFromText(extracted.text, planType);
+  audit(store, "estimate_v2_pdf_extracted", {
+    accountId: account.id,
+    fileName,
+    planType,
+    pageCount: extracted.pageCount,
+    materialCount: materials.length,
+    meta: requestMeta(req)
+  });
+  await writeStore(store);
+
+  jsonResponse(req, res, 200, {
+    ok: true,
+    fileName,
+    planType,
+    extractedAt: new Date().toISOString(),
+    pageCount: extracted.pageCount,
+    characterCount: extracted.text.length,
+    lineCount: extracted.lineCount,
+    textPreview: extracted.text.slice(0, PDF_TEXT_PREVIEW_LIMIT),
+    materials
+  });
+}
+
+function hasEngineeringAccess(account) {
+  return account.role === "owner" || Boolean(account.access && account.access.engineering);
+}
+
+function extractReadablePdfText(pdfBuffer) {
+  const raw = pdfBuffer.toString("latin1");
+  const pageCount = (raw.match(/\/Type\s*\/Page\b/g) || []).length;
+  const chunks = [];
+  const streamPattern = /<<([\s\S]*?)>>\s*stream\r?\n?([\s\S]*?)\r?\n?endstream/g;
+  let match;
+
+  while ((match = streamPattern.exec(raw)) !== null) {
+    const dictionary = match[1] || "";
+    const streamBuffer = trimPdfStreamBuffer(Buffer.from(match[2] || "", "latin1"));
+    const decoded = decodePdfStream(streamBuffer, dictionary);
+    if (!decoded || !decoded.length) continue;
+    const text = extractTextFromPdfContent(decoded.toString("latin1"));
+    if (text) chunks.push(text);
+  }
+
+  if (!chunks.length) {
+    const fallbackText = extractTextFromPdfContent(raw);
+    if (fallbackText) chunks.push(fallbackText);
+  }
+
+  const text = cleanExtractedText(chunks.join("\n"));
+  return {
+    pageCount,
+    text,
+    lineCount: text ? text.split(/\n+/).filter(Boolean).length : 0
+  };
+}
+
+function trimPdfStreamBuffer(buffer) {
+  let start = 0;
+  let end = buffer.length;
+  if (buffer[start] === 13 && buffer[start + 1] === 10) start += 2;
+  else if (buffer[start] === 10 || buffer[start] === 13) start += 1;
+  if (buffer[end - 2] === 13 && buffer[end - 1] === 10) end -= 2;
+  else if (buffer[end - 1] === 10 || buffer[end - 1] === 13) end -= 1;
+  return buffer.subarray(start, end);
+}
+
+function decodePdfStream(buffer, dictionary) {
+  let decoded = buffer;
+  if (/\/ASCIIHexDecode\b/.test(dictionary)) {
+    decoded = decodeAsciiHexBuffer(decoded);
+  }
+  if (/\/FlateDecode\b/.test(dictionary)) {
+    try {
+      decoded = zlib.inflateSync(decoded);
+    } catch (_error) {
+      try {
+        decoded = zlib.inflateRawSync(decoded);
+      } catch (__error) {
+        return null;
+      }
+    }
+  }
+  if (/\/(?:DCTDecode|JPXDecode|CCITTFaxDecode)\b/.test(dictionary)) return null;
+  return decoded;
+}
+
+function decodeAsciiHexBuffer(buffer) {
+  const hex = buffer.toString("latin1").replace(/[^0-9a-fA-F]/g, "");
+  const padded = hex.length % 2 ? `${hex}0` : hex;
+  return Buffer.from(padded, "hex");
+}
+
+function extractTextFromPdfContent(content) {
+  const sections = content.match(/BT[\s\S]*?ET/g) || [content];
+  const parts = [];
+  sections.forEach((section) => {
+    const literalPattern = /\((?:\\.|[^\\()])*\)/g;
+    const hexPattern = /<([0-9a-fA-F\s]{4,})>/g;
+    let match;
+    while ((match = literalPattern.exec(section)) !== null) {
+      const decoded = decodePdfLiteralString(match[0]);
+      if (decoded) parts.push(decoded);
+    }
+    while ((match = hexPattern.exec(section)) !== null) {
+      const decoded = decodePdfHexString(match[1]);
+      if (decoded) parts.push(decoded);
+    }
+  });
+  return parts.join("\n");
+}
+
+function decodePdfLiteralString(value) {
+  const inner = String(value || "").slice(1, -1);
+  const bytes = [];
+  for (let index = 0; index < inner.length; index += 1) {
+    const char = inner[index];
+    if (char !== "\\") {
+      bytes.push(inner.charCodeAt(index) & 0xff);
+      continue;
+    }
+    const next = inner[index + 1];
+    if (next === undefined) break;
+    if (next === "n") bytes.push(10);
+    else if (next === "r") bytes.push(13);
+    else if (next === "t") bytes.push(9);
+    else if (next === "b") bytes.push(8);
+    else if (next === "f") bytes.push(12);
+    else if (next === "\n") {
+      index += 1;
+      continue;
+    } else if (next === "\r") {
+      if (inner[index + 2] === "\n") index += 1;
+      index += 1;
+      continue;
+    } else if (/[0-7]/.test(next)) {
+      const octal = inner.slice(index + 1).match(/^[0-7]{1,3}/)[0];
+      bytes.push(parseInt(octal, 8));
+      index += octal.length;
+      continue;
+    } else {
+      bytes.push(next.charCodeAt(0) & 0xff);
+    }
+    index += 1;
+  }
+  return decodePdfStringBuffer(Buffer.from(bytes));
+}
+
+function decodePdfHexString(hexValue) {
+  const hex = String(hexValue || "").replace(/\s+/g, "");
+  if (!hex) return "";
+  const padded = hex.length % 2 ? `${hex}0` : hex;
+  return decodePdfStringBuffer(Buffer.from(padded, "hex"));
+}
+
+function decodePdfStringBuffer(buffer) {
+  if (!buffer.length) return "";
+  if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
+    const codes = [];
+    for (let index = 2; index + 1 < buffer.length; index += 2) {
+      codes.push(buffer.readUInt16BE(index));
+    }
+    return String.fromCharCode(...codes);
+  }
+  return buffer.toString("latin1");
+}
+
+function cleanExtractedText(text) {
+  const lines = String(text || "")
+    .replace(/\u0000/g, "")
+    .replace(/[^\S\r\n]+/g, " ")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ")
+    .split(/\r?\n+/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter((line) => line.length > 1 && /[A-Za-z0-9]/.test(line));
+  return [...new Set(lines)].join("\n");
+}
+
+function detectMaterialsFromText(text, planType) {
+  const normalizedText = String(text || "");
+  const searchableText = normalizedText.toLowerCase();
+  const lines = normalizedText.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const includeAll = planType === "Other";
+
+  return MATERIAL_TAKEOFF_TERMS
+    .filter((material) => includeAll || material.planTypes.includes(planType) || material.category === "General")
+    .map((material) => {
+      const matchedTerms = material.terms.filter((term) => countMaterialMatches(searchableText, term) > 0);
+      const mentions = matchedTerms.reduce((total, term) => total + countMaterialMatches(searchableText, term), 0);
+      return {
+        description: material.description,
+        category: material.category,
+        mentions,
+        matchedTerms,
+        sampleLines: sampleMaterialLines(lines, matchedTerms)
+      };
+    })
+    .filter((material) => material.mentions > 0)
+    .sort((first, second) => second.mentions - first.mentions || first.description.localeCompare(second.description))
+    .slice(0, 80);
+}
+
+function countMaterialMatches(text, term) {
+  const escapedTerm = escapeRegExp(term).replace(/\s+/g, "\\s+");
+  const pattern = new RegExp(`(^|[^a-z0-9])${escapedTerm}([^a-z0-9]|$)`, "gi");
+  return (text.match(pattern) || []).length;
+}
+
+function sampleMaterialLines(lines, terms) {
+  if (!terms.length) return [];
+  const lowerTerms = terms.map((term) => term.toLowerCase());
+  const samples = [];
+  for (const line of lines) {
+    const lowerLine = line.toLowerCase();
+    if (!lowerTerms.some((term) => lowerLine.includes(term))) continue;
+    samples.push(line.slice(0, 220));
+    if (samples.length >= 3) break;
+  }
+  return samples;
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function routeApi(req, res, url) {
   if (req.method === "OPTIONS") return jsonResponse(req, res, 204, {});
   try {
@@ -923,6 +1234,9 @@ async function routeApi(req, res, url) {
     }
     if (req.method === "GET" && url.pathname === "/api/accounts") {
       return await listAccounts(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/estimate-v2/extract-pdf") {
+      return await extractEstimateV2Pdf(req, res);
     }
     return notFound(req, res);
   } catch (error) {
