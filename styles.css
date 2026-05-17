@@ -1357,7 +1357,7 @@ tfoot td {
 }
 
 .estimate-v2-table {
-  min-width: 980px;
+  min-width: 1260px;
 }
 
 .estimate-v2-table td strong,
@@ -1368,6 +1368,20 @@ tfoot td {
 .estimate-v2-table td small {
   margin-top: 4px;
   color: var(--muted);
+}
+
+.estimate-v2-quantity-fields {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(70px, 0.75fr);
+  gap: 6px;
+}
+
+.estimate-v2-notes {
+  min-width: 280px;
+  min-height: 74px;
+  resize: vertical;
+  padding-top: 8px;
+  line-height: 1.4;
 }
 
 .estimate-v2-text-panel {

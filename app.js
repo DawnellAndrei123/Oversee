@@ -21,6 +21,42 @@ const ACCESS_KEYS = [
 
 const STATUS_OPTIONS = ["Not yet Started", "On-going", "On-Hold", "Completed"];
 const PLAN_TYPES = ["Architectural", "Structural", "Plumbing", "Electrical", "Mechanical", "Electronics", "Civil", "Fire Protection", "Other"];
+const DRAWING_SCALES = ["1:20", "1:25", "1:50", "1:75", "1:100", "1:150", "1:200", "Custom"];
+const LOCAL_VISION_LIBS = {
+  pdfScript: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js",
+  pdfWorker: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js",
+  tesseractScript: "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"
+};
+const ESTIMATE_V2_MATERIAL_TERMS = [
+  { description: "Concrete", category: "Structural", planTypes: ["Structural", "Civil", "Architectural"], terms: ["concrete", "conc.", "ready mix", "pcc", "reinforced concrete"] },
+  { description: "Rebar / Reinforcing Bar", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["rebar", "reinforcing bar", "deformed bar", "steel bar", "r.s.b.", "rsb", "rebars"] },
+  { description: "Foundation / Footing", category: "Structural Element", planTypes: ["Structural", "Civil"], terms: ["foundation", "footing", "footings", "foundation plan"] },
+  { description: "Structural Wall", category: "Structural Element", planTypes: ["Structural", "Civil", "Architectural"], terms: ["wall", "walls", "xwall", "xwalls", "shear wall", "retaining wall"] },
+  { description: "Column", category: "Structural Element", planTypes: ["Structural"], terms: ["column", "columns", "col.", "schedule of columns"] },
+  { description: "Beam", category: "Structural Element", planTypes: ["Structural"], terms: ["beam", "beams", "girder", "schedule of beams"] },
+  { description: "Slab", category: "Structural Element", planTypes: ["Structural", "Architectural"], terms: ["slab", "slabs", "suspended slab", "slab on grade"] },
+  { description: "Joist", category: "Structural Element", planTypes: ["Structural", "Architectural"], terms: ["joist", "joists"] },
+  { description: "Wire Mesh", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["wire mesh", "welded wire mesh", "wwm"] },
+  { description: "Formworks", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["formwork", "formworks", "forms", "plyform"] },
+  { description: "Concrete Hollow Block", category: "Architectural", planTypes: ["Architectural", "Civil"], terms: ["concrete hollow block", "hollow block", "chb"] },
+  { description: "Tiles", category: "Architectural", planTypes: ["Architectural"], terms: ["tile", "tiles", "ceramic tile", "porcelain tile"] },
+  { description: "Paint", category: "Architectural", planTypes: ["Architectural"], terms: ["paint", "primer", "skim coat"] },
+  { description: "Doors", category: "Architectural", planTypes: ["Architectural"], terms: ["door", "doors", "door jamb"] },
+  { description: "Windows", category: "Architectural", planTypes: ["Architectural"], terms: ["window", "windows", "window frame"] },
+  { description: "PVC Pipe", category: "Plumbing", planTypes: ["Plumbing", "Fire Protection"], terms: ["pvc pipe", "pvc pipes"] },
+  { description: "GI Pipe", category: "Plumbing", planTypes: ["Plumbing", "Fire Protection"], terms: ["gi pipe", "g.i. pipe", "galvanized iron pipe"] },
+  { description: "Valves", category: "Plumbing", planTypes: ["Plumbing", "Mechanical", "Fire Protection"], terms: ["valve", "valves", "gate valve", "ball valve", "check valve"] },
+  { description: "Conduit", category: "Electrical", planTypes: ["Electrical", "Electronics"], terms: ["conduit", "emt", "imc", "pvc conduit", "rigid conduit"] },
+  { description: "Wires / Cables", category: "Electrical", planTypes: ["Electrical", "Electronics"], terms: ["wire", "wires", "cable", "cables", "thhn", "thwn"] },
+  { description: "Panel Board", category: "Electrical", planTypes: ["Electrical"], terms: ["panel board", "panelboard", "distribution panel"] },
+  { description: "Lighting Fixture", category: "Electrical", planTypes: ["Electrical"], terms: ["lighting fixture", "light fixture", "luminaire", "downlight"] },
+  { description: "Junction Box", category: "Electrical", planTypes: ["Electrical", "Electronics"], terms: ["junction box", "pull box", "utility box"] },
+  { description: "Duct", category: "Mechanical", planTypes: ["Mechanical"], terms: ["duct", "ducting", "air duct"] },
+  { description: "Diffuser / Grille", category: "Mechanical", planTypes: ["Mechanical"], terms: ["diffuser", "grille", "return air grille", "supply air diffuser"] },
+  { description: "CAT6 Cable", category: "Electronics", planTypes: ["Electronics"], terms: ["cat6", "cat 6", "utp cable", "data cable"] },
+  { description: "CCTV Camera", category: "Electronics", planTypes: ["Electronics"], terms: ["cctv", "camera", "ip camera"] },
+  { description: "Fire Sprinkler", category: "Fire Protection", planTypes: ["Fire Protection"], terms: ["sprinkler", "sprinkler head", "fire sprinkler"] }
+];
 const YEAR_WEEKS_PER_MONTH = 4;
 const GANTT_BAR_SIDE_MARGIN = 8;
 const GANTT_BAR_INNER_PADDING = 4;
@@ -110,8 +146,12 @@ document.addEventListener("click", (event) => {
     "add-estimate-row": addEstimateRow,
     "save-estimate-template": saveEstimateTemplate,
     "extract-estimate-v2-pdf": extractEstimateV2Pdf,
+    "extract-estimate-v2-local": extractEstimateV2LocalVision,
     "extract-estimate-v2-ai": extractEstimateV2Ai,
+    "add-estimate-v2-row": addEstimateV2Row,
+    "save-estimate-v2-template": saveEstimateV2Template,
     "clear-estimate-v2": clearEstimateV2Draft,
+    "delete-estimate-v2-row": () => deleteEstimateV2Row(id),
     "use-estimate-template": () => useEstimateTemplate(id),
     "delete-estimate-row": () => deleteEstimateRow(id),
     "duplicate-price-store": duplicatePriceStore,
@@ -161,6 +201,11 @@ document.addEventListener("input", (event) => {
     handleEstimateInput(estimateInput);
     return;
   }
+  const estimateV2Input = event.target.closest("[data-estimate-v2-input]");
+  if (estimateV2Input) {
+    saveEstimateV2Draft(collectEstimateV2DraftFromDom());
+    return;
+  }
   const priceInput = event.target.closest("[data-price-input]");
   if (priceInput) {
     persistCurrentPriceRows();
@@ -192,6 +237,10 @@ document.addEventListener("change", (event) => {
   }
   if (target && target.dataset.action === "estimate-v2-plan-type") {
     updateEstimateV2PlanType(target.value);
+    return;
+  }
+  if (target && target.dataset.action === "estimate-v2-scale") {
+    updateEstimateV2Scale(target.value);
     return;
   }
   if (target && target.dataset.action === "select-price-store") {
@@ -784,6 +833,7 @@ function renderEstimateV2View() {
     return total + (Number(material.mentions) || (material.notes || material.source ? 1 : 0));
   }, 0);
   const planType = PLAN_TYPES.includes(draft.planType) ? draft.planType : PLAN_TYPES[0];
+  const drawingScale = DRAWING_SCALES.includes(draft.drawingScale) ? draft.drawingScale : "1:100";
   return `
     <div class="visual-head">
       <div>
@@ -792,7 +842,10 @@ function renderEstimateV2View() {
       </div>
       <div class="estimate-actions">
         <button class="primary-btn" data-action="extract-estimate-v2-pdf">Extract PDF</button>
+        <button class="secondary-btn" data-action="extract-estimate-v2-local">Local Vision OCR</button>
         <button class="secondary-btn" data-action="extract-estimate-v2-ai">AI Vision Extract</button>
+        <button class="secondary-btn" data-action="add-estimate-v2-row">Add Row</button>
+        <button class="secondary-btn" data-action="save-estimate-v2-template">Save Template</button>
         <button class="ghost-btn danger" data-action="clear-estimate-v2">Clear</button>
       </div>
     </div>
@@ -802,6 +855,12 @@ function renderEstimateV2View() {
           <span>Plan Type</span>
           <select data-action="estimate-v2-plan-type" aria-label="Plan type">
             ${PLAN_TYPES.map((type) => `<option value="${escapeAttribute(type)}" ${type === planType ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="estimate-v2-field">
+          <span>Drawing Scale</span>
+          <select data-action="estimate-v2-scale" aria-label="Drawing scale">
+            ${DRAWING_SCALES.map((scale) => `<option value="${escapeAttribute(scale)}" ${scale === drawingScale ? "selected" : ""}>${escapeHtml(scale)}</option>`).join("")}
           </select>
         </label>
         <label class="estimate-v2-upload">
@@ -828,6 +887,10 @@ function renderEstimateV2View() {
       <div>
         <span class="eyebrow">Extraction Mode</span>
         <strong>${draft.extractionMode ? escapeHtml(draft.extractionMode) : "-"}</strong>
+      </div>
+      <div>
+        <span class="eyebrow">Drawing Scale</span>
+        <strong>${escapeHtml(drawingScale)}</strong>
       </div>
     </div>
     ${materials.length ? renderEstimateV2Materials(materials) : `
@@ -867,26 +930,37 @@ function renderEstimateV2Materials(materials) {
             <th>Detected Quantity</th>
             <th>Evidence</th>
             <th>Confidence</th>
+            <th>Action</th>
           </tr>
         </thead>
         <tbody>
-          ${materials.map((material) => `
-            <tr>
-              <td>
-                <strong>${escapeHtml(material.description)}</strong>
-                <small>${(material.matchedTerms || []).map(escapeHtml).join(", ")}</small>
-              </td>
-              <td>${escapeHtml(material.category || "General")}</td>
-              <td>${formatEstimateV2Quantity(material)}</td>
-              <td>
-                ${(material.sampleLines || []).map((line) => `<div>${escapeHtml(line)}</div>`).join("") || escapeHtml(material.notes || material.source || "-")}
-              </td>
-              <td>${escapeHtml(material.confidence || "-")}</td>
-            </tr>
-          `).join("")}
+          ${materials.map((material) => renderEstimateV2MaterialRow(material)).join("")}
         </tbody>
       </table>
     </div>
+  `;
+}
+
+function renderEstimateV2MaterialRow(material) {
+  const row = normalizeEstimateV2Material(material);
+  return `
+    <tr data-estimate-v2-row="${escapeAttribute(row.id)}">
+      <td>
+        <input class="estimate-input description" data-estimate-v2-input data-field="description" value="${escapeAttribute(row.description)}" placeholder="Material or item">
+        <small>${(row.matchedTerms || []).map(escapeHtml).join(", ")}</small>
+      </td>
+      <td><input class="estimate-input" data-estimate-v2-input data-field="category" value="${escapeAttribute(row.category || "General")}" placeholder="Group"></td>
+      <td>
+        <div class="estimate-v2-quantity-fields">
+          <input class="estimate-input" data-estimate-v2-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(row.quantity)}" placeholder="Qty">
+          <input class="estimate-input" data-estimate-v2-input data-field="unit" value="${escapeAttribute(row.unit)}" placeholder="unit">
+        </div>
+        <small>${formatEstimateV2Quantity(row)}</small>
+      </td>
+      <td><textarea class="estimate-input estimate-v2-notes" data-estimate-v2-input data-field="notes" placeholder="Evidence or notes">${escapeHtml(row.notes || row.source || (row.sampleLines || []).join("\n"))}</textarea></td>
+      <td><input class="estimate-input" data-estimate-v2-input data-field="confidence" value="${escapeAttribute(row.confidence || "-")}" placeholder="confidence"></td>
+      <td><button class="ghost-btn danger compact-btn" data-action="delete-estimate-v2-row" data-id="${escapeAttribute(row.id)}">Delete</button></td>
+    </tr>
   `;
 }
 
@@ -1975,11 +2049,110 @@ async function extractEstimateV2Ai() {
   }
 }
 
+async function extractEstimateV2LocalVision() {
+  const fileInput = document.querySelector("[data-estimate-v2-file]");
+  const planTypeInput = document.querySelector('[data-action="estimate-v2-plan-type"]');
+  const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+  if (!file) {
+    toast("Choose a PDF file first.");
+    return;
+  }
+  if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") {
+    toast("Local Vision OCR accepts PDF files only.");
+    return;
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    toast("Use a PDF below 8 MB for Local Vision OCR.");
+    return;
+  }
+
+  const planType = PLAN_TYPES.includes(planTypeInput && planTypeInput.value) ? planTypeInput.value : PLAN_TYPES[0];
+  toast("Loading Local Vision OCR...");
+  try {
+    const { text, pageCount, confidence } = await runLocalVisionOcr(file);
+    const detectedMaterials = detectEstimateV2MaterialsFromText(text, planType, "Local Vision OCR");
+    saveEstimateV2Draft(normalizeEstimateV2Draft({
+      ...collectEstimateV2DraftFromDom(),
+      planType,
+      fileName: file.name,
+      extractedAt: new Date().toISOString(),
+      extractionMode: "Local Vision OCR",
+      pageCount,
+      characterCount: text.length,
+      lineCount: text ? text.split(/\n+/).filter(Boolean).length : 0,
+      textPreview: text || "Local OCR finished, but no readable text was found on the first page.",
+      materials: detectedMaterials.length ? detectedMaterials : [{
+        description: "No OCR materials detected",
+        category: planType,
+        quantity: 0,
+        unit: "",
+        confidence: confidence ? `${Math.round(confidence)}% OCR` : "low",
+        source: "Local Vision OCR",
+        notes: "OCR ran locally in the browser, but did not find known material keywords. Add rows manually or try a clearer/scaled PDF page."
+      }]
+    }));
+    render();
+    toast(`${formatInteger(detectedMaterials.length)} local OCR materials detected.`);
+  } catch (error) {
+    toast(error.message || "Local Vision OCR failed.");
+  }
+}
+
 function updateEstimateV2PlanType(planType) {
   const draft = getEstimateV2Draft();
   draft.planType = PLAN_TYPES.includes(planType) ? planType : PLAN_TYPES[0];
   saveEstimateV2Draft(draft);
   render();
+}
+
+function updateEstimateV2Scale(scale) {
+  const draft = collectEstimateV2DraftFromDom();
+  draft.drawingScale = DRAWING_SCALES.includes(scale) ? scale : "Custom";
+  saveEstimateV2Draft(draft);
+  render();
+}
+
+function addEstimateV2Row() {
+  const draft = collectEstimateV2DraftFromDom();
+  draft.materials.push(blankEstimateV2Material());
+  saveEstimateV2Draft(draft);
+  render();
+}
+
+function deleteEstimateV2Row(rowId) {
+  const draft = collectEstimateV2DraftFromDom();
+  draft.materials = draft.materials.filter((row) => row.id !== rowId);
+  saveEstimateV2Draft(draft);
+  render();
+  toast("Estimate v2 row deleted.");
+}
+
+function saveEstimateV2Template() {
+  const draft = collectEstimateV2DraftFromDom();
+  const rows = draft.materials.filter((row) => row.description && row.description !== "No OCR materials detected");
+  if (!rows.length) {
+    toast("Add at least one Estimate v2 row before saving a template.");
+    return;
+  }
+  const templates = getEstimateTemplates();
+  const titleBase = draft.fileName ? draft.fileName.replace(/\.pdf$/i, "") : `${draft.planType} Estimate`;
+  const title = `${titleBase} Template`;
+  const template = {
+    id: cryptoId(),
+    title,
+    selectedStore: "",
+    rows: rows.map((row) => normalizeEstimateRow({
+      id: cryptoId(),
+      description: row.description,
+      unit: row.unit,
+      quantity: row.quantity,
+      costPerUnit: 0
+    })),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  saveEstimateTemplates([...templates, template]);
+  toast(`${title} saved as an estimate template.`);
 }
 
 function clearEstimateV2Draft() {
@@ -2079,6 +2252,32 @@ function collectEstimateDraftFromDom() {
     rows: collectEstimateRowsFromDom(),
     updatedAt: new Date().toISOString()
   };
+}
+
+function collectEstimateV2DraftFromDom() {
+  const current = getEstimateV2Draft();
+  const planTypeInput = document.querySelector('[data-action="estimate-v2-plan-type"]');
+  const scaleInput = document.querySelector('[data-action="estimate-v2-scale"]');
+  return normalizeEstimateV2Draft({
+    ...current,
+    planType: planTypeInput ? planTypeInput.value : current.planType,
+    drawingScale: scaleInput ? scaleInput.value : current.drawingScale,
+    materials: [...document.querySelectorAll("[data-estimate-v2-row]")].map(readEstimateV2RowFromDom)
+  });
+}
+
+function readEstimateV2RowFromDom(rowNode) {
+  return normalizeEstimateV2Material({
+    id: rowNode.dataset.estimateV2Row || cryptoId(),
+    description: getRowInputValue(rowNode, "description"),
+    category: getRowInputValue(rowNode, "category"),
+    quantity: getRowInputNumber(rowNode, "quantity"),
+    unit: getRowInputValue(rowNode, "unit"),
+    notes: getRowInputValue(rowNode, "notes"),
+    confidence: getRowInputValue(rowNode, "confidence"),
+    source: "Edited",
+    matchedTerms: []
+  });
 }
 
 function collectEstimateRowsFromDom() {
@@ -2733,6 +2932,7 @@ function saveEstimateV2Draft(draft) {
 function defaultEstimateV2Draft() {
   return {
     planType: PLAN_TYPES[0],
+    drawingScale: "1:100",
     fileName: "",
     extractedAt: "",
     extractionMode: "",
@@ -2748,6 +2948,7 @@ function normalizeEstimateV2Draft(draft) {
   const source = draft && typeof draft === "object" ? draft : {};
   return {
     planType: PLAN_TYPES.includes(source.planType) ? source.planType : PLAN_TYPES[0],
+    drawingScale: DRAWING_SCALES.includes(source.drawingScale) ? source.drawingScale : "1:100",
     fileName: String(source.fileName || "").trim(),
     extractedAt: String(source.extractedAt || "").trim(),
     extractionMode: String(source.extractionMode || "").trim(),
@@ -2761,6 +2962,7 @@ function normalizeEstimateV2Draft(draft) {
 
 function normalizeEstimateV2Material(material) {
   return {
+    id: material.id || cryptoId(),
     description: String(material.description || "").trim(),
     category: String(material.category || "General").trim(),
     mentions: Math.max(0, Number(material.mentions) || 0),
@@ -2772,6 +2974,18 @@ function normalizeEstimateV2Material(material) {
     matchedTerms: Array.isArray(material.matchedTerms) ? material.matchedTerms.map((term) => String(term || "").trim()).filter(Boolean).slice(0, 8) : [],
     sampleLines: Array.isArray(material.sampleLines) ? material.sampleLines.map((line) => String(line || "").trim()).filter(Boolean).slice(0, 3) : []
   };
+}
+
+function blankEstimateV2Material() {
+  return normalizeEstimateV2Material({
+    description: "",
+    category: "General",
+    quantity: 0,
+    unit: "",
+    confidence: "manual",
+    source: "Manual row",
+    notes: ""
+  });
 }
 
 function getEstimateTemplates() {
@@ -2911,6 +3125,183 @@ function findMaterialPriceByOption(optionValue, selectedStore = "") {
     .filter((price) => price.description)
     .filter((price) => !selectedStore || sameStore(price.store, selectedStore))
     .find((price) => materialPriceOptionLabel(price) === value) || null;
+}
+
+async function runLocalVisionOcr(file) {
+  await loadPdfJs();
+  await loadTesseract();
+  const pdfBuffer = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
+  const page = await pdf.getPage(1);
+  const baseViewport = page.getViewport({ scale: 1 });
+  const maxCanvasSide = 2600;
+  const renderScale = Math.min(3, Math.max(1.6, maxCanvasSide / Math.max(baseViewport.width, baseViewport.height)));
+  const viewport = page.getViewport({ scale: renderScale });
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: context, viewport }).promise;
+
+  const worker = await createTesseractWorker((message) => {
+    if (message.status === "recognizing text" && Number.isFinite(message.progress)) {
+      toast(`Local OCR ${Math.round(message.progress * 100)}%`);
+    }
+  });
+  try {
+    const result = await worker.recognize(canvas);
+    return {
+      text: cleanOcrText(result && result.data ? result.data.text : ""),
+      confidence: result && result.data ? result.data.confidence : 0,
+      pageCount: pdf.numPages || 1
+    };
+  } finally {
+    if (worker && typeof worker.terminate === "function") await worker.terminate();
+  }
+}
+
+async function loadPdfJs() {
+  if (window.pdfjsLib) return window.pdfjsLib;
+  await loadScript(LOCAL_VISION_LIBS.pdfScript);
+  if (!window.pdfjsLib) throw new Error("PDF renderer did not load.");
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = LOCAL_VISION_LIBS.pdfWorker;
+  return window.pdfjsLib;
+}
+
+async function loadTesseract() {
+  if (window.Tesseract) return window.Tesseract;
+  await loadScript(LOCAL_VISION_LIBS.tesseractScript);
+  if (!window.Tesseract) throw new Error("Local OCR engine did not load.");
+  return window.Tesseract;
+}
+
+function loadScript(src) {
+  const existing = [...document.scripts].find((script) => script.src === src);
+  if (existing && existing.dataset.loaded === "true") return Promise.resolve();
+  if (existing && existing.dataset.loading === "true") {
+    return new Promise((resolve, reject) => {
+      existing.addEventListener("load", resolve, { once: true });
+      existing.addEventListener("error", reject, { once: true });
+    });
+  }
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.dataset.loading = "true";
+    script.addEventListener("load", () => {
+      script.dataset.loaded = "true";
+      resolve();
+    }, { once: true });
+    script.addEventListener("error", () => reject(new Error(`Unable to load ${src}`)), { once: true });
+    document.head.appendChild(script);
+  });
+}
+
+async function createTesseractWorker(logger) {
+  const Tesseract = window.Tesseract;
+  try {
+    return await Tesseract.createWorker("eng", 1, { logger });
+  } catch (_error) {
+    const worker = await Tesseract.createWorker({ logger });
+    await worker.load();
+    await worker.loadLanguage("eng");
+    await worker.initialize("eng");
+    return worker;
+  }
+}
+
+function cleanOcrText(text) {
+  return String(text || "")
+    .replace(/\u0000/g, "")
+    .split(/\r?\n+/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function detectEstimateV2MaterialsFromText(text, planType, source) {
+  const searchable = String(text || "").toLowerCase();
+  const lines = String(text || "").split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const includeAll = planType === "Other";
+  return ESTIMATE_V2_MATERIAL_TERMS
+    .filter((material) => includeAll || material.planTypes.includes(planType) || material.category === "General")
+    .map((material) => {
+      const matchedTerms = material.terms.filter((term) => countTextMatches(searchable, term) > 0);
+      const mentions = matchedTerms.reduce((total, term) => total + countTextMatches(searchable, term), 0);
+      const sampleLines = sampleLinesForTerms(lines, matchedTerms);
+      const quantityHint = inferEstimateV2Quantity(sampleLines);
+      return normalizeEstimateV2Material({
+        description: material.description,
+        category: material.category,
+        quantity: quantityHint.quantity,
+        unit: quantityHint.unit,
+        mentions,
+        confidence: quantityHint.quantity > 0 ? "quantity hint" : (mentions > 2 ? "medium" : "low"),
+        source,
+        notes: quantityHint.note || sampleLines[0] || `Detected by OCR keyword${matchedTerms.length === 1 ? "" : "s"}: ${matchedTerms.join(", ")}`,
+        matchedTerms,
+        sampleLines
+      });
+    })
+    .filter((material) => material.mentions > 0)
+    .sort((first, second) => second.mentions - first.mentions || first.description.localeCompare(second.description));
+}
+
+function countTextMatches(text, term) {
+  const escapedTerm = escapeRegExp(term).replace(/\s+/g, "\\s+");
+  const pattern = new RegExp(`(^|[^a-z0-9])${escapedTerm}([^a-z0-9]|$)`, "gi");
+  return (text.match(pattern) || []).length;
+}
+
+function sampleLinesForTerms(lines, terms) {
+  if (!terms.length) return [];
+  const lowerTerms = terms.map((term) => term.toLowerCase());
+  return lines
+    .filter((line) => lowerTerms.some((term) => line.toLowerCase().includes(term)))
+    .slice(0, 3);
+}
+
+function inferEstimateV2Quantity(lines) {
+  const matches = [];
+  const quantityPattern = /(^|[^0-9])([0-9]{1,6}(?:,[0-9]{3})*(?:\.[0-9]+)?)(?:\s*)(cu\.?\s*m|cum|m3|m\^3|sq\.?\s*m|sqm|m2|m\^2|pcs?|sets?|lots?|bags?|kg|tons?|l\.?\s*m\.?|lm|lin\.?\s*m)\b/gi;
+  lines.forEach((line) => {
+    let match = quantityPattern.exec(line);
+    while (match) {
+      const quantity = Number(String(match[2]).replace(/,/g, ""));
+      const unit = normalizeEstimateV2Unit(match[3]);
+      if (Number.isFinite(quantity) && quantity > 0 && quantity < 100000 && unit) {
+        matches.push({ quantity, unit, line });
+      }
+      match = quantityPattern.exec(line);
+    }
+  });
+  if (!matches.length) return { quantity: 0, unit: "", note: "" };
+  const unit = matches[0].unit;
+  const sameUnitMatches = matches.filter((match) => match.unit === unit);
+  const quantity = sameUnitMatches.reduce((total, match) => total + match.quantity, 0);
+  const sample = sameUnitMatches[0] ? sameUnitMatches[0].line : "";
+  return {
+    quantity,
+    unit,
+    note: sample ? `${sample}\nQuantity hint from OCR: ${formatSwaNumber(quantity)} ${unit}` : ""
+  };
+}
+
+function normalizeEstimateV2Unit(unit) {
+  const value = String(unit || "").toLowerCase().replace(/\s+/g, "").replace(/\./g, "");
+  if (["cum", "m3", "m^3"].includes(value)) return "cu.m";
+  if (["sqm", "m2", "m^2"].includes(value)) return "sq.m";
+  if (["pc", "pcs"].includes(value)) return "pcs";
+  if (["set", "sets"].includes(value)) return "sets";
+  if (["lot", "lots"].includes(value)) return "lot";
+  if (["bag", "bags"].includes(value)) return "bags";
+  if (["kg"].includes(value)) return "kg";
+  if (["ton", "tons"].includes(value)) return "tons";
+  if (["lm", "linm"].includes(value)) return "lm";
+  return "";
 }
 
 async function fileToBase64(file) {
