@@ -112,6 +112,10 @@ document.addEventListener("click", (event) => {
     "open-account": openAccountModal,
     "main-view": () => openMainView(target.dataset.view),
     "engineering-tab": () => {
+      if (target.dataset.premiumLocked === "true") {
+        showPremiumAccessNotice();
+        return;
+      }
       state.engineeringView = target.dataset.view;
       state.riskOnly = false;
       render();
@@ -605,7 +609,7 @@ function renderEngineeringView(account) {
         ].map(([view, label]) => {
           const locked = lockedViews.includes(view);
           return `
-            <button class="toolbar-btn ${state.engineeringView === view ? "active" : ""}" data-action="engineering-tab" data-view="${view}" ${locked ? "disabled" : ""} title="${locked ? "Subscribed accounts only" : ""}">${label}</button>
+            <button class="toolbar-btn ${state.engineeringView === view ? "active" : ""} ${locked ? "locked" : ""}" data-action="engineering-tab" data-view="${view}" ${locked ? `data-premium-locked="true" aria-disabled="true"` : ""} title="${locked ? "For Premium Access Only" : ""}">${label}</button>
           `;
         }).join("")}
       </div>
@@ -633,7 +637,12 @@ function renderEngineeringVisual(account) {
 }
 
 function renderPlanLockedView(view) {
-  const label = view === "estimate-v2" ? "Estimate v2" : "Dashboard";
+  const labels = {
+    estimate: "Estimate Calculator",
+    "estimate-v2": "Estimate v2",
+    dashboard: "Dashboard"
+  };
+  const label = labels[view] || "This feature";
   return `<div class="placeholder">${label} is available for subscribed accounts only. This account is currently on the Free plan.</div>`;
 }
 
@@ -2579,6 +2588,18 @@ function toast(message) {
   window.setTimeout(() => toastNode.remove(), 3200);
 }
 
+function showPremiumAccessNotice() {
+  let notice = document.querySelector(".premium-access-notice");
+  if (notice) notice.remove();
+
+  notice = document.createElement("div");
+  notice.className = "premium-access-notice";
+  notice.setAttribute("role", "status");
+  notice.textContent = "For Premium Access Only";
+  document.body.appendChild(notice);
+  window.setTimeout(() => notice.remove(), 2200);
+}
+
 function filteredProjects() {
   return getProjects().filter((project) => {
     const nameMatch = !state.filter.name || project.name.toLowerCase().includes(state.filter.name.toLowerCase());
@@ -2889,7 +2910,7 @@ function hasPremiumPlan(account) {
 }
 
 function premiumLockedViews(account) {
-  return hasPremiumPlan(account) ? [] : ["estimate-v2", "dashboard"];
+  return hasPremiumPlan(account) ? [] : ["estimate", "estimate-v2", "dashboard"];
 }
 
 function accountPlanLabel(account, subscription = getSubscription()) {
