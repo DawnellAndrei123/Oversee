@@ -22,19 +22,14 @@ const ACCESS_KEYS = [
 const STATUS_OPTIONS = ["Not yet Started", "On-going", "On-Hold", "Completed"];
 const PLAN_TYPES = ["Architectural", "Structural", "Plumbing", "Electrical", "Mechanical", "Electronics", "Civil", "Fire Protection", "Other"];
 const DRAWING_SCALES = ["1:20", "1:25", "1:50", "1:75", "1:100", "1:150", "1:200", "Custom"];
-const ESTIMATE_METHOD_SOURCES = [
-  {
-    key: "fajardo-simplified",
-    label: "Simplified Construction Estimate - Max B. Fajardo",
-    shortLabel: "Max B. Fajardo",
-    note: "Reference source for the estimating method. Formula values remain visible and editable in Oversee."
-  },
-  {
-    key: "standard-editable",
-    label: "Standard Editable Method",
-    shortLabel: "Standard Method",
-    note: "General estimating method using editable Oversee assumptions."
-  }
+const ESTIMATE_V2_TAKEOFF_TOOLS = [
+  { key: "calibrate", label: "Calibrate", type: "calibrate", unit: "m", defaultName: "Scale Reference", color: "#28f4ff" },
+  { key: "tile-area", label: "Tiles / Floor", type: "area", unit: "sq.m", defaultName: "Floor Tiles", color: "#22c55e" },
+  { key: "wall-area", label: "Wall Area", type: "area", unit: "sq.m", defaultName: "Wall Finish", color: "#f59e0b" },
+  { key: "pipe-length", label: "Pipe Length", type: "linear", unit: "lm", defaultName: "Pipe Line", color: "#38bdf8" },
+  { key: "wire-length", label: "Wire Length", type: "linear", unit: "lm", defaultName: "Electrical Wiring", color: "#a78bfa" },
+  { key: "door-count", label: "Doors", type: "count", unit: "pcs", defaultName: "Door", color: "#fb7185" },
+  { key: "window-count", label: "Windows", type: "count", unit: "pcs", defaultName: "Window", color: "#f97316" }
 ];
 const LOCAL_VISION_LIBS = {
   pdfScript: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js",
@@ -149,6 +144,11 @@ const state = {
   activeSwaSheetId: "draft",
   dashboardFilter: { projectId: "all", year: "all" },
   activePriceStore: "",
+  estimateV2Pdf: null,
+  estimateV2PageImage: "",
+  estimateV2PageWidth: 0,
+  estimateV2PageHeight: 0,
+  estimateV2ActivePoints: [],
   theme: readTheme()
 };
 
@@ -229,6 +229,14 @@ document.addEventListener("click", (event) => {
     "save-estimate-v2-template": saveEstimateV2Template,
     "clear-estimate-v2": clearEstimateV2Draft,
     "delete-estimate-v2-row": () => deleteEstimateV2Row(id),
+    "set-estimate-v2-tool": () => setEstimateV2TakeoffTool(target.dataset.tool),
+    "estimate-v2-plan-click": () => handleEstimateV2PlanClick(event),
+    "finish-estimate-v2-takeoff": finishEstimateV2Takeoff,
+    "undo-estimate-v2-point": undoEstimateV2Point,
+    "clear-estimate-v2-points": clearEstimateV2Points,
+    "delete-estimate-v2-takeoff": () => deleteEstimateV2Takeoff(id),
+    "estimate-v2-prev-page": () => changeEstimateV2Page(-1),
+    "estimate-v2-next-page": () => changeEstimateV2Page(1),
     "use-estimate-template": () => useEstimateTemplate(id),
     "delete-estimate-row": () => deleteEstimateRow(id),
     "duplicate-price-store": duplicatePriceStore,
@@ -284,6 +292,12 @@ document.addEventListener("input", (event) => {
     updateEstimateV2StructuralSummary();
     return;
   }
+  const estimateV2TakeoffInput = event.target.closest("[data-estimate-v2-takeoff-input]");
+  if (estimateV2TakeoffInput) {
+    saveEstimateV2Draft(collectEstimateV2DraftFromDom());
+    updateEstimateV2TakeoffTotals();
+    return;
+  }
   const priceInput = event.target.closest("[data-price-input]");
   if (priceInput) {
     persistCurrentPriceRows();
@@ -294,6 +308,11 @@ document.addEventListener("input", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  const estimateV2FileInput = event.target.closest("[data-estimate-v2-file]");
+  if (estimateV2FileInput) {
+    loadEstimateV2TakeoffPdf(estimateV2FileInput.files && estimateV2FileInput.files[0]);
+    return;
+  }
   const target = event.target.closest("[data-action]");
   if (target && target.dataset.action === "toggle-password-visibility") {
     togglePasswordVisibility(target);
@@ -323,10 +342,6 @@ document.addEventListener("change", (event) => {
   }
   if (target && target.dataset.action === "estimate-v2-scale") {
     updateEstimateV2Scale(target.value);
-    return;
-  }
-  if (target && target.dataset.action === "estimate-v2-method-source") {
-    updateEstimateV2MethodSource(target.value);
     return;
   }
   if (target && target.dataset.action === "select-price-store") {
@@ -950,14 +965,12 @@ function renderEstimateRow(row) {
 
 function renderEstimateV2View() {
   const draft = getEstimateV2Draft();
-  const materials = draft.materials || [];
-  const evidenceHits = materials.reduce((total, material) => {
-    return total + (Number(material.mentions) || (material.notes || material.source ? 1 : 0));
-  }, 0);
-  const planType = PLAN_TYPES.includes(draft.planType) ? draft.planType : PLAN_TYPES[0];
-  const drawingScale = DRAWING_SCALES.includes(draft.drawingScale) ? draft.drawingScale : "1:100";
-  const methodSource = estimateMethodSource(draft.methodSource);
-  const showStructuralInputs = isStructuralPlanType(planType);
+  const rows = draft.takeoffRows || [];
+  const activeTool = estimateV2TakeoffTool(draft.takeoffTool);
+  const totalCost = estimateV2TakeoffTotal(rows);
+  const totalArea = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "area").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
+  const totalLength = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "linear").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
+  const totalCount = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "count").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
   return `
     <div class="visual-head">
       <div>
@@ -965,109 +978,195 @@ function renderEstimateV2View() {
         <h2>Estimate v2</h2>
       </div>
       <div class="estimate-actions">
-        <button class="primary-btn" data-action="extract-estimate-v2-pdf">Extract PDF</button>
-        <button class="secondary-btn" data-action="extract-estimate-v2-local">Local Vision OCR v1.5</button>
-        <button class="secondary-btn" data-action="extract-estimate-v2-ai">AI Vision Extract</button>
-        <button class="secondary-btn" data-action="add-estimate-v2-row">Add Row</button>
         <button class="secondary-btn" data-action="save-estimate-v2-template">Save Template</button>
         <button class="ghost-btn danger" data-action="clear-estimate-v2">Clear</button>
       </div>
     </div>
-    <div class="estimate-v2-grid">
+    <div class="estimate-v2-takeoff-grid">
       <section class="estimate-v2-upload-panel">
         <label class="estimate-v2-field">
-          <span>Plan Type</span>
-          <select data-action="estimate-v2-plan-type" aria-label="Plan type">
-            ${PLAN_TYPES.map((type) => `<option value="${escapeAttribute(type)}" ${type === planType ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}
-          </select>
-        </label>
-        <label class="estimate-v2-field">
-          <span>Drawing Scale</span>
-          <select data-action="estimate-v2-scale" aria-label="Drawing scale">
-            ${DRAWING_SCALES.map((scale) => `<option value="${escapeAttribute(scale)}" ${scale === drawingScale ? "selected" : ""}>${escapeHtml(scale)}</option>`).join("")}
-          </select>
-        </label>
-        <label class="estimate-v2-field">
-          <span>Estimate Method Source</span>
-          <select data-action="estimate-v2-method-source" aria-label="Estimate method source">
-            ${ESTIMATE_METHOD_SOURCES.map((source) => `<option value="${escapeAttribute(source.key)}" ${source.key === methodSource.key ? "selected" : ""}>${escapeHtml(source.label)}</option>`).join("")}
-          </select>
-        </label>
-        ${showStructuralInputs ? `
-          <div class="estimate-v2-structural-inputs">
-            <label class="estimate-v2-field">
-              <span>Building Elevation / Height (m)</span>
-              <input data-estimate-v2-input data-estimate-v2-structural-elevation type="number" min="0" step="0.01" value="${numberInputValue(draft.structuralElevation)}" placeholder="Example: 3.00">
-            </label>
-            <label class="estimate-v2-field">
-              <span>CHB Wall Length (m)</span>
-              <input data-estimate-v2-input data-estimate-v2-chb-wall-length type="number" min="0" step="0.01" value="${numberInputValue(draft.chbWallLength)}" placeholder="Optional until wall detection">
-            </label>
-          </div>
-        ` : ""}
-        <label class="estimate-v2-upload">
-          <span>PDF Upload</span>
+          <span>Floor Plan PDF</span>
           <input type="file" accept="application/pdf,.pdf" data-estimate-v2-file>
         </label>
+        <label class="estimate-v2-field">
+          <span>Current Item</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-current-name value="${escapeAttribute(draft.takeoffItemName || activeTool.defaultName)}" placeholder="Material or scope">
+        </label>
+        <label class="estimate-v2-field">
+          <span>${activeTool.type === "calibrate" ? "Known Length (m)" : `Cost Per ${activeTool.unit}`}</span>
+          <input data-estimate-v2-takeoff-input ${activeTool.type === "calibrate" ? "data-estimate-v2-calibration-length" : "data-estimate-v2-current-cost"} type="number" min="0" step="0.01" value="${numberInputValue(activeTool.type === "calibrate" ? draft.calibrationLength : draft.takeoffCostPerUnit)}" placeholder="0.00">
+        </label>
+        <div class="estimate-v2-tool-strip">
+          ${ESTIMATE_V2_TAKEOFF_TOOLS.map((tool) => `
+            <button class="secondary-btn compact-btn ${tool.key === activeTool.key ? "active-tool" : ""}" data-action="set-estimate-v2-tool" data-tool="${escapeAttribute(tool.key)}">${escapeHtml(tool.label)}</button>
+          `).join("")}
+        </div>
+        <div class="estimate-v2-takeoff-actions">
+          <button class="primary-btn" data-action="finish-estimate-v2-takeoff">${activeTool.type === "calibrate" ? "Set Scale" : "Add Takeoff"}</button>
+          <button class="secondary-btn" data-action="undo-estimate-v2-point">Undo Point</button>
+          <button class="ghost-btn" data-action="clear-estimate-v2-points">Clear Points</button>
+        </div>
       </section>
       <section class="estimate-v2-summary-panel">
-        ${renderEstimateV2Metric("Detected Materials", materials.length)}
-        ${renderEstimateV2Metric("Evidence Hits", evidenceHits)}
-        ${renderEstimateV2Metric("Text Lines", draft.lineCount || 0)}
-        ${renderEstimateV2Metric("OCR Regions", draft.regionCount || (draft.ocrRegions || []).length)}
-        ${renderEstimateV2Metric("PDF Pages", draft.pageCount || 0)}
+        ${renderEstimateV2Metric("Floor Area", `${formatSwaNumber(totalArea)} m2`)}
+        ${renderEstimateV2Metric("Length", `${formatSwaNumber(totalLength)} m`)}
+        ${renderEstimateV2Metric("Count", formatInteger(totalCount))}
+        ${renderEstimateV2Metric("Total Cost", formatCurrency(totalCost))}
       </section>
     </div>
     <div class="estimate-v2-file-card">
       <div>
         <span class="eyebrow">Current PDF</span>
-        <strong>${draft.fileName ? escapeHtml(draft.fileName) : "No PDF extracted yet"}</strong>
+        <strong>${draft.planFileName ? escapeHtml(draft.planFileName) : "No PDF loaded yet"}</strong>
       </div>
       <div>
-        <span class="eyebrow">Last Extracted</span>
-        <strong>${draft.extractedAt ? formatDateTime(draft.extractedAt) : "-"}</strong>
+        <span class="eyebrow">Page</span>
+        <strong>${draft.takeoffPageCount ? `${formatInteger(draft.takeoffPage)} / ${formatInteger(draft.takeoffPageCount)}` : "-"}</strong>
       </div>
       <div>
-        <span class="eyebrow">Extraction Mode</span>
-        <strong>${draft.extractionMode ? escapeHtml(draft.extractionMode) : "-"}</strong>
+        <span class="eyebrow">Scale</span>
+        <strong>${draft.metersPerPixel ? `${formatSwaNumber(1 / draft.metersPerPixel)} px / m` : "Not calibrated"}</strong>
       </div>
       <div>
-        <span class="eyebrow">Drawing Scale</span>
-        <strong>${escapeHtml(drawingScale)}</strong>
-      </div>
-      <div>
-        <span class="eyebrow">Method Source</span>
-        <strong>${escapeHtml(methodSource.shortLabel)}</strong>
-      </div>
-      <div>
-        <span class="eyebrow">Pages OCR'd</span>
-        <strong>${draft.processedPages ? `${formatInteger(draft.processedPages)} / ${formatInteger(draft.pageCount || draft.processedPages)}` : "-"}</strong>
+        <span class="eyebrow">Active Tool</span>
+        <strong>${escapeHtml(activeTool.label)}</strong>
       </div>
     </div>
-    ${materials.length ? renderEstimateV2Materials(materials) : `
-      <div class="placeholder">Upload a PDF to detect material names from readable text, schedules, and CAD layers.</div>
-    `}
-    ${showStructuralInputs ? renderEstimateV2StructuralSummary(draft) : ""}
-    ${renderEstimateV2OcrRegions(draft.ocrRegions || [])}
-    ${draft.textPreview ? `
-      <section class="estimate-v2-text-panel">
-        <div class="visual-head compact-head">
-          <div>
-            <span class="eyebrow">Readable Data</span>
-            <h3>PDF Text Preview</h3>
-          </div>
+    ${renderEstimateV2TakeoffWorkspace(draft)}
+    ${renderEstimateV2TakeoffTable(rows)}
+  `;
+}
+
+function renderEstimateV2TakeoffWorkspace(draft) {
+  const pageImage = state.estimateV2PageImage;
+  const pageWidth = state.estimateV2PageWidth || draft.takeoffPageWidth || 0;
+  const pageHeight = state.estimateV2PageHeight || draft.takeoffPageHeight || 0;
+  if (!pageImage || !pageWidth || !pageHeight) {
+    return `<div class="placeholder estimate-v2-plan-placeholder">Upload a floor plan PDF to begin takeoff.</div>`;
+  }
+  return `
+    <section class="estimate-v2-plan-shell">
+      <div class="estimate-v2-page-controls">
+        <button class="secondary-btn compact-btn" data-action="estimate-v2-prev-page">Previous Page</button>
+        <span>Page ${formatInteger(draft.takeoffPage)} of ${formatInteger(draft.takeoffPageCount || 1)}</span>
+        <button class="secondary-btn compact-btn" data-action="estimate-v2-next-page">Next Page</button>
+      </div>
+      <div class="estimate-v2-plan-stage">
+        <div class="estimate-v2-plan-surface">
+          <img class="estimate-v2-plan-image" src="${pageImage}" alt="Uploaded plan page">
+          <svg
+            class="estimate-v2-plan-overlay"
+            viewBox="0 0 ${pageWidth} ${pageHeight}"
+            preserveAspectRatio="none"
+            data-action="estimate-v2-plan-click"
+            data-estimate-v2-plan-canvas
+            data-width="${pageWidth}"
+            data-height="${pageHeight}"
+          >
+            ${renderEstimateV2TakeoffOverlay(draft, pageWidth, pageHeight)}
+          </svg>
         </div>
-        <pre>${escapeHtml(draft.textPreview)}</pre>
-      </section>
-    ` : ""}
+      </div>
+    </section>
+  `;
+}
+
+function renderEstimateV2TakeoffOverlay(draft, pageWidth, pageHeight) {
+  const rows = (draft.takeoffRows || []).filter((row) => Number(row.page || 1) === Number(draft.takeoffPage || 1));
+  const activeTool = estimateV2TakeoffTool(draft.takeoffTool);
+  const activePoints = state.estimateV2ActivePoints || [];
+  return `
+    ${rows.map(renderEstimateV2TakeoffShape).join("")}
+    ${renderEstimateV2ActiveShape(activeTool, activePoints)}
+    <rect class="estimate-v2-click-catcher" x="0" y="0" width="${pageWidth}" height="${pageHeight}"></rect>
+  `;
+}
+
+function renderEstimateV2TakeoffShape(row) {
+  const tool = estimateV2TakeoffTool(row.tool);
+  const color = row.color || tool.color;
+  const points = Array.isArray(row.points) ? row.points : [];
+  if (!points.length) return "";
+  if (tool.type === "area" && points.length >= 3) {
+    return `<polygon class="estimate-v2-shape area" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polygon>`;
+  }
+  if (tool.type === "linear" && points.length >= 2) {
+    return `<polyline class="estimate-v2-shape line" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polyline>`;
+  }
+  if (tool.type === "count") {
+    return points.map((point) => `<circle class="estimate-v2-shape count" cx="${point.x}" cy="${point.y}" r="10" style="--takeoff-color:${escapeAttribute(color)}"></circle>`).join("");
+  }
+  if (tool.type === "calibrate" && points.length >= 2) {
+    return `<polyline class="estimate-v2-shape calibration" points="${pointsToSvg(points.slice(0, 2))}" style="--takeoff-color:${escapeAttribute(color)}"></polyline>`;
+  }
+  return "";
+}
+
+function renderEstimateV2ActiveShape(tool, points) {
+  if (!points.length) return "";
+  const color = tool.color;
+  const markers = points.map((point) => `<circle class="estimate-v2-active-point" cx="${point.x}" cy="${point.y}" r="8" style="--takeoff-color:${escapeAttribute(color)}"></circle>`).join("");
+  if (tool.type === "area" && points.length >= 2) {
+    return `<polyline class="estimate-v2-active-line" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polyline>${markers}`;
+  }
+  if ((tool.type === "linear" || tool.type === "calibrate") && points.length >= 2) {
+    return `<polyline class="estimate-v2-active-line" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polyline>${markers}`;
+  }
+  return markers;
+}
+
+function renderEstimateV2TakeoffTable(rows) {
+  return `
+    <div class="table-wrap estimate-v2-table-wrap">
+      <table class="estimate-v2-table estimate-v2-takeoff-table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Type</th>
+            <th>Quantity</th>
+            <th>Unit</th>
+            <th>Cost / Unit</th>
+            <th>Total Cost</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.length ? rows.map(renderEstimateV2TakeoffRow).join("") : `<tr><td colspan="7" class="empty-cell">No takeoff rows yet.</td></tr>`}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="5">Total Estimate</td>
+            <td data-estimate-v2-takeoff-total>${formatCurrency(estimateV2TakeoffTotal(rows))}</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  `;
+}
+
+function renderEstimateV2TakeoffRow(row) {
+  const normalized = normalizeEstimateV2TakeoffRow(row);
+  const tool = estimateV2TakeoffTool(normalized.tool);
+  return `
+    <tr data-estimate-v2-takeoff-row="${escapeAttribute(normalized.id)}">
+      <td><input class="estimate-input description" data-estimate-v2-takeoff-input data-field="description" value="${escapeAttribute(normalized.description)}" placeholder="Item"></td>
+      <td>${escapeHtml(tool.label)}</td>
+      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0"></td>
+      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="unit" value="${escapeAttribute(normalized.unit)}" placeholder="unit"></td>
+      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(normalized.costPerUnit)}" placeholder="0.00"></td>
+      <td data-estimate-v2-row-total>${formatCurrency(estimateV2TakeoffRowTotal(normalized))}</td>
+      <td><button class="ghost-btn danger compact-btn" data-action="delete-estimate-v2-takeoff" data-id="${escapeAttribute(normalized.id)}">Delete</button></td>
+    </tr>
   `;
 }
 
 function renderEstimateV2Metric(label, value) {
+  const displayValue = typeof value === "string" ? value : formatInteger(value);
   return `
     <div class="estimate-v2-metric">
       <span>${escapeHtml(label)}</span>
-      <strong>${formatInteger(value)}</strong>
+      <strong>${escapeHtml(displayValue)}</strong>
     </div>
   `;
 }
@@ -1120,9 +1219,8 @@ function renderEstimateV2StructuralSummaryContent(draft) {
         ${renderEstimateV2StructuralCard("CHB Count", `${formatInteger(summary.chbPiecesWithWaste)} pcs`, `${formatInteger(summary.chbPieces)} pcs + 5% allowance`)}
       </div>
       <p class="estimate-v2-structural-note">
-        Method source: ${escapeHtml(summary.methodSource.label)}. Concrete mix uses 1:2:4 ratio and a 1.54 dry-volume factor. CHB count uses 12.5 blocks per sq.m; enter building elevation and wall length when the drawing does not provide wall area yet.
+        Concrete mix uses 1:2:4 ratio and a 1.54 dry-volume factor. CHB count uses 12.5 blocks per sq.m; enter building elevation and wall length when the drawing does not provide wall area yet.
       </p>
-      <p class="estimate-v2-method-note">${escapeHtml(summary.methodSource.note)}</p>
   `;
 }
 
@@ -1196,6 +1294,39 @@ function formatEstimateV2Quantity(material) {
   return mentions ? `${formatInteger(mentions)} hit${mentions === 1 ? "" : "s"}` : "-";
 }
 
+function estimateV2TakeoffTool(toolKey) {
+  return ESTIMATE_V2_TAKEOFF_TOOLS.find((tool) => tool.key === toolKey) || ESTIMATE_V2_TAKEOFF_TOOLS[0];
+}
+
+function estimateV2TakeoffTotal(rows) {
+  return (Array.isArray(rows) ? rows : []).reduce((total, row) => total + estimateV2TakeoffRowTotal(row), 0);
+}
+
+function estimateV2TakeoffRowTotal(row) {
+  return (Number(row.quantity) || 0) * (Number(row.costPerUnit) || 0);
+}
+
+function pointsToSvg(points) {
+  return (Array.isArray(points) ? points : []).map((point) => `${Number(point.x) || 0},${Number(point.y) || 0}`).join(" ");
+}
+
+function estimateV2PolylinePixels(points) {
+  if (!Array.isArray(points) || points.length < 2) return 0;
+  return points.slice(1).reduce((total, point, index) => {
+    const previous = points[index];
+    return total + Math.hypot(point.x - previous.x, point.y - previous.y);
+  }, 0);
+}
+
+function estimateV2PolygonPixels(points) {
+  if (!Array.isArray(points) || points.length < 3) return 0;
+  const area = points.reduce((total, point, index) => {
+    const next = points[(index + 1) % points.length];
+    return total + point.x * next.y - next.x * point.y;
+  }, 0);
+  return Math.abs(area) / 2;
+}
+
 function estimateV2StructuralTakeoff(draft) {
   const rows = (draft.materials || []).map(normalizeEstimateV2Material);
   const concreteVolume = rows
@@ -1204,15 +1335,10 @@ function estimateV2StructuralTakeoff(draft) {
   const mix = concreteMixBreakdown(concreteVolume);
   const chb = estimateChbTakeoff(rows, draft);
   return {
-    methodSource: estimateMethodSource(draft.methodSource),
     concreteVolume,
     ...mix,
     ...chb
   };
-}
-
-function estimateMethodSource(sourceKey) {
-  return ESTIMATE_METHOD_SOURCES.find((source) => source.key === sourceKey) || ESTIMATE_METHOD_SOURCES[0];
 }
 
 function updateEstimateV2StructuralSummary() {
@@ -2458,11 +2584,194 @@ function updateEstimateV2Scale(scale) {
   render();
 }
 
-function updateEstimateV2MethodSource(sourceKey) {
+function setEstimateV2TakeoffTool(toolKey) {
+  const tool = estimateV2TakeoffTool(toolKey);
   const draft = collectEstimateV2DraftFromDom();
-  draft.methodSource = estimateMethodSource(sourceKey).key;
+  draft.takeoffTool = tool.key;
+  draft.takeoffItemName = tool.defaultName;
+  if (tool.type === "calibrate") draft.takeoffCostPerUnit = 0;
+  state.estimateV2ActivePoints = [];
   saveEstimateV2Draft(draft);
   render();
+}
+
+async function loadEstimateV2TakeoffPdf(file) {
+  if (!file) return;
+  if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") {
+    toast("Estimate v2 accepts PDF files only.");
+    return;
+  }
+  if (file.size > 12 * 1024 * 1024) {
+    toast("Use a PDF below 12 MB for takeoff.");
+    return;
+  }
+  toast("Loading floor plan PDF...");
+  try {
+    await loadPdfJs();
+    const pdfBuffer = await file.arrayBuffer();
+    const pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
+    state.estimateV2Pdf = pdf;
+    state.estimateV2ActivePoints = [];
+    const draft = collectEstimateV2DraftFromDom();
+    draft.planFileName = file.name;
+    draft.takeoffPage = 1;
+    draft.takeoffPageCount = pdf.numPages || 1;
+    await renderEstimateV2TakeoffPage(draft, 1);
+    toast("PDF loaded for takeoff.");
+  } catch (error) {
+    toast(error.message || "PDF takeoff preview failed.");
+  }
+}
+
+async function changeEstimateV2Page(delta) {
+  const pdf = state.estimateV2Pdf;
+  if (!pdf) {
+    toast("Re-upload the PDF to change pages.");
+    return;
+  }
+  const draft = collectEstimateV2DraftFromDom();
+  const nextPage = Math.min(Math.max(1, (Number(draft.takeoffPage) || 1) + delta), pdf.numPages || 1);
+  if (nextPage === draft.takeoffPage) return;
+  state.estimateV2ActivePoints = [];
+  await renderEstimateV2TakeoffPage(draft, nextPage);
+}
+
+async function renderEstimateV2TakeoffPage(draft, pageNumber) {
+  const pdf = state.estimateV2Pdf;
+  if (!pdf) return;
+  const page = await pdf.getPage(pageNumber);
+  const baseViewport = page.getViewport({ scale: 1 });
+  const maxSide = 1600;
+  const renderScale = Math.min(2.25, Math.max(1, maxSide / Math.max(baseViewport.width, baseViewport.height)));
+  const viewport = page.getViewport({ scale: renderScale });
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Unable to render PDF page.");
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: context, viewport }).promise;
+  state.estimateV2PageImage = canvas.toDataURL("image/png");
+  state.estimateV2PageWidth = canvas.width;
+  state.estimateV2PageHeight = canvas.height;
+  draft.takeoffPage = pageNumber;
+  draft.takeoffPageCount = pdf.numPages || 1;
+  draft.takeoffPageWidth = canvas.width;
+  draft.takeoffPageHeight = canvas.height;
+  saveEstimateV2Draft(draft);
+  render();
+}
+
+function handleEstimateV2PlanClick(event) {
+  const canvasNode = event.target.closest("[data-estimate-v2-plan-canvas]");
+  if (!canvasNode) return;
+  const draft = collectEstimateV2DraftFromDom();
+  const tool = estimateV2TakeoffTool(draft.takeoffTool);
+  const rect = canvasNode.getBoundingClientRect();
+  const width = Number(canvasNode.dataset.width) || state.estimateV2PageWidth || draft.takeoffPageWidth;
+  const height = Number(canvasNode.dataset.height) || state.estimateV2PageHeight || draft.takeoffPageHeight;
+  const point = normalizePoint({
+    x: (event.clientX - rect.left) * width / rect.width,
+    y: (event.clientY - rect.top) * height / rect.height
+  });
+  if (!point) return;
+  if (tool.type === "calibrate" && state.estimateV2ActivePoints.length >= 2) state.estimateV2ActivePoints = [];
+  state.estimateV2ActivePoints.push(point);
+  saveEstimateV2Draft(draft);
+  render();
+}
+
+function finishEstimateV2Takeoff() {
+  const draft = collectEstimateV2DraftFromDom();
+  const tool = estimateV2TakeoffTool(draft.takeoffTool);
+  const points = (state.estimateV2ActivePoints || []).map(normalizePoint).filter(Boolean);
+  if (!points.length) {
+    toast("Click the plan first.");
+    return;
+  }
+  if (tool.type === "calibrate") {
+    if (points.length < 2) {
+      toast("Pick two points for scale calibration.");
+      return;
+    }
+    const pixelLength = estimateV2PolylinePixels(points.slice(0, 2));
+    if (!pixelLength || !draft.calibrationLength) {
+      toast("Enter the known length in meters.");
+      return;
+    }
+    draft.metersPerPixel = draft.calibrationLength / pixelLength;
+    draft.calibrationPoints = points.slice(0, 2);
+    state.estimateV2ActivePoints = [];
+    saveEstimateV2Draft(draft);
+    render();
+    toast("Scale calibrated.");
+    return;
+  }
+  if ((tool.type === "area" || tool.type === "linear") && !draft.metersPerPixel) {
+    toast("Calibrate scale first.");
+    return;
+  }
+  let quantity = 0;
+  if (tool.type === "area") {
+    if (points.length < 3) {
+      toast("Area takeoff needs at least 3 points.");
+      return;
+    }
+    quantity = estimateV2PolygonPixels(points) * draft.metersPerPixel * draft.metersPerPixel;
+  } else if (tool.type === "linear") {
+    if (points.length < 2) {
+      toast("Length takeoff needs at least 2 points.");
+      return;
+    }
+    quantity = estimateV2PolylinePixels(points) * draft.metersPerPixel;
+  } else if (tool.type === "count") {
+    quantity = points.length;
+  }
+  draft.takeoffRows.push(normalizeEstimateV2TakeoffRow({
+    description: draft.takeoffItemName || tool.defaultName,
+    tool: tool.key,
+    quantity,
+    unit: tool.unit,
+    costPerUnit: draft.takeoffCostPerUnit,
+    points,
+    page: draft.takeoffPage,
+    color: tool.color
+  }));
+  state.estimateV2ActivePoints = [];
+  saveEstimateV2Draft(draft);
+  render();
+  toast(`${tool.label} takeoff added.`);
+}
+
+function undoEstimateV2Point() {
+  state.estimateV2ActivePoints.pop();
+  render();
+}
+
+function clearEstimateV2Points() {
+  state.estimateV2ActivePoints = [];
+  render();
+}
+
+function deleteEstimateV2Takeoff(rowId) {
+  const draft = collectEstimateV2DraftFromDom();
+  draft.takeoffRows = draft.takeoffRows.filter((row) => row.id !== rowId);
+  saveEstimateV2Draft(draft);
+  render();
+  toast("Takeoff row deleted.");
+}
+
+function updateEstimateV2TakeoffTotals() {
+  const rows = collectEstimateV2TakeoffRowsFromDom(getEstimateV2Draft().takeoffRows);
+  document.querySelectorAll("[data-estimate-v2-takeoff-row]").forEach((rowNode) => {
+    const row = rows.find((item) => item.id === rowNode.dataset.estimateV2TakeoffRow);
+    const totalNode = rowNode.querySelector("[data-estimate-v2-row-total]");
+    if (row && totalNode) totalNode.textContent = formatCurrency(estimateV2TakeoffRowTotal(row));
+  });
+  document.querySelectorAll("[data-estimate-v2-takeoff-total]").forEach((node) => {
+    node.textContent = formatCurrency(estimateV2TakeoffTotal(rows));
+  });
 }
 
 function addEstimateV2Row() {
@@ -2482,13 +2791,14 @@ function deleteEstimateV2Row(rowId) {
 
 function saveEstimateV2Template() {
   const draft = collectEstimateV2DraftFromDom();
-  const rows = draft.materials.filter((row) => row.description && row.description !== "No OCR materials detected");
+  const takeoffRows = (draft.takeoffRows || []).filter((row) => row.description);
+  const rows = takeoffRows.length ? takeoffRows : draft.materials.filter((row) => row.description && row.description !== "No OCR materials detected");
   if (!rows.length) {
-    toast("Add at least one Estimate v2 row before saving a template.");
+    toast("Add at least one takeoff row before saving a template.");
     return;
   }
   const templates = getEstimateTemplates();
-  const titleBase = draft.fileName ? draft.fileName.replace(/\.pdf$/i, "") : `${draft.planType} Estimate`;
+  const titleBase = draft.planFileName ? draft.planFileName.replace(/\.pdf$/i, "") : `${draft.planType} Takeoff`;
   const title = `${titleBase} Template`;
   const template = {
     id: cryptoId(),
@@ -2499,7 +2809,7 @@ function saveEstimateV2Template() {
       description: row.description,
       unit: row.unit,
       quantity: row.quantity,
-      costPerUnit: 0
+      costPerUnit: row.costPerUnit || 0
     })),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -2509,6 +2819,11 @@ function saveEstimateV2Template() {
 }
 
 function clearEstimateV2Draft() {
+  state.estimateV2Pdf = null;
+  state.estimateV2PageImage = "";
+  state.estimateV2PageWidth = 0;
+  state.estimateV2PageHeight = 0;
+  state.estimateV2ActivePoints = [];
   saveEstimateV2Draft(defaultEstimateV2Draft());
   render();
   toast("Estimate v2 cleared.");
@@ -2611,17 +2926,38 @@ function collectEstimateV2DraftFromDom() {
   const current = getEstimateV2Draft();
   const planTypeInput = document.querySelector('[data-action="estimate-v2-plan-type"]');
   const scaleInput = document.querySelector('[data-action="estimate-v2-scale"]');
-  const methodSourceInput = document.querySelector('[data-action="estimate-v2-method-source"]');
   const elevationInput = document.querySelector("[data-estimate-v2-structural-elevation]");
   const chbLengthInput = document.querySelector("[data-estimate-v2-chb-wall-length]");
+  const currentNameInput = document.querySelector("[data-estimate-v2-current-name]");
+  const currentCostInput = document.querySelector("[data-estimate-v2-current-cost]");
+  const calibrationLengthInput = document.querySelector("[data-estimate-v2-calibration-length]");
   return normalizeEstimateV2Draft({
     ...current,
     planType: planTypeInput ? planTypeInput.value : current.planType,
     drawingScale: scaleInput ? scaleInput.value : current.drawingScale,
-    methodSource: methodSourceInput ? methodSourceInput.value : current.methodSource,
     structuralElevation: elevationInput ? elevationInput.value : current.structuralElevation,
     chbWallLength: chbLengthInput ? chbLengthInput.value : current.chbWallLength,
+    takeoffItemName: currentNameInput ? currentNameInput.value : current.takeoffItemName,
+    takeoffCostPerUnit: currentCostInput ? currentCostInput.value : current.takeoffCostPerUnit,
+    calibrationLength: calibrationLengthInput ? calibrationLengthInput.value : current.calibrationLength,
+    takeoffRows: collectEstimateV2TakeoffRowsFromDom(current.takeoffRows),
     materials: [...document.querySelectorAll("[data-estimate-v2-row]")].map(readEstimateV2RowFromDom)
+  });
+}
+
+function collectEstimateV2TakeoffRowsFromDom(fallbackRows = []) {
+  const rowNodes = [...document.querySelectorAll("[data-estimate-v2-takeoff-row]")];
+  if (!rowNodes.length) return fallbackRows;
+  return rowNodes.map((rowNode) => {
+    const previous = fallbackRows.find((row) => row.id === rowNode.dataset.estimateV2TakeoffRow) || {};
+    return normalizeEstimateV2TakeoffRow({
+      ...previous,
+      id: rowNode.dataset.estimateV2TakeoffRow || cryptoId(),
+      description: getRowInputValue(rowNode, "description"),
+      quantity: getRowInputNumber(rowNode, "quantity"),
+      unit: getRowInputValue(rowNode, "unit"),
+      costPerUnit: getRowInputNumber(rowNode, "costPerUnit")
+    });
   });
 }
 
@@ -3334,9 +3670,20 @@ function defaultEstimateV2Draft() {
   return {
     planType: PLAN_TYPES[0],
     drawingScale: "1:100",
-    methodSource: "fajardo-simplified",
     structuralElevation: 0,
     chbWallLength: 0,
+    planFileName: "",
+    takeoffPage: 1,
+    takeoffPageCount: 0,
+    takeoffPageWidth: 0,
+    takeoffPageHeight: 0,
+    metersPerPixel: 0,
+    calibrationLength: 0,
+    calibrationPoints: [],
+    takeoffTool: "calibrate",
+    takeoffItemName: "Scale Reference",
+    takeoffCostPerUnit: 0,
+    takeoffRows: [],
     fileName: "",
     extractedAt: "",
     extractionMode: "",
@@ -3356,9 +3703,20 @@ function normalizeEstimateV2Draft(draft) {
   return {
     planType: PLAN_TYPES.includes(source.planType) ? source.planType : PLAN_TYPES[0],
     drawingScale: DRAWING_SCALES.includes(source.drawingScale) ? source.drawingScale : "1:100",
-    methodSource: estimateMethodSource(source.methodSource).key,
     structuralElevation: Math.max(0, Number(source.structuralElevation) || 0),
     chbWallLength: Math.max(0, Number(source.chbWallLength) || 0),
+    planFileName: String(source.planFileName || source.fileName || "").trim(),
+    takeoffPage: Math.max(1, Number(source.takeoffPage) || 1),
+    takeoffPageCount: Math.max(0, Number(source.takeoffPageCount) || 0),
+    takeoffPageWidth: Math.max(0, Number(source.takeoffPageWidth) || 0),
+    takeoffPageHeight: Math.max(0, Number(source.takeoffPageHeight) || 0),
+    metersPerPixel: Math.max(0, Number(source.metersPerPixel) || 0),
+    calibrationLength: Math.max(0, Number(source.calibrationLength) || 0),
+    calibrationPoints: Array.isArray(source.calibrationPoints) ? source.calibrationPoints.map(normalizePoint).filter(Boolean).slice(0, 2) : [],
+    takeoffTool: estimateV2TakeoffTool(source.takeoffTool).key,
+    takeoffItemName: String(source.takeoffItemName || estimateV2TakeoffTool(source.takeoffTool).defaultName).trim(),
+    takeoffCostPerUnit: Math.max(0, Number(source.takeoffCostPerUnit) || 0),
+    takeoffRows: Array.isArray(source.takeoffRows) ? source.takeoffRows.map(normalizeEstimateV2TakeoffRow).filter((row) => row.description) : [],
     fileName: String(source.fileName || "").trim(),
     extractedAt: String(source.extractedAt || "").trim(),
     extractionMode: String(source.extractionMode || "").trim(),
@@ -3397,6 +3755,29 @@ function normalizeEstimateV2Material(material) {
     matchedTerms: Array.isArray(material.matchedTerms) ? material.matchedTerms.map((term) => String(term || "").trim()).filter(Boolean).slice(0, 8) : [],
     sampleLines: Array.isArray(material.sampleLines) ? material.sampleLines.map((line) => String(line || "").trim()).filter(Boolean).slice(0, 3) : []
   };
+}
+
+function normalizeEstimateV2TakeoffRow(row) {
+  const tool = estimateV2TakeoffTool(row && row.tool);
+  return {
+    id: row && row.id || cryptoId(),
+    description: String(row && row.description || tool.defaultName).trim(),
+    tool: tool.key,
+    quantity: Math.max(0, Number(row && row.quantity) || 0),
+    unit: String(row && row.unit || tool.unit).trim(),
+    costPerUnit: Math.max(0, Number(row && row.costPerUnit) || 0),
+    points: Array.isArray(row && row.points) ? row.points.map(normalizePoint).filter(Boolean).slice(0, 80) : [],
+    page: Math.max(1, Number(row && row.page) || 1),
+    color: String(row && row.color || tool.color).trim()
+  };
+}
+
+function normalizePoint(point) {
+  if (!point || typeof point !== "object") return null;
+  const x = Number(point.x);
+  const y = Number(point.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x: Math.max(0, x), y: Math.max(0, y) };
 }
 
 function blankEstimateV2Material() {

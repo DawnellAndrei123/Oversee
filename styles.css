@@ -1268,6 +1268,13 @@ tfoot td {
   margin-bottom: 12px;
 }
 
+.estimate-v2-takeoff-grid {
+  display: grid;
+  grid-template-columns: minmax(340px, 0.9fr) minmax(320px, 1.1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
 .estimate-v2-upload-panel,
 .estimate-v2-summary-panel,
 .estimate-v2-file-card,
@@ -1334,6 +1341,20 @@ tfoot td {
   padding: 14px;
 }
 
+.estimate-v2-tool-strip,
+.estimate-v2-takeoff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.estimate-v2-tool-strip .active-tool {
+  color: #07111a;
+  background: linear-gradient(135deg, var(--cyan), #7bffcf);
+  border-color: transparent;
+  font-weight: 900;
+}
+
 .estimate-v2-metric {
   min-height: 96px;
   display: grid;
@@ -1371,6 +1392,101 @@ tfoot td {
 
 .estimate-v2-table-wrap {
   border-color: var(--border);
+}
+
+.estimate-v2-plan-placeholder {
+  margin-bottom: 12px;
+}
+
+.estimate-v2-plan-shell {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 12px;
+  margin-bottom: 12px;
+  background:
+    linear-gradient(145deg, rgba(40, 244, 255, 0.075), transparent 58%),
+    rgba(255, 255, 255, 0.045);
+}
+
+.estimate-v2-page-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.estimate-v2-plan-stage {
+  overflow: auto;
+  max-height: 680px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.estimate-v2-plan-surface {
+  position: relative;
+  min-width: 720px;
+}
+
+.estimate-v2-plan-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  user-select: none;
+}
+
+.estimate-v2-plan-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+}
+
+.estimate-v2-click-catcher {
+  fill: transparent;
+}
+
+.estimate-v2-shape {
+  fill: none;
+  stroke: var(--takeoff-color);
+  stroke-width: 6;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.estimate-v2-shape.area {
+  fill: color-mix(in srgb, var(--takeoff-color) 24%, transparent);
+}
+
+.estimate-v2-shape.count,
+.estimate-v2-active-point {
+  fill: var(--takeoff-color);
+  stroke: #ffffff;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.estimate-v2-active-line {
+  fill: none;
+  stroke: var(--takeoff-color);
+  stroke-width: 4;
+  stroke-dasharray: 10 8;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.estimate-v2-takeoff-table tfoot td {
+  font-weight: 900;
+}
+
+.empty-cell {
+  color: var(--muted);
+  text-align: center;
 }
 
 .estimate-v2-structural-panel {
@@ -1424,13 +1540,6 @@ tfoot td {
 .estimate-v2-structural-note {
   margin: 12px 0 0;
   color: var(--muted);
-  line-height: 1.45;
-}
-
-.estimate-v2-method-note {
-  margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -2084,6 +2193,7 @@ body[data-theme="light"] .estimate-summary,
 body[data-theme="light"] .estimate-v2-upload-panel,
 body[data-theme="light"] .estimate-v2-summary-panel,
 body[data-theme="light"] .estimate-v2-file-card,
+body[data-theme="light"] .estimate-v2-plan-shell,
 body[data-theme="light"] .estimate-v2-structural-panel,
 body[data-theme="light"] .estimate-v2-structural-card,
 body[data-theme="light"] .estimate-v2-region-panel,
@@ -2272,6 +2382,7 @@ body[data-theme="light"] .premium-access-notice {
   .dashboard-layout,
   .status-chart-wrap,
   .estimate-v2-grid,
+  .estimate-v2-takeoff-grid,
   .estimate-v2-structural-inputs,
   .form-grid,
   .access-grid,
