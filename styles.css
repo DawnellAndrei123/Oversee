@@ -1292,6 +1292,12 @@ tfoot td {
   color: var(--muted);
 }
 
+.estimate-v2-structural-inputs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .estimate-v2-field span,
 .estimate-v2-upload span,
 .estimate-v2-file-card span,
@@ -1302,6 +1308,7 @@ tfoot td {
 }
 
 .estimate-v2-field select,
+.estimate-v2-field input,
 .estimate-v2-upload input {
   width: 100%;
   min-height: 42px;
@@ -1314,6 +1321,7 @@ tfoot td {
 }
 
 .estimate-v2-field select:focus,
+.estimate-v2-field input:focus,
 .estimate-v2-upload input:focus {
   border-color: var(--cyan);
   box-shadow: 0 0 0 3px var(--cyan-soft);
@@ -1363,6 +1371,60 @@ tfoot td {
 
 .estimate-v2-table-wrap {
   border-color: var(--border);
+}
+
+.estimate-v2-structural-panel {
+  margin-top: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 14px;
+  background:
+    linear-gradient(145deg, rgba(40, 244, 255, 0.075), transparent 58%),
+    rgba(255, 255, 255, 0.045);
+}
+
+.estimate-v2-structural-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.estimate-v2-structural-card {
+  min-height: 118px;
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.estimate-v2-structural-card span,
+.estimate-v2-structural-card small {
+  color: var(--muted);
+}
+
+.estimate-v2-structural-card span {
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.estimate-v2-structural-card strong {
+  color: var(--cyan);
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.estimate-v2-structural-card small {
+  line-height: 1.35;
+}
+
+.estimate-v2-structural-note {
+  margin: 12px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
 }
 
 .estimate-v2-table {
@@ -2015,6 +2077,8 @@ body[data-theme="light"] .estimate-summary,
 body[data-theme="light"] .estimate-v2-upload-panel,
 body[data-theme="light"] .estimate-v2-summary-panel,
 body[data-theme="light"] .estimate-v2-file-card,
+body[data-theme="light"] .estimate-v2-structural-panel,
+body[data-theme="light"] .estimate-v2-structural-card,
 body[data-theme="light"] .estimate-v2-region-panel,
 body[data-theme="light"] .estimate-v2-region-card,
 body[data-theme="light"] .estimate-v2-text-panel,
@@ -2067,6 +2131,7 @@ body[data-theme="light"] .estimate-store-filter select,
 body[data-theme="light"] .price-store-field input,
 body[data-theme="light"] .price-store-picker select,
 body[data-theme="light"] .estimate-v2-field select,
+body[data-theme="light"] .estimate-v2-field input,
 body[data-theme="light"] .estimate-v2-upload input,
 body[data-theme="light"] .estimate-input,
 body[data-theme="light"] .price-input,
@@ -2140,7 +2205,8 @@ body[data-theme="light"] .swa-table tbody tr:hover td:first-child {
   background: #f8fcff;
 }
 
-body[data-theme="light"] .estimate-v2-metric {
+body[data-theme="light"] .estimate-v2-metric,
+body[data-theme="light"] .estimate-v2-structural-card {
   background: rgba(255, 255, 255, 0.58);
 }
 
@@ -2199,6 +2265,7 @@ body[data-theme="light"] .premium-access-notice {
   .dashboard-layout,
   .status-chart-wrap,
   .estimate-v2-grid,
+  .estimate-v2-structural-inputs,
   .form-grid,
   .access-grid,
   .theme-options {

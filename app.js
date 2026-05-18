@@ -38,9 +38,23 @@ const LOCAL_VISION_REGIONS = [
   { key: "bottom-title", label: "Bottom Schedules / Title Block", x: 0, y: 0.66, width: 1, height: 0.34 },
   { key: "upper-legends", label: "Upper Notes / Legends", x: 0, y: 0, width: 1, height: 0.36 }
 ];
+const CONCRETE_MIX_124 = {
+  cement: 1,
+  sand: 2,
+  gravel: 4,
+  dryVolumeFactor: 1.54,
+  cementBagVolume: 0.0283
+};
+const CHB_TAKEOFF = {
+  blocksPerSquareMeter: 12.5,
+  wasteFactor: 1.05
+};
 const ESTIMATE_V2_MATERIAL_TERMS = [
-  { description: "Concrete", category: "Structural", planTypes: ["Structural", "Civil", "Architectural"], terms: ["concrete", "conc.", "ready mix", "pcc", "reinforced concrete", "f'c", "fc=", "class a concrete"] },
-  { description: "Rebar / Reinforcing Bar", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["rebar", "reinforcing bar", "deformed bar", "steel bar", "r.s.b.", "rsb", "rebars", "main bar", "stirrups", "ties"] },
+  { description: "Concrete", category: "Structural", planTypes: ["Structural", "Civil", "Architectural"], terms: ["concrete", "conc.", "ready mix", "pcc", "reinforced concrete", "r.c.", "rc concrete", "f'c", "fc=", "class a concrete", "lean concrete"] },
+  { description: "Portland Cement", category: "Concrete Mix", planTypes: ["Structural", "Civil", "Architectural"], terms: ["cement", "portland cement", "type 1 cement", "cement bag"] },
+  { description: "Fine Aggregate / Sand", category: "Concrete Mix", planTypes: ["Structural", "Civil", "Architectural"], terms: ["sand", "fine aggregate", "washed sand", "concrete sand"] },
+  { description: "Coarse Aggregate / Gravel", category: "Concrete Mix", planTypes: ["Structural", "Civil", "Architectural"], terms: ["gravel", "coarse aggregate", "crushed gravel", "crushed stone", "aggregate", "3/4 gravel", "3/4\" gravel"] },
+  { description: "Rebar / Reinforcing Bar", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["rebar", "reinforcing bar", "deformed bar", "steel bar", "r.s.b.", "rsb", "rebars", "main bar", "stirrups", "ties", "vertical bars", "horizontal bars", "db10", "db12", "db16", "db20"] },
   { description: "Foundation / Footing", category: "Structural Element", planTypes: ["Structural", "Civil"], terms: ["foundation", "footing", "footings", "foundation plan"] },
   { description: "Structural Wall", category: "Structural Element", planTypes: ["Structural", "Civil", "Architectural"], terms: ["wall", "walls", "xwall", "xwalls", "shear wall", "retaining wall"] },
   { description: "Column", category: "Structural Element", planTypes: ["Structural"], terms: ["column", "columns", "col.", "cols.", "schedule of columns", "column schedule"] },
@@ -49,24 +63,58 @@ const ESTIMATE_V2_MATERIAL_TERMS = [
   { description: "Joist", category: "Structural Element", planTypes: ["Structural", "Architectural"], terms: ["joist", "joists"] },
   { description: "Wire Mesh", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["wire mesh", "welded wire mesh", "wwm"] },
   { description: "Formworks", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["formwork", "formworks", "forms", "plyform"] },
-  { description: "Concrete Hollow Block", category: "Architectural", planTypes: ["Architectural", "Civil"], terms: ["concrete hollow block", "hollow block", "chb"] },
+  { description: "Tie Wire", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["tie wire", "g.i. tie wire", "binding wire"] },
+  { description: "Anchor Bolt", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["anchor bolt", "anchor bolts", "expansion bolt"] },
+  { description: "Concrete Spacer", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["concrete spacer", "bar chair", "chair bar", "dobie"] },
+  { description: "Excavation", category: "Earthworks", planTypes: ["Structural", "Civil"], terms: ["excavation", "excavate", "earthworks", "earth work"] },
+  { description: "Backfill / Compacted Fill", category: "Earthworks", planTypes: ["Structural", "Civil"], terms: ["backfill", "compacted fill", "selected fill", "structural fill"] },
+  { description: "Gravel Bedding / Base", category: "Earthworks", planTypes: ["Structural", "Civil"], terms: ["gravel bedding", "gravel base", "base course", "aggregate base course"] },
+  { description: "Concrete Hollow Block", category: "Masonry", planTypes: ["Architectural", "Structural", "Civil"], terms: ["concrete hollow block", "hollow block", "chb", "100mm chb", "150mm chb", "200mm chb", "4\" chb", "6\" chb", "8\" chb"] },
+  { description: "Masonry Mortar", category: "Masonry", planTypes: ["Architectural", "Structural", "Civil"], terms: ["mortar", "masonry mortar", "cement mortar", "plaster"] },
   { description: "Tiles", category: "Architectural", planTypes: ["Architectural"], terms: ["tile", "tiles", "ceramic tile", "porcelain tile"] },
-  { description: "Paint", category: "Architectural", planTypes: ["Architectural"], terms: ["paint", "primer", "skim coat"] },
+  { description: "Paint", category: "Architectural", planTypes: ["Architectural"], terms: ["paint", "primer", "skim coat", "elastomeric"] },
+  { description: "Plywood", category: "Architectural", planTypes: ["Architectural", "Structural"], terms: ["plywood", "phenolic board", "marine plywood"] },
+  { description: "Gypsum Board", category: "Architectural", planTypes: ["Architectural"], terms: ["gypsum board", "drywall", "gypsum"] },
+  { description: "Metal Stud / Framing", category: "Architectural", planTypes: ["Architectural"], terms: ["metal stud", "metal framing", "furring channel", "carrying channel"] },
+  { description: "Glass", category: "Architectural", planTypes: ["Architectural"], terms: ["glass", "tempered glass", "glazing"] },
+  { description: "Aluminum", category: "Architectural", planTypes: ["Architectural"], terms: ["aluminum", "aluminium", "aluminum frame"] },
   { description: "Doors", category: "Architectural", planTypes: ["Architectural"], terms: ["door", "doors", "door jamb"] },
   { description: "Windows", category: "Architectural", planTypes: ["Architectural"], terms: ["window", "windows", "window frame"] },
-  { description: "PVC Pipe", category: "Plumbing", planTypes: ["Plumbing", "Fire Protection"], terms: ["pvc pipe", "pvc pipes"] },
+  { description: "Roofing", category: "Architectural", planTypes: ["Architectural"], terms: ["roofing", "roof panel", "long span", "flashing"] },
+  { description: "Waterproofing", category: "Architectural", planTypes: ["Architectural", "Civil"], terms: ["waterproofing", "membrane", "sealant"] },
+  { description: "PVC Pipe", category: "Plumbing", planTypes: ["Plumbing", "Fire Protection"], terms: ["pvc pipe", "pvc pipes", "polyvinyl chloride"] },
+  { description: "PPR Pipe", category: "Plumbing", planTypes: ["Plumbing"], terms: ["ppr pipe", "ppr pipes"] },
+  { description: "HDPE Pipe", category: "Plumbing", planTypes: ["Plumbing", "Civil"], terms: ["hdpe pipe", "hdpe pipes"] },
   { description: "GI Pipe", category: "Plumbing", planTypes: ["Plumbing", "Fire Protection"], terms: ["gi pipe", "g.i. pipe", "galvanized iron pipe"] },
   { description: "Valves", category: "Plumbing", planTypes: ["Plumbing", "Mechanical", "Fire Protection"], terms: ["valve", "valves", "gate valve", "ball valve", "check valve"] },
+  { description: "Floor Drain", category: "Plumbing", planTypes: ["Plumbing"], terms: ["floor drain", "fd"] },
+  { description: "Water Closet", category: "Plumbing", planTypes: ["Plumbing", "Architectural"], terms: ["water closet", "toilet", "wc"] },
+  { description: "Lavatory", category: "Plumbing", planTypes: ["Plumbing", "Architectural"], terms: ["lavatory", "lav.", "wash basin"] },
+  { description: "Faucet", category: "Plumbing", planTypes: ["Plumbing", "Architectural"], terms: ["faucet", "tap"] },
   { description: "Conduit", category: "Electrical", planTypes: ["Electrical", "Electronics"], terms: ["conduit", "emt", "imc", "pvc conduit", "rigid conduit"] },
   { description: "Wires / Cables", category: "Electrical", planTypes: ["Electrical", "Electronics"], terms: ["wire", "wires", "cable", "cables", "thhn", "thwn"] },
-  { description: "Panel Board", category: "Electrical", planTypes: ["Electrical"], terms: ["panel board", "panelboard", "distribution panel"] },
+  { description: "Panel Board", category: "Electrical", planTypes: ["Electrical"], terms: ["panel board", "panelboard", "distribution panel", "load center"] },
+  { description: "Circuit Breaker", category: "Electrical", planTypes: ["Electrical"], terms: ["breaker", "circuit breaker", "mccb", "mcb"] },
+  { description: "Outlet", category: "Electrical", planTypes: ["Electrical"], terms: ["outlet", "receptacle", "convenience outlet"] },
+  { description: "Switch", category: "Electrical", planTypes: ["Electrical"], terms: ["switch", "switches", "light switch"] },
   { description: "Lighting Fixture", category: "Electrical", planTypes: ["Electrical"], terms: ["lighting fixture", "light fixture", "luminaire", "downlight"] },
   { description: "Junction Box", category: "Electrical", planTypes: ["Electrical", "Electronics"], terms: ["junction box", "pull box", "utility box"] },
   { description: "Duct", category: "Mechanical", planTypes: ["Mechanical"], terms: ["duct", "ducting", "air duct"] },
   { description: "Diffuser / Grille", category: "Mechanical", planTypes: ["Mechanical"], terms: ["diffuser", "grille", "return air grille", "supply air diffuser"] },
+  { description: "Damper", category: "Mechanical", planTypes: ["Mechanical"], terms: ["damper", "fire damper", "volume damper"] },
+  { description: "Insulation", category: "Mechanical", planTypes: ["Mechanical", "Architectural"], terms: ["insulation", "thermal insulation", "acoustic insulation"] },
+  { description: "Exhaust Fan", category: "Mechanical", planTypes: ["Mechanical", "Electrical"], terms: ["exhaust fan", "ventilating fan"] },
+  { description: "Copper Tube", category: "Mechanical", planTypes: ["Mechanical"], terms: ["copper tube", "copper pipe", "refrigerant pipe"] },
+  { description: "Air Conditioning Unit", category: "Mechanical", planTypes: ["Mechanical"], terms: ["aircon", "air conditioning", "ahu", "fcu", "split type"] },
   { description: "CAT6 Cable", category: "Electronics", planTypes: ["Electronics"], terms: ["cat6", "cat 6", "utp cable", "data cable"] },
+  { description: "Data Outlet", category: "Electronics", planTypes: ["Electronics"], terms: ["data outlet", "information outlet", "io outlet"] },
   { description: "CCTV Camera", category: "Electronics", planTypes: ["Electronics"], terms: ["cctv", "camera", "ip camera"] },
-  { description: "Fire Sprinkler", category: "Fire Protection", planTypes: ["Fire Protection"], terms: ["sprinkler", "sprinkler head", "fire sprinkler"] }
+  { description: "Smoke Detector", category: "Electronics", planTypes: ["Electronics", "Fire Protection"], terms: ["smoke detector", "detector", "heat detector"] },
+  { description: "Speaker", category: "Electronics", planTypes: ["Electronics"], terms: ["speaker", "pa speaker"] },
+  { description: "Access Point", category: "Electronics", planTypes: ["Electronics"], terms: ["access point", "wireless access point", "wap"] },
+  { description: "Cable Tray", category: "Electrical", planTypes: ["Electrical", "Electronics"], terms: ["cable tray", "ladder tray"] },
+  { description: "Fire Sprinkler", category: "Fire Protection", planTypes: ["Fire Protection"], terms: ["sprinkler", "sprinkler head", "fire sprinkler"] },
+  { description: "Fire Hose Cabinet", category: "Fire Protection", planTypes: ["Fire Protection"], terms: ["fire hose cabinet", "fhc"] }
 ];
 const YEAR_WEEKS_PER_MONTH = 4;
 const GANTT_BAR_SIDE_MARGIN = 8;
@@ -219,6 +267,7 @@ document.addEventListener("input", (event) => {
   const estimateV2Input = event.target.closest("[data-estimate-v2-input]");
   if (estimateV2Input) {
     saveEstimateV2Draft(collectEstimateV2DraftFromDom());
+    updateEstimateV2StructuralSummary();
     return;
   }
   const priceInput = event.target.closest("[data-price-input]");
@@ -889,6 +938,7 @@ function renderEstimateV2View() {
   }, 0);
   const planType = PLAN_TYPES.includes(draft.planType) ? draft.planType : PLAN_TYPES[0];
   const drawingScale = DRAWING_SCALES.includes(draft.drawingScale) ? draft.drawingScale : "1:100";
+  const showStructuralInputs = isStructuralPlanType(planType);
   return `
     <div class="visual-head">
       <div>
@@ -918,6 +968,18 @@ function renderEstimateV2View() {
             ${DRAWING_SCALES.map((scale) => `<option value="${escapeAttribute(scale)}" ${scale === drawingScale ? "selected" : ""}>${escapeHtml(scale)}</option>`).join("")}
           </select>
         </label>
+        ${showStructuralInputs ? `
+          <div class="estimate-v2-structural-inputs">
+            <label class="estimate-v2-field">
+              <span>Building Elevation / Height (m)</span>
+              <input data-estimate-v2-input data-estimate-v2-structural-elevation type="number" min="0" step="0.01" value="${numberInputValue(draft.structuralElevation)}" placeholder="Example: 3.00">
+            </label>
+            <label class="estimate-v2-field">
+              <span>CHB Wall Length (m)</span>
+              <input data-estimate-v2-input data-estimate-v2-chb-wall-length type="number" min="0" step="0.01" value="${numberInputValue(draft.chbWallLength)}" placeholder="Optional until wall detection">
+            </label>
+          </div>
+        ` : ""}
         <label class="estimate-v2-upload">
           <span>PDF Upload</span>
           <input type="file" accept="application/pdf,.pdf" data-estimate-v2-file>
@@ -956,6 +1018,7 @@ function renderEstimateV2View() {
     ${materials.length ? renderEstimateV2Materials(materials) : `
       <div class="placeholder">Upload a PDF to detect material names from readable text, schedules, and CAD layers.</div>
     `}
+    ${showStructuralInputs ? renderEstimateV2StructuralSummary(draft) : ""}
     ${renderEstimateV2OcrRegions(draft.ocrRegions || [])}
     ${draft.textPreview ? `
       <section class="estimate-v2-text-panel">
@@ -999,6 +1062,47 @@ function renderEstimateV2Materials(materials) {
         </tbody>
       </table>
     </div>
+  `;
+}
+
+function renderEstimateV2StructuralSummary(draft) {
+  return `
+    <section class="estimate-v2-structural-panel" data-estimate-v2-structural-summary>
+      ${renderEstimateV2StructuralSummaryContent(draft)}
+    </section>
+  `;
+}
+
+function renderEstimateV2StructuralSummaryContent(draft) {
+  const summary = estimateV2StructuralTakeoff(draft);
+  return `
+      <div class="visual-head compact-head">
+        <div>
+          <span class="eyebrow">Structural Takeoff</span>
+          <h3>Concrete Mix and CHB Estimate</h3>
+        </div>
+      </div>
+      <div class="estimate-v2-structural-grid">
+        ${renderEstimateV2StructuralCard("Total Concrete Volume", `${formatSwaNumber(summary.concreteVolume)} cu.m`, "Sum of concrete, footing, column, beam, slab, and concrete wall rows with cu.m quantities.")}
+        ${renderEstimateV2StructuralCard("Cement", `${formatSwaNumber(summary.cementVolume)} cu.m`, `${formatInteger(summary.cementBags)} bags approx. | 1 part`)}
+        ${renderEstimateV2StructuralCard("Fine Aggregate / Sand", `${formatSwaNumber(summary.sandVolume)} cu.m`, "2 parts of the 1:2:4 mix")}
+        ${renderEstimateV2StructuralCard("Coarse Aggregate / Gravel", `${formatSwaNumber(summary.gravelVolume)} cu.m`, "4 parts of the 1:2:4 mix")}
+        ${renderEstimateV2StructuralCard("CHB Wall Area", `${formatSwaNumber(summary.chbArea)} sq.m`, summary.chbAreaNote)}
+        ${renderEstimateV2StructuralCard("CHB Count", `${formatInteger(summary.chbPiecesWithWaste)} pcs`, `${formatInteger(summary.chbPieces)} pcs + 5% allowance`)}
+      </div>
+      <p class="estimate-v2-structural-note">
+        Concrete mix uses 1:2:4 ratio and a 1.54 dry-volume factor. CHB count uses 12.5 blocks per sq.m; enter building elevation and wall length when the drawing does not provide wall area yet.
+      </p>
+  `;
+}
+
+function renderEstimateV2StructuralCard(label, value, note) {
+  return `
+    <article class="estimate-v2-structural-card">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      <small>${escapeHtml(note || "-")}</small>
+    </article>
   `;
 }
 
@@ -1060,6 +1164,100 @@ function formatEstimateV2Quantity(material) {
   }
   const mentions = Number(material.mentions) || 0;
   return mentions ? `${formatInteger(mentions)} hit${mentions === 1 ? "" : "s"}` : "-";
+}
+
+function estimateV2StructuralTakeoff(draft) {
+  const rows = (draft.materials || []).map(normalizeEstimateV2Material);
+  const concreteVolume = rows
+    .filter(isConcreteVolumeRow)
+    .reduce((total, row) => total + (Number(row.quantity) || 0), 0);
+  const mix = concreteMixBreakdown(concreteVolume);
+  const chb = estimateChbTakeoff(rows, draft);
+  return {
+    concreteVolume,
+    ...mix,
+    ...chb
+  };
+}
+
+function updateEstimateV2StructuralSummary() {
+  const summaryNode = document.querySelector("[data-estimate-v2-structural-summary]");
+  if (!summaryNode) return;
+  summaryNode.innerHTML = renderEstimateV2StructuralSummaryContent(collectEstimateV2DraftFromDom());
+}
+
+function concreteMixBreakdown(concreteVolume) {
+  const wetVolume = Math.max(0, Number(concreteVolume) || 0);
+  const dryVolume = wetVolume * CONCRETE_MIX_124.dryVolumeFactor;
+  const totalParts = CONCRETE_MIX_124.cement + CONCRETE_MIX_124.sand + CONCRETE_MIX_124.gravel;
+  const cementVolume = dryVolume * CONCRETE_MIX_124.cement / totalParts;
+  const sandVolume = dryVolume * CONCRETE_MIX_124.sand / totalParts;
+  const gravelVolume = dryVolume * CONCRETE_MIX_124.gravel / totalParts;
+  return {
+    dryVolume,
+    cementVolume,
+    sandVolume,
+    gravelVolume,
+    cementBags: cementVolume > 0 ? Math.ceil(cementVolume / CONCRETE_MIX_124.cementBagVolume) : 0
+  };
+}
+
+function estimateChbTakeoff(rows, draft) {
+  const elevation = Math.max(0, Number(draft.structuralElevation) || 0);
+  const manualLength = Math.max(0, Number(draft.chbWallLength) || 0);
+  let detectedArea = 0;
+  let detectedLength = 0;
+  let detectedPieces = 0;
+
+  rows.filter(isChbRow).forEach((row) => {
+    const quantity = Math.max(0, Number(row.quantity) || 0);
+    if (!quantity) return;
+    const unit = normalizeTakeoffUnit(row.unit);
+    if (unit === "sq.m") detectedArea += quantity;
+    if (unit === "lm") detectedLength += quantity;
+    if (unit === "pcs") detectedPieces += quantity;
+  });
+
+  const totalLength = detectedLength + manualLength;
+  const areaFromLength = elevation > 0 ? totalLength * elevation : 0;
+  const chbArea = detectedArea + areaFromLength;
+  const areaPieces = chbArea > 0 ? Math.ceil(chbArea * CHB_TAKEOFF.blocksPerSquareMeter) : 0;
+  const chbPieces = Math.ceil(areaPieces + detectedPieces);
+  const chbPiecesWithWaste = chbPieces > 0 ? Math.ceil(chbPieces * CHB_TAKEOFF.wasteFactor) : 0;
+  const noteParts = [];
+  if (detectedArea > 0) noteParts.push(`${formatSwaNumber(detectedArea)} sq.m detected`);
+  if (totalLength > 0 && elevation > 0) noteParts.push(`${formatSwaNumber(totalLength)} m length x ${formatSwaNumber(elevation)} m elevation`);
+  if (detectedPieces > 0) noteParts.push(`${formatInteger(detectedPieces)} pcs detected`);
+  return {
+    chbArea,
+    chbPieces,
+    chbPiecesWithWaste,
+    chbAreaNote: noteParts.length ? noteParts.join(" | ") : "Add CHB sq.m, CHB wall length, or elevation to estimate blocks."
+  };
+}
+
+function isConcreteVolumeRow(row) {
+  const text = `${row.description} ${row.category} ${(row.matchedTerms || []).join(" ")}`.toLowerCase();
+  if (/hollow block|chb|masonry/.test(text)) return false;
+  if (!/(concrete|footing|foundation|column|beam|girder|slab|retaining wall|structural wall)/.test(text)) return false;
+  return normalizeTakeoffUnit(row.unit) === "cu.m" && Number(row.quantity) > 0;
+}
+
+function isChbRow(row) {
+  const text = `${row.description} ${row.category} ${(row.matchedTerms || []).join(" ")}`.toLowerCase();
+  return /(concrete hollow block|hollow block|chb|masonry block)/.test(text);
+}
+
+function normalizeTakeoffUnit(unit) {
+  const normalized = normalizeEstimateV2Unit(unit);
+  if (normalized) return normalized;
+  const value = String(unit || "").toLowerCase().replace(/\s+/g, "").replace(/\./g, "");
+  if (["m", "meter", "meters", "linemeter", "linearmeter", "linearmeters"].includes(value)) return "lm";
+  return value;
+}
+
+function isStructuralPlanType(planType) {
+  return ["Structural", "Civil"].includes(planType);
 }
 
 function renderMaterialPriceListView() {
@@ -2092,6 +2290,7 @@ async function extractEstimateV2Pdf() {
       data
     }, { timeoutMs: 45000 });
     saveEstimateV2Draft(normalizeEstimateV2Draft({
+      ...collectEstimateV2DraftFromDom(),
       planType,
       fileName: response.fileName || file.name,
       extractedAt: response.extractedAt || new Date().toISOString(),
@@ -2136,6 +2335,7 @@ async function extractEstimateV2Ai() {
       data
     }, { timeoutMs: 90000 });
     saveEstimateV2Draft(normalizeEstimateV2Draft({
+      ...collectEstimateV2DraftFromDom(),
       planType,
       fileName: response.fileName || file.name,
       extractedAt: response.extractedAt || new Date().toISOString(),
@@ -2369,10 +2569,14 @@ function collectEstimateV2DraftFromDom() {
   const current = getEstimateV2Draft();
   const planTypeInput = document.querySelector('[data-action="estimate-v2-plan-type"]');
   const scaleInput = document.querySelector('[data-action="estimate-v2-scale"]');
+  const elevationInput = document.querySelector("[data-estimate-v2-structural-elevation]");
+  const chbLengthInput = document.querySelector("[data-estimate-v2-chb-wall-length]");
   return normalizeEstimateV2Draft({
     ...current,
     planType: planTypeInput ? planTypeInput.value : current.planType,
     drawingScale: scaleInput ? scaleInput.value : current.drawingScale,
+    structuralElevation: elevationInput ? elevationInput.value : current.structuralElevation,
+    chbWallLength: chbLengthInput ? chbLengthInput.value : current.chbWallLength,
     materials: [...document.querySelectorAll("[data-estimate-v2-row]")].map(readEstimateV2RowFromDom)
   });
 }
@@ -3086,6 +3290,8 @@ function defaultEstimateV2Draft() {
   return {
     planType: PLAN_TYPES[0],
     drawingScale: "1:100",
+    structuralElevation: 0,
+    chbWallLength: 0,
     fileName: "",
     extractedAt: "",
     extractionMode: "",
@@ -3105,6 +3311,8 @@ function normalizeEstimateV2Draft(draft) {
   return {
     planType: PLAN_TYPES.includes(source.planType) ? source.planType : PLAN_TYPES[0],
     drawingScale: DRAWING_SCALES.includes(source.drawingScale) ? source.drawingScale : "1:100",
+    structuralElevation: Math.max(0, Number(source.structuralElevation) || 0),
+    chbWallLength: Math.max(0, Number(source.chbWallLength) || 0),
     fileName: String(source.fileName || "").trim(),
     extractedAt: String(source.extractedAt || "").trim(),
     extractionMode: String(source.extractionMode || "").trim(),
@@ -3622,7 +3830,7 @@ function normalizeEstimateV2Unit(unit) {
   if (["bag", "bags"].includes(value)) return "bags";
   if (["kg"].includes(value)) return "kg";
   if (["ton", "tons"].includes(value)) return "tons";
-  if (["lm", "linm"].includes(value)) return "lm";
+  if (["lm", "linm", "m", "meter", "meters", "linemeter", "linearmeter", "linearmeters"].includes(value)) return "lm";
   return "";
 }
 
