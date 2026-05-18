@@ -26,11 +26,13 @@ const ESTIMATE_V2_TAKEOFF_TOOLS = [
   { key: "calibrate", label: "Calibrate", type: "calibrate", unit: "m", defaultName: "Scale Reference", color: "#28f4ff" },
   { key: "tile-area", label: "Tiles / Floor", type: "area", unit: "sq.m", defaultName: "Floor Tiles", color: "#22c55e" },
   { key: "wall-area", label: "Wall Area", type: "area", unit: "sq.m", defaultName: "Wall Finish", color: "#f59e0b" },
+  { key: "chb-wall", label: "CHB Wall", type: "chb", unit: "pcs", defaultName: "Concrete Hollow Block", color: "#14b8a6" },
   { key: "pipe-length", label: "Pipe Length", type: "linear", unit: "lm", defaultName: "Pipe Line", color: "#38bdf8" },
   { key: "wire-length", label: "Wire Length", type: "linear", unit: "lm", defaultName: "Electrical Wiring", color: "#a78bfa" },
   { key: "door-count", label: "Doors", type: "count", unit: "pcs", defaultName: "Door", color: "#fb7185" },
   { key: "window-count", label: "Windows", type: "count", unit: "pcs", defaultName: "Window", color: "#f97316" }
 ];
+const CHB_SIZE_OPTIONS = ['4" CHB', '6" CHB', '8" CHB'];
 const LOCAL_VISION_LIBS = {
   pdfScript: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js",
   pdfWorker: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js",
@@ -56,6 +58,7 @@ const CONCRETE_MIX_124 = {
 };
 const CHB_TAKEOFF = {
   blocksPerSquareMeter: 12.5,
+  defaultWastePercent: 5,
   wasteFactor: 1.05
 };
 const ESTIMATE_V2_MATERIAL_TERMS = [
@@ -311,6 +314,12 @@ document.addEventListener("change", (event) => {
   const estimateV2FileInput = event.target.closest("[data-estimate-v2-file]");
   if (estimateV2FileInput) {
     loadEstimateV2TakeoffPdf(estimateV2FileInput.files && estimateV2FileInput.files[0]);
+    return;
+  }
+  const estimateV2TakeoffInput = event.target.closest("[data-estimate-v2-takeoff-input]");
+  if (estimateV2TakeoffInput) {
+    saveEstimateV2Draft(collectEstimateV2DraftFromDom());
+    updateEstimateV2TakeoffTotals();
     return;
   }
   const target = event.target.closest("[data-action]");
@@ -970,6 +979,7 @@ function renderEstimateV2View() {
   const totalCost = estimateV2TakeoffTotal(rows);
   const totalArea = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "area").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
   const totalLength = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "linear").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
+  const totalChb = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "chb").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
   const totalCount = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "count").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
   return `
     <div class="visual-head">
@@ -992,10 +1002,7 @@ function renderEstimateV2View() {
           <span>Current Item</span>
           <input data-estimate-v2-takeoff-input data-estimate-v2-current-name value="${escapeAttribute(draft.takeoffItemName || activeTool.defaultName)}" placeholder="Material or scope">
         </label>
-        <label class="estimate-v2-field">
-          <span>${activeTool.type === "calibrate" ? "Known Length (m)" : `Cost Per ${activeTool.unit}`}</span>
-          <input data-estimate-v2-takeoff-input ${activeTool.type === "calibrate" ? "data-estimate-v2-calibration-length" : "data-estimate-v2-current-cost"} type="number" min="0" step="0.01" value="${numberInputValue(activeTool.type === "calibrate" ? draft.calibrationLength : draft.takeoffCostPerUnit)}" placeholder="0.00">
-        </label>
+        ${renderEstimateV2TakeoffActiveInputs(draft, activeTool)}
         <div class="estimate-v2-tool-strip">
           ${ESTIMATE_V2_TAKEOFF_TOOLS.map((tool) => `
             <button class="secondary-btn compact-btn ${tool.key === activeTool.key ? "active-tool" : ""}" data-action="set-estimate-v2-tool" data-tool="${escapeAttribute(tool.key)}">${escapeHtml(tool.label)}</button>
@@ -1010,6 +1017,7 @@ function renderEstimateV2View() {
       <section class="estimate-v2-summary-panel">
         ${renderEstimateV2Metric("Floor Area", `${formatSwaNumber(totalArea)} m2`)}
         ${renderEstimateV2Metric("Length", `${formatSwaNumber(totalLength)} m`)}
+        ${renderEstimateV2Metric("CHB", `${formatInteger(totalChb)} pcs`)}
         ${renderEstimateV2Metric("Count", formatInteger(totalCount))}
         ${renderEstimateV2Metric("Total Cost", formatCurrency(totalCost))}
       </section>
@@ -1034,6 +1042,51 @@ function renderEstimateV2View() {
     </div>
     ${renderEstimateV2TakeoffWorkspace(draft)}
     ${renderEstimateV2TakeoffTable(rows)}
+  `;
+}
+
+function renderEstimateV2TakeoffActiveInputs(draft, activeTool) {
+  if (activeTool.type === "calibrate") {
+    return `
+      <label class="estimate-v2-field">
+        <span>Known Length (m)</span>
+        <input data-estimate-v2-takeoff-input data-estimate-v2-calibration-length type="number" min="0" step="0.01" value="${numberInputValue(draft.calibrationLength)}" placeholder="0.00">
+      </label>
+    `;
+  }
+  if (activeTool.type === "chb") {
+    return `
+      <div class="estimate-v2-chb-inputs">
+        <label class="estimate-v2-field">
+          <span>Wall Height (m)</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-chb-height type="number" min="0" step="0.01" value="${numberInputValue(draft.chbWallHeight)}" placeholder="3.00">
+        </label>
+        <label class="estimate-v2-field">
+          <span>CHB Size</span>
+          <select data-estimate-v2-takeoff-input data-estimate-v2-chb-size>
+            ${CHB_SIZE_OPTIONS.map((size) => `<option value="${escapeAttribute(size)}" ${size === draft.chbSize ? "selected" : ""}>${escapeHtml(size)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="estimate-v2-field">
+          <span>Blocks / sq.m</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-chb-blocks type="number" min="0" step="0.01" value="${numberInputValue(draft.chbBlocksPerSquareMeter)}" placeholder="12.5">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Waste %</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-chb-waste type="number" min="0" step="0.01" value="${numberInputValue(draft.chbWastePercent)}" placeholder="5">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Cost Per pc</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-current-cost type="number" min="0" step="0.01" value="${numberInputValue(draft.takeoffCostPerUnit)}" placeholder="0.00">
+        </label>
+      </div>
+    `;
+  }
+  return `
+    <label class="estimate-v2-field">
+      <span>Cost Per ${escapeHtml(activeTool.unit)}</span>
+      <input data-estimate-v2-takeoff-input data-estimate-v2-current-cost type="number" min="0" step="0.01" value="${numberInputValue(draft.takeoffCostPerUnit)}" placeholder="0.00">
+    </label>
   `;
 }
 
@@ -1090,7 +1143,7 @@ function renderEstimateV2TakeoffShape(row) {
   if (tool.type === "area" && points.length >= 3) {
     return `<polygon class="estimate-v2-shape area" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polygon>`;
   }
-  if (tool.type === "linear" && points.length >= 2) {
+  if ((tool.type === "linear" || tool.type === "chb") && points.length >= 2) {
     return `<polyline class="estimate-v2-shape line" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polyline>`;
   }
   if (tool.type === "count") {
@@ -1109,7 +1162,7 @@ function renderEstimateV2ActiveShape(tool, points) {
   if (tool.type === "area" && points.length >= 2) {
     return `<polyline class="estimate-v2-active-line" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polyline>${markers}`;
   }
-  if ((tool.type === "linear" || tool.type === "calibrate") && points.length >= 2) {
+  if ((tool.type === "linear" || tool.type === "chb" || tool.type === "calibrate") && points.length >= 2) {
     return `<polyline class="estimate-v2-active-line" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polyline>${markers}`;
   }
   return markers;
@@ -1148,10 +1201,13 @@ function renderEstimateV2TakeoffTable(rows) {
 function renderEstimateV2TakeoffRow(row) {
   const normalized = normalizeEstimateV2TakeoffRow(row);
   const tool = estimateV2TakeoffTool(normalized.tool);
+  const typeDetails = tool.type === "chb"
+    ? `<small>${formatSwaNumber(normalized.wallLength)} m wall x ${formatSwaNumber(normalized.chbWallHeight)} m high</small><small>${formatSwaNumber(normalized.wallArea)} sq.m @ ${formatSwaNumber(normalized.chbBlocksPerSquareMeter)} CHB/sq.m + ${formatSwaNumber(normalized.chbWastePercent)}% waste</small>`
+    : "";
   return `
     <tr data-estimate-v2-takeoff-row="${escapeAttribute(normalized.id)}">
       <td><input class="estimate-input description" data-estimate-v2-takeoff-input data-field="description" value="${escapeAttribute(normalized.description)}" placeholder="Item"></td>
-      <td>${escapeHtml(tool.label)}</td>
+      <td><strong>${escapeHtml(tool.label)}</strong>${typeDetails}</td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0"></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="unit" value="${escapeAttribute(normalized.unit)}" placeholder="unit"></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(normalized.costPerUnit)}" placeholder="0.00"></td>
@@ -2708,11 +2764,14 @@ function finishEstimateV2Takeoff() {
     toast("Scale calibrated.");
     return;
   }
-  if ((tool.type === "area" || tool.type === "linear") && !draft.metersPerPixel) {
+  if ((tool.type === "area" || tool.type === "linear" || tool.type === "chb") && !draft.metersPerPixel) {
     toast("Calibrate scale first.");
     return;
   }
   let quantity = 0;
+  let description = draft.takeoffItemName || tool.defaultName;
+  let unit = tool.unit;
+  const takeoffDetails = {};
   if (tool.type === "area") {
     if (points.length < 3) {
       toast("Area takeoff needs at least 3 points.");
@@ -2725,18 +2784,44 @@ function finishEstimateV2Takeoff() {
       return;
     }
     quantity = estimateV2PolylinePixels(points) * draft.metersPerPixel;
+  } else if (tool.type === "chb") {
+    if (points.length < 2) {
+      toast("CHB wall takeoff needs at least 2 points.");
+      return;
+    }
+    const wallLength = estimateV2PolylinePixels(points) * draft.metersPerPixel;
+    const wallHeight = Math.max(0, Number(draft.chbWallHeight) || 0);
+    if (!wallHeight) {
+      toast("Enter wall height for CHB takeoff.");
+      return;
+    }
+    const wallArea = wallLength * wallHeight;
+    const blocksPerSquareMeter = Math.max(0, Number(draft.chbBlocksPerSquareMeter) || CHB_TAKEOFF.blocksPerSquareMeter);
+    const wastePercent = Math.max(0, Number(draft.chbWastePercent) || 0);
+    quantity = Math.ceil(wallArea * blocksPerSquareMeter * (1 + wastePercent / 100));
+    unit = "pcs";
+    description = `${description} ${draft.chbSize || ""}`.trim();
+    Object.assign(takeoffDetails, {
+      wallLength,
+      wallArea,
+      chbWallHeight: wallHeight,
+      chbWastePercent: wastePercent,
+      chbBlocksPerSquareMeter: blocksPerSquareMeter,
+      chbSize: draft.chbSize
+    });
   } else if (tool.type === "count") {
     quantity = points.length;
   }
   draft.takeoffRows.push(normalizeEstimateV2TakeoffRow({
-    description: draft.takeoffItemName || tool.defaultName,
+    description,
     tool: tool.key,
     quantity,
-    unit: tool.unit,
+    unit,
     costPerUnit: draft.takeoffCostPerUnit,
     points,
     page: draft.takeoffPage,
-    color: tool.color
+    color: tool.color,
+    ...takeoffDetails
   }));
   state.estimateV2ActivePoints = [];
   saveEstimateV2Draft(draft);
@@ -2931,12 +3016,20 @@ function collectEstimateV2DraftFromDom() {
   const currentNameInput = document.querySelector("[data-estimate-v2-current-name]");
   const currentCostInput = document.querySelector("[data-estimate-v2-current-cost]");
   const calibrationLengthInput = document.querySelector("[data-estimate-v2-calibration-length]");
+  const chbHeightInput = document.querySelector("[data-estimate-v2-chb-height]");
+  const chbWasteInput = document.querySelector("[data-estimate-v2-chb-waste]");
+  const chbBlocksInput = document.querySelector("[data-estimate-v2-chb-blocks]");
+  const chbSizeInput = document.querySelector("[data-estimate-v2-chb-size]");
   return normalizeEstimateV2Draft({
     ...current,
     planType: planTypeInput ? planTypeInput.value : current.planType,
     drawingScale: scaleInput ? scaleInput.value : current.drawingScale,
     structuralElevation: elevationInput ? elevationInput.value : current.structuralElevation,
     chbWallLength: chbLengthInput ? chbLengthInput.value : current.chbWallLength,
+    chbWallHeight: chbHeightInput ? chbHeightInput.value : current.chbWallHeight,
+    chbWastePercent: chbWasteInput ? chbWasteInput.value : current.chbWastePercent,
+    chbBlocksPerSquareMeter: chbBlocksInput ? chbBlocksInput.value : current.chbBlocksPerSquareMeter,
+    chbSize: chbSizeInput ? chbSizeInput.value : current.chbSize,
     takeoffItemName: currentNameInput ? currentNameInput.value : current.takeoffItemName,
     takeoffCostPerUnit: currentCostInput ? currentCostInput.value : current.takeoffCostPerUnit,
     calibrationLength: calibrationLengthInput ? calibrationLengthInput.value : current.calibrationLength,
@@ -3672,6 +3765,10 @@ function defaultEstimateV2Draft() {
     drawingScale: "1:100",
     structuralElevation: 0,
     chbWallLength: 0,
+    chbWallHeight: 3,
+    chbWastePercent: CHB_TAKEOFF.defaultWastePercent,
+    chbBlocksPerSquareMeter: CHB_TAKEOFF.blocksPerSquareMeter,
+    chbSize: CHB_SIZE_OPTIONS[1],
     planFileName: "",
     takeoffPage: 1,
     takeoffPageCount: 0,
@@ -3700,11 +3797,16 @@ function defaultEstimateV2Draft() {
 
 function normalizeEstimateV2Draft(draft) {
   const source = draft && typeof draft === "object" ? draft : {};
+  const chbWastePercent = Number(source.chbWastePercent);
   return {
     planType: PLAN_TYPES.includes(source.planType) ? source.planType : PLAN_TYPES[0],
     drawingScale: DRAWING_SCALES.includes(source.drawingScale) ? source.drawingScale : "1:100",
     structuralElevation: Math.max(0, Number(source.structuralElevation) || 0),
     chbWallLength: Math.max(0, Number(source.chbWallLength) || 0),
+    chbWallHeight: Math.max(0, Number(source.chbWallHeight) || 3),
+    chbWastePercent: Number.isFinite(chbWastePercent) ? Math.max(0, chbWastePercent) : CHB_TAKEOFF.defaultWastePercent,
+    chbBlocksPerSquareMeter: Math.max(0, Number(source.chbBlocksPerSquareMeter) || CHB_TAKEOFF.blocksPerSquareMeter),
+    chbSize: CHB_SIZE_OPTIONS.includes(source.chbSize) ? source.chbSize : CHB_SIZE_OPTIONS[1],
     planFileName: String(source.planFileName || source.fileName || "").trim(),
     takeoffPage: Math.max(1, Number(source.takeoffPage) || 1),
     takeoffPageCount: Math.max(0, Number(source.takeoffPageCount) || 0),
@@ -3759,6 +3861,8 @@ function normalizeEstimateV2Material(material) {
 
 function normalizeEstimateV2TakeoffRow(row) {
   const tool = estimateV2TakeoffTool(row && row.tool);
+  const chbWallHeight = Math.max(0, Number(row && row.chbWallHeight) || 0);
+  const wallLength = Math.max(0, Number(row && row.wallLength) || 0);
   return {
     id: row && row.id || cryptoId(),
     description: String(row && row.description || tool.defaultName).trim(),
@@ -3768,7 +3872,13 @@ function normalizeEstimateV2TakeoffRow(row) {
     costPerUnit: Math.max(0, Number(row && row.costPerUnit) || 0),
     points: Array.isArray(row && row.points) ? row.points.map(normalizePoint).filter(Boolean).slice(0, 80) : [],
     page: Math.max(1, Number(row && row.page) || 1),
-    color: String(row && row.color || tool.color).trim()
+    color: String(row && row.color || tool.color).trim(),
+    wallLength,
+    wallArea: Math.max(0, Number(row && row.wallArea) || (wallLength * chbWallHeight)),
+    chbWallHeight,
+    chbWastePercent: Math.max(0, Number(row && row.chbWastePercent) || 0),
+    chbBlocksPerSquareMeter: Math.max(0, Number(row && row.chbBlocksPerSquareMeter) || CHB_TAKEOFF.blocksPerSquareMeter),
+    chbSize: String(row && row.chbSize || "").trim()
   };
 }
 

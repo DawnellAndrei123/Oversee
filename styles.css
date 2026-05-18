@@ -1305,6 +1305,12 @@ tfoot td {
   gap: 10px;
 }
 
+.estimate-v2-chb-inputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
 .estimate-v2-field span,
 .estimate-v2-upload span,
 .estimate-v2-file-card span,
