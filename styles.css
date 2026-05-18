@@ -1321,7 +1321,7 @@ tfoot td {
 
 .estimate-v2-summary-panel {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 10px;
   padding: 14px;
 }
@@ -1396,6 +1396,55 @@ tfoot td {
 .estimate-v2-text-panel {
   margin-top: 12px;
   padding: 14px;
+}
+
+.estimate-v2-region-panel {
+  margin-top: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 14px;
+  background:
+    linear-gradient(145deg, rgba(40, 244, 255, 0.075), transparent 58%),
+    rgba(255, 255, 255, 0.045);
+}
+
+.estimate-v2-region-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.estimate-v2-region-card {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.045);
+  overflow: hidden;
+}
+
+.estimate-v2-region-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.estimate-v2-region-meta span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.estimate-v2-region-card pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  color: var(--ink);
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .compact-head {
@@ -1966,6 +2015,8 @@ body[data-theme="light"] .estimate-summary,
 body[data-theme="light"] .estimate-v2-upload-panel,
 body[data-theme="light"] .estimate-v2-summary-panel,
 body[data-theme="light"] .estimate-v2-file-card,
+body[data-theme="light"] .estimate-v2-region-panel,
+body[data-theme="light"] .estimate-v2-region-card,
 body[data-theme="light"] .estimate-v2-text-panel,
 body[data-theme="light"] .estimate-template-panel,
 body[data-theme="light"] .risk-item,
@@ -2095,6 +2146,10 @@ body[data-theme="light"] .estimate-v2-metric {
 
 body[data-theme="light"] .estimate-v2-text-panel pre {
   background: rgba(255, 255, 255, 0.62);
+}
+
+body[data-theme="light"] .estimate-v2-region-card pre {
+  background: rgba(255, 255, 255, 0.46);
 }
 
 body[data-theme="light"] .swa-add-row td {

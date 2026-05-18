@@ -27,13 +27,24 @@ const LOCAL_VISION_LIBS = {
   pdfWorker: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js",
   tesseractScript: "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"
 };
+const LOCAL_VISION_CONFIG = {
+  maxPages: 3,
+  targetDpi: 300,
+  maxCanvasSide: 3200
+};
+const LOCAL_VISION_REGIONS = [
+  { key: "full-sheet", label: "Full Sheet", x: 0, y: 0, width: 1, height: 1 },
+  { key: "right-notes", label: "Right Notes / Schedules", x: 0.58, y: 0, width: 0.42, height: 1 },
+  { key: "bottom-title", label: "Bottom Schedules / Title Block", x: 0, y: 0.66, width: 1, height: 0.34 },
+  { key: "upper-legends", label: "Upper Notes / Legends", x: 0, y: 0, width: 1, height: 0.36 }
+];
 const ESTIMATE_V2_MATERIAL_TERMS = [
-  { description: "Concrete", category: "Structural", planTypes: ["Structural", "Civil", "Architectural"], terms: ["concrete", "conc.", "ready mix", "pcc", "reinforced concrete"] },
-  { description: "Rebar / Reinforcing Bar", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["rebar", "reinforcing bar", "deformed bar", "steel bar", "r.s.b.", "rsb", "rebars"] },
+  { description: "Concrete", category: "Structural", planTypes: ["Structural", "Civil", "Architectural"], terms: ["concrete", "conc.", "ready mix", "pcc", "reinforced concrete", "f'c", "fc=", "class a concrete"] },
+  { description: "Rebar / Reinforcing Bar", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["rebar", "reinforcing bar", "deformed bar", "steel bar", "r.s.b.", "rsb", "rebars", "main bar", "stirrups", "ties"] },
   { description: "Foundation / Footing", category: "Structural Element", planTypes: ["Structural", "Civil"], terms: ["foundation", "footing", "footings", "foundation plan"] },
   { description: "Structural Wall", category: "Structural Element", planTypes: ["Structural", "Civil", "Architectural"], terms: ["wall", "walls", "xwall", "xwalls", "shear wall", "retaining wall"] },
-  { description: "Column", category: "Structural Element", planTypes: ["Structural"], terms: ["column", "columns", "col.", "schedule of columns"] },
-  { description: "Beam", category: "Structural Element", planTypes: ["Structural"], terms: ["beam", "beams", "girder", "schedule of beams"] },
+  { description: "Column", category: "Structural Element", planTypes: ["Structural"], terms: ["column", "columns", "col.", "cols.", "schedule of columns", "column schedule"] },
+  { description: "Beam", category: "Structural Element", planTypes: ["Structural"], terms: ["beam", "beams", "girder", "schedule of beams", "beam schedule"] },
   { description: "Slab", category: "Structural Element", planTypes: ["Structural", "Architectural"], terms: ["slab", "slabs", "suspended slab", "slab on grade"] },
   { description: "Joist", category: "Structural Element", planTypes: ["Structural", "Architectural"], terms: ["joist", "joists"] },
   { description: "Wire Mesh", category: "Structural", planTypes: ["Structural", "Civil"], terms: ["wire mesh", "welded wire mesh", "wwm"] },
@@ -886,7 +897,7 @@ function renderEstimateV2View() {
       </div>
       <div class="estimate-actions">
         <button class="primary-btn" data-action="extract-estimate-v2-pdf">Extract PDF</button>
-        <button class="secondary-btn" data-action="extract-estimate-v2-local">Local Vision OCR</button>
+        <button class="secondary-btn" data-action="extract-estimate-v2-local">Local Vision OCR v1.5</button>
         <button class="secondary-btn" data-action="extract-estimate-v2-ai">AI Vision Extract</button>
         <button class="secondary-btn" data-action="add-estimate-v2-row">Add Row</button>
         <button class="secondary-btn" data-action="save-estimate-v2-template">Save Template</button>
@@ -916,6 +927,7 @@ function renderEstimateV2View() {
         ${renderEstimateV2Metric("Detected Materials", materials.length)}
         ${renderEstimateV2Metric("Evidence Hits", evidenceHits)}
         ${renderEstimateV2Metric("Text Lines", draft.lineCount || 0)}
+        ${renderEstimateV2Metric("OCR Regions", draft.regionCount || (draft.ocrRegions || []).length)}
         ${renderEstimateV2Metric("PDF Pages", draft.pageCount || 0)}
       </section>
     </div>
@@ -936,10 +948,15 @@ function renderEstimateV2View() {
         <span class="eyebrow">Drawing Scale</span>
         <strong>${escapeHtml(drawingScale)}</strong>
       </div>
+      <div>
+        <span class="eyebrow">Pages OCR'd</span>
+        <strong>${draft.processedPages ? `${formatInteger(draft.processedPages)} / ${formatInteger(draft.pageCount || draft.processedPages)}` : "-"}</strong>
+      </div>
     </div>
     ${materials.length ? renderEstimateV2Materials(materials) : `
       <div class="placeholder">Upload a PDF to detect material names from readable text, schedules, and CAD layers.</div>
     `}
+    ${renderEstimateV2OcrRegions(draft.ocrRegions || [])}
     ${draft.textPreview ? `
       <section class="estimate-v2-text-panel">
         <div class="visual-head compact-head">
@@ -982,6 +999,34 @@ function renderEstimateV2Materials(materials) {
         </tbody>
       </table>
     </div>
+  `;
+}
+
+function renderEstimateV2OcrRegions(regions) {
+  const visibleRegions = (Array.isArray(regions) ? regions : []).filter((region) => region.text).slice(0, 12);
+  if (!visibleRegions.length) return "";
+  return `
+    <section class="estimate-v2-region-panel">
+      <div class="visual-head compact-head">
+        <div>
+          <span class="eyebrow">Grouped OCR</span>
+          <h3>Detected Text by Page and Region</h3>
+        </div>
+      </div>
+      <div class="estimate-v2-region-grid">
+        ${visibleRegions.map((region) => `
+          <article class="estimate-v2-region-card">
+            <div class="estimate-v2-region-meta">
+              <strong>Page ${formatInteger(region.page || 1)}</strong>
+              <span>${escapeHtml(region.region || "Region")}</span>
+              <span>${formatInteger(region.lineCount || 0)} lines</span>
+              <span>${formatInteger(Math.round(Number(region.confidence) || 0))}% OCR</span>
+            </div>
+            <pre>${escapeHtml(String(region.text || "").slice(0, 900))}</pre>
+          </article>
+        `).join("")}
+      </div>
+    </section>
   `;
 }
 
@@ -2111,6 +2156,7 @@ async function extractEstimateV2Ai() {
 async function extractEstimateV2LocalVision() {
   const fileInput = document.querySelector("[data-estimate-v2-file]");
   const planTypeInput = document.querySelector('[data-action="estimate-v2-plan-type"]');
+  const scaleInput = document.querySelector('[data-action="estimate-v2-scale"]');
   const file = fileInput && fileInput.files ? fileInput.files[0] : null;
   if (!file) {
     toast("Choose a PDF file first.");
@@ -2126,28 +2172,34 @@ async function extractEstimateV2LocalVision() {
   }
 
   const planType = PLAN_TYPES.includes(planTypeInput && planTypeInput.value) ? planTypeInput.value : PLAN_TYPES[0];
-  toast("Loading Local Vision OCR...");
+  const drawingScale = DRAWING_SCALES.includes(scaleInput && scaleInput.value) ? scaleInput.value : "1:100";
+  toast("Loading Local Vision OCR v1.5...");
   try {
-    const { text, pageCount, confidence } = await runLocalVisionOcr(file);
-    const detectedMaterials = detectEstimateV2MaterialsFromText(text, planType, "Local Vision OCR");
+    const ocrResult = await runLocalVisionOcr(file);
+    const { text, pageCount, processedPages, regionCount, confidence, regions } = ocrResult;
+    const detectedMaterials = detectEstimateV2MaterialsFromRegions(regions, planType, "Local Vision OCR v1.5");
     saveEstimateV2Draft(normalizeEstimateV2Draft({
       ...collectEstimateV2DraftFromDom(),
       planType,
+      drawingScale,
       fileName: file.name,
       extractedAt: new Date().toISOString(),
-      extractionMode: "Local Vision OCR",
+      extractionMode: "Local Vision OCR v1.5",
       pageCount,
+      processedPages,
+      regionCount,
       characterCount: text.length,
       lineCount: text ? text.split(/\n+/).filter(Boolean).length : 0,
-      textPreview: text || "Local OCR finished, but no readable text was found on the first page.",
+      textPreview: text || "Local OCR finished, but no readable text was found on the processed pages.",
+      ocrRegions: regions,
       materials: detectedMaterials.length ? detectedMaterials : [{
         description: "No OCR materials detected",
         category: planType,
         quantity: 0,
         unit: "",
         confidence: confidence ? `${Math.round(confidence)}% OCR` : "low",
-        source: "Local Vision OCR",
-        notes: "OCR ran locally in the browser, but did not find known material keywords. Add rows manually or try a clearer/scaled PDF page."
+        source: "Local Vision OCR v1.5",
+        notes: "OCR ran locally with high-resolution rendering and region preprocessing, but did not find known material keywords. Add rows manually or try a clearer/scaled PDF page."
       }]
     }));
     render();
@@ -3038,9 +3090,12 @@ function defaultEstimateV2Draft() {
     extractedAt: "",
     extractionMode: "",
     pageCount: 0,
+    processedPages: 0,
+    regionCount: 0,
     characterCount: 0,
     lineCount: 0,
     textPreview: "",
+    ocrRegions: [],
     materials: []
   };
 }
@@ -3054,10 +3109,23 @@ function normalizeEstimateV2Draft(draft) {
     extractedAt: String(source.extractedAt || "").trim(),
     extractionMode: String(source.extractionMode || "").trim(),
     pageCount: Math.max(0, Number(source.pageCount) || 0),
+    processedPages: Math.max(0, Number(source.processedPages) || 0),
+    regionCount: Math.max(0, Number(source.regionCount) || 0),
     characterCount: Math.max(0, Number(source.characterCount) || 0),
     lineCount: Math.max(0, Number(source.lineCount) || 0),
     textPreview: String(source.textPreview || "").slice(0, 8000),
+    ocrRegions: Array.isArray(source.ocrRegions) ? source.ocrRegions.map(normalizeOcrRegion).filter((region) => region.text).slice(0, 24) : [],
     materials: Array.isArray(source.materials) ? source.materials.map(normalizeEstimateV2Material).filter((item) => item.description) : []
+  };
+}
+
+function normalizeOcrRegion(region) {
+  return {
+    page: Math.max(1, Number(region && region.page) || 1),
+    region: String(region && region.region || "Region").trim(),
+    text: String(region && region.text || "").trim().slice(0, 3000),
+    confidence: Math.max(0, Math.min(100, Number(region && region.confidence) || 0)),
+    lineCount: Math.max(0, Number(region && region.lineCount) || 0)
   };
 }
 
@@ -3233,34 +3301,135 @@ async function runLocalVisionOcr(file) {
   await loadTesseract();
   const pdfBuffer = await file.arrayBuffer();
   const pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
-  const page = await pdf.getPage(1);
-  const baseViewport = page.getViewport({ scale: 1 });
-  const maxCanvasSide = 2600;
-  const renderScale = Math.min(3, Math.max(1.6, maxCanvasSide / Math.max(baseViewport.width, baseViewport.height)));
-  const viewport = page.getViewport({ scale: renderScale });
-  const canvas = document.createElement("canvas");
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  canvas.width = Math.floor(viewport.width);
-  canvas.height = Math.floor(viewport.height);
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  await page.render({ canvasContext: context, viewport }).promise;
-
+  const pageCount = pdf.numPages || 1;
+  const processedPages = Math.min(pageCount, LOCAL_VISION_CONFIG.maxPages);
+  const ocrRegions = [];
+  let activeRegionLabel = "";
+  let lastProgressToast = 0;
   const worker = await createTesseractWorker((message) => {
     if (message.status === "recognizing text" && Number.isFinite(message.progress)) {
-      toast(`Local OCR ${Math.round(message.progress * 100)}%`);
+      const now = Date.now();
+      if (now - lastProgressToast > 1200) {
+        lastProgressToast = now;
+        toast(`Local OCR ${activeRegionLabel} ${Math.round(message.progress * 100)}%`);
+      }
     }
   });
   try {
-    const result = await worker.recognize(canvas);
+    if (worker && typeof worker.setParameters === "function") {
+      await worker.setParameters({
+        tessedit_pageseg_mode: "11",
+        preserve_interword_spaces: "1"
+      });
+    }
+    for (let pageNumber = 1; pageNumber <= processedPages; pageNumber += 1) {
+      toast(`Rendering page ${pageNumber} of ${processedPages} at high resolution...`);
+      const pageCanvas = await renderPdfPageForOcr(pdf, pageNumber);
+      for (const regionDefinition of LOCAL_VISION_REGIONS) {
+        activeRegionLabel = `P${pageNumber} ${regionDefinition.label}`;
+        toast(`OCR ${activeRegionLabel}...`);
+        const croppedCanvas = cropCanvasRegion(pageCanvas, regionDefinition);
+        const preparedCanvas = preprocessCanvasForOcr(croppedCanvas);
+        const result = await worker.recognize(preparedCanvas);
+        const text = cleanOcrText(result && result.data ? result.data.text : "");
+        const confidence = result && result.data ? Number(result.data.confidence) || 0 : 0;
+        if (text) {
+          ocrRegions.push(normalizeOcrRegion({
+            page: pageNumber,
+            region: regionDefinition.label,
+            text,
+            confidence,
+            lineCount: text.split(/\n+/).filter(Boolean).length
+          }));
+        }
+        croppedCanvas.width = 0;
+        croppedCanvas.height = 0;
+        preparedCanvas.width = 0;
+        preparedCanvas.height = 0;
+      }
+      pageCanvas.width = 0;
+      pageCanvas.height = 0;
+    }
+    const text = buildGroupedOcrText(ocrRegions);
+    const confidenceValues = ocrRegions.map((region) => Number(region.confidence) || 0).filter((value) => value > 0);
     return {
-      text: cleanOcrText(result && result.data ? result.data.text : ""),
-      confidence: result && result.data ? result.data.confidence : 0,
-      pageCount: pdf.numPages || 1
+      text,
+      confidence: confidenceValues.length ? confidenceValues.reduce((total, value) => total + value, 0) / confidenceValues.length : 0,
+      pageCount,
+      processedPages,
+      regionCount: ocrRegions.length,
+      regions: ocrRegions
     };
   } finally {
     if (worker && typeof worker.terminate === "function") await worker.terminate();
   }
+}
+
+async function renderPdfPageForOcr(pdf, pageNumber) {
+  const page = await pdf.getPage(pageNumber);
+  const baseViewport = page.getViewport({ scale: 1 });
+  const dpiScale = LOCAL_VISION_CONFIG.targetDpi / 72;
+  const maxScale = LOCAL_VISION_CONFIG.maxCanvasSide / Math.max(baseViewport.width, baseViewport.height);
+  const renderScale = Math.max(0.9, Math.min(dpiScale, maxScale));
+  const viewport = page.getViewport({ scale: renderScale });
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error("Unable to prepare local OCR canvas.");
+  canvas.width = Math.max(1, Math.floor(viewport.width));
+  canvas.height = Math.max(1, Math.floor(viewport.height));
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: context, viewport }).promise;
+  return canvas;
+}
+
+function cropCanvasRegion(sourceCanvas, regionDefinition) {
+  const sourceWidth = sourceCanvas.width;
+  const sourceHeight = sourceCanvas.height;
+  const sourceX = Math.max(0, Math.floor(sourceWidth * regionDefinition.x));
+  const sourceY = Math.max(0, Math.floor(sourceHeight * regionDefinition.y));
+  const cropWidth = Math.max(1, Math.min(sourceWidth - sourceX, Math.floor(sourceWidth * regionDefinition.width)));
+  const cropHeight = Math.max(1, Math.min(sourceHeight - sourceY, Math.floor(sourceHeight * regionDefinition.height)));
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error("Unable to crop OCR region.");
+  canvas.width = cropWidth;
+  canvas.height = cropHeight;
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, cropWidth, cropHeight);
+  context.drawImage(sourceCanvas, sourceX, sourceY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+  return canvas;
+}
+
+function preprocessCanvasForOcr(sourceCanvas) {
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error("Unable to preprocess OCR image.");
+  canvas.width = sourceCanvas.width;
+  canvas.height = sourceCanvas.height;
+  context.drawImage(sourceCanvas, 0, 0);
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  for (let index = 0; index < data.length; index += 4) {
+    const luminance = 0.299 * data[index] + 0.587 * data[index + 1] + 0.114 * data[index + 2];
+    const contrasted = Math.max(0, Math.min(255, (luminance - 128) * 1.55 + 128));
+    let value = contrasted;
+    if (contrasted > 214) value = 255;
+    if (contrasted < 158) value = 0;
+    data[index] = value;
+    data[index + 1] = value;
+    data[index + 2] = value;
+    data[index + 3] = 255;
+  }
+  context.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+function buildGroupedOcrText(regions) {
+  return (Array.isArray(regions) ? regions : [])
+    .filter((region) => region.text)
+    .map((region) => `Page ${formatInteger(region.page || 1)} - ${region.region || "Region"}\n${region.text}`)
+    .join("\n\n");
 }
 
 async function loadPdfJs() {
@@ -3324,25 +3493,37 @@ function cleanOcrText(text) {
 }
 
 function detectEstimateV2MaterialsFromText(text, planType, source) {
-  const searchable = String(text || "").toLowerCase();
-  const lines = String(text || "").split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  return detectEstimateV2MaterialsFromRegions([{
+    page: 1,
+    region: source || "Readable Text",
+    text: String(text || ""),
+    confidence: 0,
+    lineCount: String(text || "").split(/\n+/).filter(Boolean).length
+  }], planType, source);
+}
+
+function detectEstimateV2MaterialsFromRegions(regions, planType, source) {
+  const sourceRegions = (Array.isArray(regions) ? regions : []).map(normalizeOcrRegion).filter((region) => region.text);
+  const searchable = sourceRegions.map((region) => region.text).join("\n").toLowerCase();
   const includeAll = planType === "Other";
   return ESTIMATE_V2_MATERIAL_TERMS
     .filter((material) => includeAll || material.planTypes.includes(planType) || material.category === "General")
     .map((material) => {
       const matchedTerms = material.terms.filter((term) => countTextMatches(searchable, term) > 0);
       const mentions = matchedTerms.reduce((total, term) => total + countTextMatches(searchable, term), 0);
-      const sampleLines = sampleLinesForTerms(lines, matchedTerms);
+      const evidence = evidenceForTerms(sourceRegions, matchedTerms);
+      const sampleLines = evidence.map((item) => item.line);
       const quantityHint = inferEstimateV2Quantity(sampleLines);
+      const evidenceConfidence = averageEvidenceConfidence(evidence);
       return normalizeEstimateV2Material({
         description: material.description,
         category: material.category,
         quantity: quantityHint.quantity,
         unit: quantityHint.unit,
         mentions,
-        confidence: quantityHint.quantity > 0 ? "quantity hint" : (mentions > 2 ? "medium" : "low"),
+        confidence: estimateV2ConfidenceLabel(mentions, evidenceConfidence, quantityHint.quantity),
         source,
-        notes: quantityHint.note || sampleLines[0] || `Detected by OCR keyword${matchedTerms.length === 1 ? "" : "s"}: ${matchedTerms.join(", ")}`,
+        notes: formatEstimateV2EvidenceNotes(evidence, quantityHint, matchedTerms),
         matchedTerms,
         sampleLines
       });
@@ -3351,18 +3532,58 @@ function detectEstimateV2MaterialsFromText(text, planType, source) {
     .sort((first, second) => second.mentions - first.mentions || first.description.localeCompare(second.description));
 }
 
+function evidenceForTerms(regions, terms, limit = 5) {
+  if (!terms.length) return [];
+  const lowerTerms = terms.map((term) => term.toLowerCase());
+  const seen = new Set();
+  const evidence = [];
+  regions.forEach((region) => {
+    String(region.text || "").split(/\n+/).map((line) => line.trim()).filter(Boolean).forEach((line) => {
+      const lowerLine = line.toLowerCase();
+      if (!lowerTerms.some((term) => lowerLine.includes(term))) return;
+      const key = `${region.page}|${region.region}|${lowerLine}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      evidence.push({
+        page: region.page || 1,
+        region: region.region || "Region",
+        line,
+        confidence: Number(region.confidence) || 0
+      });
+    });
+  });
+  return evidence.slice(0, limit);
+}
+
+function averageEvidenceConfidence(evidence) {
+  const values = (Array.isArray(evidence) ? evidence : [])
+    .map((item) => Number(item.confidence) || 0)
+    .filter((value) => value > 0);
+  return values.length ? values.reduce((total, value) => total + value, 0) / values.length : 0;
+}
+
+function estimateV2ConfidenceLabel(mentions, ocrConfidence, quantity) {
+  if (quantity > 0) return "high - quantity hint";
+  if (mentions >= 4 && ocrConfidence >= 55) return "high";
+  if (mentions >= 2 || ocrConfidence >= 50) return "medium";
+  return "low";
+}
+
+function formatEstimateV2EvidenceNotes(evidence, quantityHint, matchedTerms) {
+  const lines = (Array.isArray(evidence) ? evidence : [])
+    .slice(0, 4)
+    .map((item) => `Page ${formatInteger(item.page || 1)} | ${item.region || "Region"}: ${item.line}`);
+  if (quantityHint.note) lines.push(quantityHint.note);
+  if (!lines.length && matchedTerms.length) {
+    lines.push(`Detected by OCR keyword${matchedTerms.length === 1 ? "" : "s"}: ${matchedTerms.join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
 function countTextMatches(text, term) {
   const escapedTerm = escapeRegExp(term).replace(/\s+/g, "\\s+");
   const pattern = new RegExp(`(^|[^a-z0-9])${escapedTerm}([^a-z0-9]|$)`, "gi");
   return (text.match(pattern) || []).length;
-}
-
-function sampleLinesForTerms(lines, terms) {
-  if (!terms.length) return [];
-  const lowerTerms = terms.map((term) => term.toLowerCase());
-  return lines
-    .filter((line) => lowerTerms.some((term) => line.toLowerCase().includes(term)))
-    .slice(0, 3);
 }
 
 function inferEstimateV2Quantity(lines) {
