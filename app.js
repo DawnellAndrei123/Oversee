@@ -22,6 +22,20 @@ const ACCESS_KEYS = [
 const STATUS_OPTIONS = ["Not yet Started", "On-going", "On-Hold", "Completed"];
 const PLAN_TYPES = ["Architectural", "Structural", "Plumbing", "Electrical", "Mechanical", "Electronics", "Civil", "Fire Protection", "Other"];
 const DRAWING_SCALES = ["1:20", "1:25", "1:50", "1:75", "1:100", "1:150", "1:200", "Custom"];
+const ESTIMATE_METHOD_SOURCES = [
+  {
+    key: "fajardo-simplified",
+    label: "Simplified Construction Estimate - Max B. Fajardo",
+    shortLabel: "Max B. Fajardo",
+    note: "Reference source for the estimating method. Formula values remain visible and editable in Oversee."
+  },
+  {
+    key: "standard-editable",
+    label: "Standard Editable Method",
+    shortLabel: "Standard Method",
+    note: "General estimating method using editable Oversee assumptions."
+  }
+];
 const LOCAL_VISION_LIBS = {
   pdfScript: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js",
   pdfWorker: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js",
@@ -309,6 +323,10 @@ document.addEventListener("change", (event) => {
   }
   if (target && target.dataset.action === "estimate-v2-scale") {
     updateEstimateV2Scale(target.value);
+    return;
+  }
+  if (target && target.dataset.action === "estimate-v2-method-source") {
+    updateEstimateV2MethodSource(target.value);
     return;
   }
   if (target && target.dataset.action === "select-price-store") {
@@ -938,6 +956,7 @@ function renderEstimateV2View() {
   }, 0);
   const planType = PLAN_TYPES.includes(draft.planType) ? draft.planType : PLAN_TYPES[0];
   const drawingScale = DRAWING_SCALES.includes(draft.drawingScale) ? draft.drawingScale : "1:100";
+  const methodSource = estimateMethodSource(draft.methodSource);
   const showStructuralInputs = isStructuralPlanType(planType);
   return `
     <div class="visual-head">
@@ -966,6 +985,12 @@ function renderEstimateV2View() {
           <span>Drawing Scale</span>
           <select data-action="estimate-v2-scale" aria-label="Drawing scale">
             ${DRAWING_SCALES.map((scale) => `<option value="${escapeAttribute(scale)}" ${scale === drawingScale ? "selected" : ""}>${escapeHtml(scale)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="estimate-v2-field">
+          <span>Estimate Method Source</span>
+          <select data-action="estimate-v2-method-source" aria-label="Estimate method source">
+            ${ESTIMATE_METHOD_SOURCES.map((source) => `<option value="${escapeAttribute(source.key)}" ${source.key === methodSource.key ? "selected" : ""}>${escapeHtml(source.label)}</option>`).join("")}
           </select>
         </label>
         ${showStructuralInputs ? `
@@ -1009,6 +1034,10 @@ function renderEstimateV2View() {
       <div>
         <span class="eyebrow">Drawing Scale</span>
         <strong>${escapeHtml(drawingScale)}</strong>
+      </div>
+      <div>
+        <span class="eyebrow">Method Source</span>
+        <strong>${escapeHtml(methodSource.shortLabel)}</strong>
       </div>
       <div>
         <span class="eyebrow">Pages OCR'd</span>
@@ -1091,8 +1120,9 @@ function renderEstimateV2StructuralSummaryContent(draft) {
         ${renderEstimateV2StructuralCard("CHB Count", `${formatInteger(summary.chbPiecesWithWaste)} pcs`, `${formatInteger(summary.chbPieces)} pcs + 5% allowance`)}
       </div>
       <p class="estimate-v2-structural-note">
-        Concrete mix uses 1:2:4 ratio and a 1.54 dry-volume factor. CHB count uses 12.5 blocks per sq.m; enter building elevation and wall length when the drawing does not provide wall area yet.
+        Method source: ${escapeHtml(summary.methodSource.label)}. Concrete mix uses 1:2:4 ratio and a 1.54 dry-volume factor. CHB count uses 12.5 blocks per sq.m; enter building elevation and wall length when the drawing does not provide wall area yet.
       </p>
+      <p class="estimate-v2-method-note">${escapeHtml(summary.methodSource.note)}</p>
   `;
 }
 
@@ -1174,10 +1204,15 @@ function estimateV2StructuralTakeoff(draft) {
   const mix = concreteMixBreakdown(concreteVolume);
   const chb = estimateChbTakeoff(rows, draft);
   return {
+    methodSource: estimateMethodSource(draft.methodSource),
     concreteVolume,
     ...mix,
     ...chb
   };
+}
+
+function estimateMethodSource(sourceKey) {
+  return ESTIMATE_METHOD_SOURCES.find((source) => source.key === sourceKey) || ESTIMATE_METHOD_SOURCES[0];
 }
 
 function updateEstimateV2StructuralSummary() {
@@ -2423,6 +2458,13 @@ function updateEstimateV2Scale(scale) {
   render();
 }
 
+function updateEstimateV2MethodSource(sourceKey) {
+  const draft = collectEstimateV2DraftFromDom();
+  draft.methodSource = estimateMethodSource(sourceKey).key;
+  saveEstimateV2Draft(draft);
+  render();
+}
+
 function addEstimateV2Row() {
   const draft = collectEstimateV2DraftFromDom();
   draft.materials.push(blankEstimateV2Material());
@@ -2569,12 +2611,14 @@ function collectEstimateV2DraftFromDom() {
   const current = getEstimateV2Draft();
   const planTypeInput = document.querySelector('[data-action="estimate-v2-plan-type"]');
   const scaleInput = document.querySelector('[data-action="estimate-v2-scale"]');
+  const methodSourceInput = document.querySelector('[data-action="estimate-v2-method-source"]');
   const elevationInput = document.querySelector("[data-estimate-v2-structural-elevation]");
   const chbLengthInput = document.querySelector("[data-estimate-v2-chb-wall-length]");
   return normalizeEstimateV2Draft({
     ...current,
     planType: planTypeInput ? planTypeInput.value : current.planType,
     drawingScale: scaleInput ? scaleInput.value : current.drawingScale,
+    methodSource: methodSourceInput ? methodSourceInput.value : current.methodSource,
     structuralElevation: elevationInput ? elevationInput.value : current.structuralElevation,
     chbWallLength: chbLengthInput ? chbLengthInput.value : current.chbWallLength,
     materials: [...document.querySelectorAll("[data-estimate-v2-row]")].map(readEstimateV2RowFromDom)
@@ -3290,6 +3334,7 @@ function defaultEstimateV2Draft() {
   return {
     planType: PLAN_TYPES[0],
     drawingScale: "1:100",
+    methodSource: "fajardo-simplified",
     structuralElevation: 0,
     chbWallLength: 0,
     fileName: "",
@@ -3311,6 +3356,7 @@ function normalizeEstimateV2Draft(draft) {
   return {
     planType: PLAN_TYPES.includes(source.planType) ? source.planType : PLAN_TYPES[0],
     drawingScale: DRAWING_SCALES.includes(source.drawingScale) ? source.drawingScale : "1:100",
+    methodSource: estimateMethodSource(source.methodSource).key,
     structuralElevation: Math.max(0, Number(source.structuralElevation) || 0),
     chbWallLength: Math.max(0, Number(source.chbWallLength) || 0),
     fileName: String(source.fileName || "").trim(),
