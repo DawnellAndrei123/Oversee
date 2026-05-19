@@ -1305,7 +1305,8 @@ tfoot td {
   gap: 10px;
 }
 
-.estimate-v2-chb-inputs {
+.estimate-v2-chb-inputs,
+.estimate-v2-concrete-inputs {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 10px;

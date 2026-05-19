@@ -27,6 +27,8 @@ const ESTIMATE_V2_TAKEOFF_TOOLS = [
   { key: "tile-area", label: "Tiles / Floor", type: "area", unit: "sq.m", defaultName: "Floor Tiles", color: "#22c55e" },
   { key: "wall-area", label: "Wall Area", type: "area", unit: "sq.m", defaultName: "Wall Finish", color: "#f59e0b" },
   { key: "chb-wall", label: "CHB Wall", type: "chb", unit: "pcs", defaultName: "Concrete Hollow Block", color: "#14b8a6" },
+  { key: "column-concrete", label: "Column", type: "concrete-count", unit: "cu.m", defaultName: "Column Concrete", color: "#06b6d4" },
+  { key: "footing-concrete", label: "Footing", type: "concrete-count", unit: "cu.m", defaultName: "Column Footing Concrete", color: "#8b5cf6" },
   { key: "pipe-length", label: "Pipe Length", type: "linear", unit: "lm", defaultName: "Pipe Line", color: "#38bdf8" },
   { key: "wire-length", label: "Wire Length", type: "linear", unit: "lm", defaultName: "Electrical Wiring", color: "#a78bfa" },
   { key: "door-count", label: "Doors", type: "count", unit: "pcs", defaultName: "Door", color: "#fb7185" },
@@ -980,6 +982,8 @@ function renderEstimateV2View() {
   const totalArea = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "area").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
   const totalLength = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "linear").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
   const totalChb = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "chb").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
+  const totalConcrete = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "concrete-count").reduce((total, row) => total + (Number(row.concreteVolume || row.quantity) || 0), 0);
+  const totalConcreteMix = concreteMixBreakdown(totalConcrete);
   const totalCount = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "count").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
   return `
     <div class="visual-head">
@@ -1018,6 +1022,8 @@ function renderEstimateV2View() {
         ${renderEstimateV2Metric("Floor Area", `${formatSwaNumber(totalArea)} m2`)}
         ${renderEstimateV2Metric("Length", `${formatSwaNumber(totalLength)} m`)}
         ${renderEstimateV2Metric("CHB", `${formatInteger(totalChb)} pcs`)}
+        ${renderEstimateV2Metric("Concrete", `${formatSwaNumber(totalConcrete)} cu.m`)}
+        ${renderEstimateV2Metric("Cement", `${formatInteger(totalConcreteMix.cementBags)} bags`)}
         ${renderEstimateV2Metric("Count", formatInteger(totalCount))}
         ${renderEstimateV2Metric("Total Cost", formatCurrency(totalCost))}
       </section>
@@ -1077,6 +1083,78 @@ function renderEstimateV2TakeoffActiveInputs(draft, activeTool) {
         </label>
         <label class="estimate-v2-field">
           <span>Cost Per pc</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-current-cost type="number" min="0" step="0.01" value="${numberInputValue(draft.takeoffCostPerUnit)}" placeholder="0.00">
+        </label>
+      </div>
+    `;
+  }
+  if (activeTool.key === "column-concrete") {
+    return `
+      <div class="estimate-v2-concrete-inputs">
+        <label class="estimate-v2-field">
+          <span>Column Type</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-concrete-mark value="${escapeAttribute(draft.concreteTypeMark)}" placeholder="C1">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Width (m)</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-column-width type="number" min="0" step="0.01" value="${numberInputValue(draft.columnWidth)}" placeholder="0.30">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Depth (m)</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-column-depth type="number" min="0" step="0.01" value="${numberInputValue(draft.columnDepth)}" placeholder="0.30">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Height (m)</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-column-height type="number" min="0" step="0.01" value="${numberInputValue(draft.columnHeight)}" placeholder="3.00">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Waste %</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-concrete-waste type="number" min="0" step="0.01" value="${numberInputValue(draft.concreteWastePercent)}" placeholder="0">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Cost Per cu.m</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-current-cost type="number" min="0" step="0.01" value="${numberInputValue(draft.takeoffCostPerUnit)}" placeholder="0.00">
+        </label>
+      </div>
+    `;
+  }
+  if (activeTool.key === "footing-concrete") {
+    return `
+      <div class="estimate-v2-concrete-inputs">
+        <label class="estimate-v2-field">
+          <span>Footing Type</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-concrete-mark value="${escapeAttribute(draft.footingTypeMark)}" placeholder="F1">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Length (m)</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-footing-length type="number" min="0" step="0.01" value="${numberInputValue(draft.footingLength)}" placeholder="1.50">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Width (m)</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-footing-width type="number" min="0" step="0.01" value="${numberInputValue(draft.footingWidth)}" placeholder="1.50">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Thickness (m)</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-footing-thickness type="number" min="0" step="0.01" value="${numberInputValue(draft.footingThickness)}" placeholder="0.30">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Pedestal W (m)</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-pedestal-width type="number" min="0" step="0.01" value="${numberInputValue(draft.pedestalWidth)}" placeholder="0.00">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Pedestal D (m)</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-pedestal-depth type="number" min="0" step="0.01" value="${numberInputValue(draft.pedestalDepth)}" placeholder="0.00">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Pedestal H (m)</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-pedestal-height type="number" min="0" step="0.01" value="${numberInputValue(draft.pedestalHeight)}" placeholder="0.00">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Waste %</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-concrete-waste type="number" min="0" step="0.01" value="${numberInputValue(draft.concreteWastePercent)}" placeholder="0">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Cost Per cu.m</span>
           <input data-estimate-v2-takeoff-input data-estimate-v2-current-cost type="number" min="0" step="0.01" value="${numberInputValue(draft.takeoffCostPerUnit)}" placeholder="0.00">
         </label>
       </div>
@@ -1146,7 +1224,7 @@ function renderEstimateV2TakeoffShape(row) {
   if ((tool.type === "linear" || tool.type === "chb") && points.length >= 2) {
     return `<polyline class="estimate-v2-shape line" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polyline>`;
   }
-  if (tool.type === "count") {
+  if (tool.type === "count" || tool.type === "concrete-count") {
     return points.map((point) => `<circle class="estimate-v2-shape count" cx="${point.x}" cy="${point.y}" r="10" style="--takeoff-color:${escapeAttribute(color)}"></circle>`).join("");
   }
   if (tool.type === "calibrate" && points.length >= 2) {
@@ -1203,6 +1281,8 @@ function renderEstimateV2TakeoffRow(row) {
   const tool = estimateV2TakeoffTool(normalized.tool);
   const typeDetails = tool.type === "chb"
     ? `<small>${formatSwaNumber(normalized.wallLength)} m wall x ${formatSwaNumber(normalized.chbWallHeight)} m high</small><small>${formatSwaNumber(normalized.wallArea)} sq.m @ ${formatSwaNumber(normalized.chbBlocksPerSquareMeter)} CHB/sq.m + ${formatSwaNumber(normalized.chbWastePercent)}% waste</small>`
+    : tool.type === "concrete-count"
+      ? renderEstimateV2ConcreteDetails(normalized)
     : "";
   return `
     <tr data-estimate-v2-takeoff-row="${escapeAttribute(normalized.id)}">
@@ -1214,6 +1294,23 @@ function renderEstimateV2TakeoffRow(row) {
       <td data-estimate-v2-row-total>${formatCurrency(estimateV2TakeoffRowTotal(normalized))}</td>
       <td><button class="ghost-btn danger compact-btn" data-action="delete-estimate-v2-takeoff" data-id="${escapeAttribute(normalized.id)}">Delete</button></td>
     </tr>
+  `;
+}
+
+function renderEstimateV2ConcreteDetails(row) {
+  const mix = concreteMixBreakdown(row.concreteVolume || row.quantity);
+  const countText = `${formatInteger(row.takeoffCount)} ${row.takeoffCount === 1 ? "point" : "points"}`;
+  const baseText = row.concreteKind === "footing"
+    ? `${formatSwaNumber(row.footingLength)} x ${formatSwaNumber(row.footingWidth)} x ${formatSwaNumber(row.footingThickness)} m footing`
+    : `${formatSwaNumber(row.columnWidth)} x ${formatSwaNumber(row.columnDepth)} x ${formatSwaNumber(row.columnHeight)} m column`;
+  const pedestalText = row.concreteKind === "footing" && row.pedestalVolume
+    ? `<small>Pedestal: ${formatSwaNumber(row.pedestalWidth)} x ${formatSwaNumber(row.pedestalDepth)} x ${formatSwaNumber(row.pedestalHeight)} m</small>`
+    : "";
+  return `
+    <small>${escapeHtml(row.typeMark || "-")} | ${countText} | ${baseText}</small>
+    ${pedestalText}
+    <small>Concrete: ${formatSwaNumber(row.concreteVolume)} cu.m${row.concreteWastePercent ? ` incl. ${formatSwaNumber(row.concreteWastePercent)}% waste` : ""}</small>
+    <small>Cement: ${formatInteger(mix.cementBags)} bags | Sand: ${formatSwaNumber(mix.sandVolume)} cu.m | Gravel: ${formatSwaNumber(mix.gravelVolume)} cu.m</small>
   `;
 }
 
@@ -2809,6 +2906,13 @@ function finishEstimateV2Takeoff() {
       chbBlocksPerSquareMeter: blocksPerSquareMeter,
       chbSize: draft.chbSize
     });
+  } else if (tool.type === "concrete-count") {
+    const concrete = estimateV2ConcreteCountTakeoff(tool, draft, points.length);
+    if (!concrete) return;
+    quantity = concrete.concreteVolume;
+    unit = "cu.m";
+    description = `${description} ${concrete.typeMark}`.trim();
+    Object.assign(takeoffDetails, concrete);
   } else if (tool.type === "count") {
     quantity = points.length;
   }
@@ -2827,6 +2931,61 @@ function finishEstimateV2Takeoff() {
   saveEstimateV2Draft(draft);
   render();
   toast(`${tool.label} takeoff added.`);
+}
+
+function estimateV2ConcreteCountTakeoff(tool, draft, count) {
+  const takeoffCount = Math.max(0, Number(count) || 0);
+  const concreteWastePercent = Math.max(0, Number(draft.concreteWastePercent) || 0);
+  if (tool.key === "column-concrete") {
+    const columnWidth = Math.max(0, Number(draft.columnWidth) || 0);
+    const columnDepth = Math.max(0, Number(draft.columnDepth) || 0);
+    const columnHeight = Math.max(0, Number(draft.columnHeight) || 0);
+    if (!columnWidth || !columnDepth || !columnHeight) {
+      toast("Enter column width, depth, and height.");
+      return null;
+    }
+    const concreteVolumeBase = columnWidth * columnDepth * columnHeight * takeoffCount;
+    return {
+      concreteKind: "column",
+      typeMark: draft.concreteTypeMark || "C1",
+      takeoffCount,
+      columnWidth,
+      columnDepth,
+      columnHeight,
+      concreteWastePercent,
+      concreteVolumeBase,
+      concreteVolume: concreteVolumeBase * (1 + concreteWastePercent / 100)
+    };
+  }
+  const footingLength = Math.max(0, Number(draft.footingLength) || 0);
+  const footingWidth = Math.max(0, Number(draft.footingWidth) || 0);
+  const footingThickness = Math.max(0, Number(draft.footingThickness) || 0);
+  if (!footingLength || !footingWidth || !footingThickness) {
+    toast("Enter footing length, width, and thickness.");
+    return null;
+  }
+  const pedestalWidth = Math.max(0, Number(draft.pedestalWidth) || 0);
+  const pedestalDepth = Math.max(0, Number(draft.pedestalDepth) || 0);
+  const pedestalHeight = Math.max(0, Number(draft.pedestalHeight) || 0);
+  const footingVolumeEach = footingLength * footingWidth * footingThickness;
+  const pedestalVolumeEach = pedestalWidth * pedestalDepth * pedestalHeight;
+  const concreteVolumeBase = (footingVolumeEach + pedestalVolumeEach) * takeoffCount;
+  return {
+    concreteKind: "footing",
+    typeMark: draft.footingTypeMark || "F1",
+    takeoffCount,
+    footingLength,
+    footingWidth,
+    footingThickness,
+    footingVolume: footingVolumeEach * takeoffCount,
+    pedestalWidth,
+    pedestalDepth,
+    pedestalHeight,
+    pedestalVolume: pedestalVolumeEach * takeoffCount,
+    concreteWastePercent,
+    concreteVolumeBase,
+    concreteVolume: concreteVolumeBase * (1 + concreteWastePercent / 100)
+  };
 }
 
 function undoEstimateV2Point() {
@@ -3020,6 +3179,18 @@ function collectEstimateV2DraftFromDom() {
   const chbWasteInput = document.querySelector("[data-estimate-v2-chb-waste]");
   const chbBlocksInput = document.querySelector("[data-estimate-v2-chb-blocks]");
   const chbSizeInput = document.querySelector("[data-estimate-v2-chb-size]");
+  const concreteMarkInput = document.querySelector("[data-estimate-v2-concrete-mark]");
+  const columnWidthInput = document.querySelector("[data-estimate-v2-column-width]");
+  const columnDepthInput = document.querySelector("[data-estimate-v2-column-depth]");
+  const columnHeightInput = document.querySelector("[data-estimate-v2-column-height]");
+  const footingLengthInput = document.querySelector("[data-estimate-v2-footing-length]");
+  const footingWidthInput = document.querySelector("[data-estimate-v2-footing-width]");
+  const footingThicknessInput = document.querySelector("[data-estimate-v2-footing-thickness]");
+  const pedestalWidthInput = document.querySelector("[data-estimate-v2-pedestal-width]");
+  const pedestalDepthInput = document.querySelector("[data-estimate-v2-pedestal-depth]");
+  const pedestalHeightInput = document.querySelector("[data-estimate-v2-pedestal-height]");
+  const concreteWasteInput = document.querySelector("[data-estimate-v2-concrete-waste]");
+  const activeTool = estimateV2TakeoffTool(current.takeoffTool);
   return normalizeEstimateV2Draft({
     ...current,
     planType: planTypeInput ? planTypeInput.value : current.planType,
@@ -3030,6 +3201,18 @@ function collectEstimateV2DraftFromDom() {
     chbWastePercent: chbWasteInput ? chbWasteInput.value : current.chbWastePercent,
     chbBlocksPerSquareMeter: chbBlocksInput ? chbBlocksInput.value : current.chbBlocksPerSquareMeter,
     chbSize: chbSizeInput ? chbSizeInput.value : current.chbSize,
+    concreteTypeMark: concreteMarkInput && activeTool.key === "column-concrete" ? concreteMarkInput.value : current.concreteTypeMark,
+    footingTypeMark: concreteMarkInput && activeTool.key === "footing-concrete" ? concreteMarkInput.value : current.footingTypeMark,
+    columnWidth: columnWidthInput ? columnWidthInput.value : current.columnWidth,
+    columnDepth: columnDepthInput ? columnDepthInput.value : current.columnDepth,
+    columnHeight: columnHeightInput ? columnHeightInput.value : current.columnHeight,
+    footingLength: footingLengthInput ? footingLengthInput.value : current.footingLength,
+    footingWidth: footingWidthInput ? footingWidthInput.value : current.footingWidth,
+    footingThickness: footingThicknessInput ? footingThicknessInput.value : current.footingThickness,
+    pedestalWidth: pedestalWidthInput ? pedestalWidthInput.value : current.pedestalWidth,
+    pedestalDepth: pedestalDepthInput ? pedestalDepthInput.value : current.pedestalDepth,
+    pedestalHeight: pedestalHeightInput ? pedestalHeightInput.value : current.pedestalHeight,
+    concreteWastePercent: concreteWasteInput ? concreteWasteInput.value : current.concreteWastePercent,
     takeoffItemName: currentNameInput ? currentNameInput.value : current.takeoffItemName,
     takeoffCostPerUnit: currentCostInput ? currentCostInput.value : current.takeoffCostPerUnit,
     calibrationLength: calibrationLengthInput ? calibrationLengthInput.value : current.calibrationLength,
@@ -3043,11 +3226,14 @@ function collectEstimateV2TakeoffRowsFromDom(fallbackRows = []) {
   if (!rowNodes.length) return fallbackRows;
   return rowNodes.map((rowNode) => {
     const previous = fallbackRows.find((row) => row.id === rowNode.dataset.estimateV2TakeoffRow) || {};
+    const quantity = getRowInputNumber(rowNode, "quantity");
+    const tool = estimateV2TakeoffTool(previous.tool);
     return normalizeEstimateV2TakeoffRow({
       ...previous,
       id: rowNode.dataset.estimateV2TakeoffRow || cryptoId(),
       description: getRowInputValue(rowNode, "description"),
-      quantity: getRowInputNumber(rowNode, "quantity"),
+      quantity,
+      concreteVolume: tool.type === "concrete-count" ? quantity : previous.concreteVolume,
       unit: getRowInputValue(rowNode, "unit"),
       costPerUnit: getRowInputNumber(rowNode, "costPerUnit")
     });
@@ -3769,6 +3955,18 @@ function defaultEstimateV2Draft() {
     chbWastePercent: CHB_TAKEOFF.defaultWastePercent,
     chbBlocksPerSquareMeter: CHB_TAKEOFF.blocksPerSquareMeter,
     chbSize: CHB_SIZE_OPTIONS[1],
+    concreteTypeMark: "C1",
+    footingTypeMark: "F1",
+    columnWidth: 0.3,
+    columnDepth: 0.3,
+    columnHeight: 3,
+    footingLength: 1.5,
+    footingWidth: 1.5,
+    footingThickness: 0.3,
+    pedestalWidth: 0,
+    pedestalDepth: 0,
+    pedestalHeight: 0,
+    concreteWastePercent: 0,
     planFileName: "",
     takeoffPage: 1,
     takeoffPageCount: 0,
@@ -3798,6 +3996,7 @@ function defaultEstimateV2Draft() {
 function normalizeEstimateV2Draft(draft) {
   const source = draft && typeof draft === "object" ? draft : {};
   const chbWastePercent = Number(source.chbWastePercent);
+  const concreteWastePercent = Number(source.concreteWastePercent);
   return {
     planType: PLAN_TYPES.includes(source.planType) ? source.planType : PLAN_TYPES[0],
     drawingScale: DRAWING_SCALES.includes(source.drawingScale) ? source.drawingScale : "1:100",
@@ -3807,6 +4006,18 @@ function normalizeEstimateV2Draft(draft) {
     chbWastePercent: Number.isFinite(chbWastePercent) ? Math.max(0, chbWastePercent) : CHB_TAKEOFF.defaultWastePercent,
     chbBlocksPerSquareMeter: Math.max(0, Number(source.chbBlocksPerSquareMeter) || CHB_TAKEOFF.blocksPerSquareMeter),
     chbSize: CHB_SIZE_OPTIONS.includes(source.chbSize) ? source.chbSize : CHB_SIZE_OPTIONS[1],
+    concreteTypeMark: String(source.concreteTypeMark || "C1").trim(),
+    footingTypeMark: String(source.footingTypeMark || "F1").trim(),
+    columnWidth: Math.max(0, Number(source.columnWidth) || 0.3),
+    columnDepth: Math.max(0, Number(source.columnDepth) || 0.3),
+    columnHeight: Math.max(0, Number(source.columnHeight) || 3),
+    footingLength: Math.max(0, Number(source.footingLength) || 1.5),
+    footingWidth: Math.max(0, Number(source.footingWidth) || 1.5),
+    footingThickness: Math.max(0, Number(source.footingThickness) || 0.3),
+    pedestalWidth: Math.max(0, Number(source.pedestalWidth) || 0),
+    pedestalDepth: Math.max(0, Number(source.pedestalDepth) || 0),
+    pedestalHeight: Math.max(0, Number(source.pedestalHeight) || 0),
+    concreteWastePercent: Number.isFinite(concreteWastePercent) ? Math.max(0, concreteWastePercent) : 0,
     planFileName: String(source.planFileName || source.fileName || "").trim(),
     takeoffPage: Math.max(1, Number(source.takeoffPage) || 1),
     takeoffPageCount: Math.max(0, Number(source.takeoffPageCount) || 0),
@@ -3863,6 +4074,7 @@ function normalizeEstimateV2TakeoffRow(row) {
   const tool = estimateV2TakeoffTool(row && row.tool);
   const chbWallHeight = Math.max(0, Number(row && row.chbWallHeight) || 0);
   const wallLength = Math.max(0, Number(row && row.wallLength) || 0);
+  const concreteVolume = Math.max(0, Number(row && row.concreteVolume) || 0);
   return {
     id: row && row.id || cryptoId(),
     description: String(row && row.description || tool.defaultName).trim(),
@@ -3878,7 +4090,24 @@ function normalizeEstimateV2TakeoffRow(row) {
     chbWallHeight,
     chbWastePercent: Math.max(0, Number(row && row.chbWastePercent) || 0),
     chbBlocksPerSquareMeter: Math.max(0, Number(row && row.chbBlocksPerSquareMeter) || CHB_TAKEOFF.blocksPerSquareMeter),
-    chbSize: String(row && row.chbSize || "").trim()
+    chbSize: String(row && row.chbSize || "").trim(),
+    concreteKind: String(row && row.concreteKind || "").trim(),
+    typeMark: String(row && row.typeMark || "").trim(),
+    takeoffCount: Math.max(0, Number(row && row.takeoffCount) || 0),
+    concreteVolumeBase: Math.max(0, Number(row && row.concreteVolumeBase) || concreteVolume),
+    concreteVolume,
+    concreteWastePercent: Math.max(0, Number(row && row.concreteWastePercent) || 0),
+    columnWidth: Math.max(0, Number(row && row.columnWidth) || 0),
+    columnDepth: Math.max(0, Number(row && row.columnDepth) || 0),
+    columnHeight: Math.max(0, Number(row && row.columnHeight) || 0),
+    footingLength: Math.max(0, Number(row && row.footingLength) || 0),
+    footingWidth: Math.max(0, Number(row && row.footingWidth) || 0),
+    footingThickness: Math.max(0, Number(row && row.footingThickness) || 0),
+    footingVolume: Math.max(0, Number(row && row.footingVolume) || 0),
+    pedestalWidth: Math.max(0, Number(row && row.pedestalWidth) || 0),
+    pedestalDepth: Math.max(0, Number(row && row.pedestalDepth) || 0),
+    pedestalHeight: Math.max(0, Number(row && row.pedestalHeight) || 0),
+    pedestalVolume: Math.max(0, Number(row && row.pedestalVolume) || 0)
   };
 }
 
