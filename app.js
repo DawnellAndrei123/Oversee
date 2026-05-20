@@ -12,6 +12,16 @@ const STORAGE = {
   theme: "oversee.theme"
 };
 
+const CLOUD_APP_DATA_KEYS = [
+  { dataKey: "projects", storageKey: STORAGE.projects, fallback: [] },
+  { dataKey: "swa", storageKey: STORAGE.swa, fallback: null },
+  { dataKey: "estimateDraft", storageKey: STORAGE.estimateDraft, fallback: null },
+  { dataKey: "estimateV2Draft", storageKey: STORAGE.estimateV2Draft, fallback: null },
+  { dataKey: "estimateTemplates", storageKey: STORAGE.estimateTemplates, fallback: [] },
+  { dataKey: "materialPrices", storageKey: STORAGE.materialPrices, fallback: [] },
+  { dataKey: "subscription", storageKey: STORAGE.subscription, fallback: null }
+];
+
 const ACCESS_KEYS = [
   { key: "engineering", label: "Engineers View" },
   { key: "procurement", label: "Procurement" },
@@ -154,6 +164,9 @@ const state = {
   estimateV2PageWidth: 0,
   estimateV2PageHeight: 0,
   estimateV2ActivePoints: [],
+  cloudSyncApplying: false,
+  cloudSyncTimer: null,
+  cloudSyncLoaded: false,
   theme: readTheme()
 };
 
@@ -167,6 +180,11 @@ document.addEventListener("DOMContentLoaded", () => {
   applyTheme(state.theme);
   seedProjects();
   render();
+  initializeCloudAppData().then((loaded) => {
+    if (!loaded) return;
+    seedProjects();
+    render();
+  });
 });
 
 document.addEventListener("click", (event) => {
@@ -182,11 +200,7 @@ document.addEventListener("click", (event) => {
     },
     signup: handleSignup,
     login: handleLogin,
-    logout: () => {
-      localStorage.removeItem(STORAGE.session);
-      state.currentView = "welcome";
-      render();
-    },
+    logout: handleLogout,
     "open-account": openAccountModal,
     "main-view": () => openMainView(target.dataset.view),
     "engineering-tab": () => {
@@ -381,12 +395,119 @@ function savePublicAccount(account) {
   saveAccounts(nextAccounts);
 }
 
+function setSyncedJson(storageKey, value) {
+  localStorage.setItem(storageKey, JSON.stringify(value));
+  scheduleCloudAppDataSync();
+}
+
+function removeSyncedJson(storageKey) {
+  localStorage.removeItem(storageKey);
+  scheduleCloudAppDataSync();
+}
+
+function collectCloudAppData() {
+  return CLOUD_APP_DATA_KEYS.reduce((data, item) => {
+    data[item.dataKey] = readJson(item.storageKey, item.fallback);
+    return data;
+  }, {
+    savedAt: new Date().toISOString()
+  });
+}
+
+function applyCloudAppData(data) {
+  if (!data || typeof data !== "object") return;
+  state.cloudSyncApplying = true;
+  try {
+    CLOUD_APP_DATA_KEYS.forEach((item) => {
+      if (!Object.prototype.hasOwnProperty.call(data, item.dataKey)) return;
+      const value = data[item.dataKey];
+      if (value === null || value === undefined) {
+        localStorage.removeItem(item.storageKey);
+      } else {
+        localStorage.setItem(item.storageKey, JSON.stringify(value));
+      }
+    });
+    state.estimateV2Pdf = null;
+    state.estimateV2PageImage = "";
+    state.estimateV2PageWidth = 0;
+    state.estimateV2PageHeight = 0;
+    state.estimateV2ActivePoints = [];
+  } finally {
+    state.cloudSyncApplying = false;
+  }
+}
+
+async function initializeCloudAppData() {
+  if (!sessionToken()) return false;
+  try {
+    const response = await apiRequest("/app-data/load", {}, { timeoutMs: 10000 });
+    if (response.empty) {
+      await saveCloudAppDataNow();
+    } else {
+      applyCloudAppData(response.data);
+    }
+    state.cloudSyncLoaded = true;
+    return true;
+  } catch (error) {
+    console.warn(error);
+    state.backendNotice = error.message || "Cloud data sync is unavailable.";
+    toast(state.backendNotice);
+    return false;
+  }
+}
+
+function scheduleCloudAppDataSync() {
+  if (state.cloudSyncApplying || !sessionToken()) return;
+  window.clearTimeout(state.cloudSyncTimer);
+  state.cloudSyncTimer = window.setTimeout(() => {
+    saveCloudAppDataNow();
+  }, 800);
+}
+
+async function saveCloudAppDataNow() {
+  if (state.cloudSyncApplying || !sessionToken()) return false;
+  window.clearTimeout(state.cloudSyncTimer);
+  state.cloudSyncTimer = null;
+  try {
+    await apiRequest("/app-data/save", { data: collectCloudAppData() }, { timeoutMs: 15000 });
+    return true;
+  } catch (error) {
+    console.warn(error);
+    return false;
+  }
+}
+
+async function handleLogout() {
+  if (sessionToken()) await saveCloudAppDataNow();
+  localStorage.removeItem(STORAGE.session);
+  clearLocalAppData();
+  state.currentView = "welcome";
+  state.cloudSyncLoaded = false;
+  render();
+}
+
+function clearLocalAppData() {
+  state.cloudSyncApplying = true;
+  try {
+    CLOUD_APP_DATA_KEYS.forEach((item) => localStorage.removeItem(item.storageKey));
+    state.activeSwaSheetId = "draft";
+    state.activePriceStore = "";
+    state.estimateV2Pdf = null;
+    state.estimateV2PageImage = "";
+    state.estimateV2PageWidth = 0;
+    state.estimateV2PageHeight = 0;
+    state.estimateV2ActivePoints = [];
+  } finally {
+    state.cloudSyncApplying = false;
+  }
+}
+
 function getProjects() {
   return readJson(STORAGE.projects, []);
 }
 
 function saveProjects(projects) {
-  localStorage.setItem(STORAGE.projects, JSON.stringify(projects));
+  setSyncedJson(STORAGE.projects, projects);
 }
 
 function getInvites() {
@@ -419,12 +540,12 @@ function createTrialSubscription() {
     status: "trial",
     cancelledAt: null
   };
-  localStorage.setItem(STORAGE.subscription, JSON.stringify(created));
+  setSyncedJson(STORAGE.subscription, created);
   return created;
 }
 
 function saveSubscription(subscription) {
-  localStorage.setItem(STORAGE.subscription, JSON.stringify(subscription));
+  setSyncedJson(STORAGE.subscription, subscription);
 }
 
 function getSwaState() {
@@ -453,7 +574,7 @@ function getSwaState() {
 }
 
 function saveSwaState(swa) {
-  localStorage.setItem(STORAGE.swa, JSON.stringify(swa));
+  setSyncedJson(STORAGE.swa, swa);
 }
 
 function defaultSwaState() {
@@ -2048,6 +2169,7 @@ async function handleSignup() {
     const response = await apiRequest("/auth/signup", payload);
     savePublicAccount(response.account);
     localStorage.setItem(STORAGE.session, JSON.stringify({ accountId: response.account.id, token: response.session.token }));
+    await initializeCloudAppData();
     state.pendingSignupEmail = null;
     state.backendNotice = "";
     state.currentView = "welcome";
@@ -2129,6 +2251,7 @@ async function verifySignupOtp() {
     const response = await apiRequest("/auth/signup/verify", { email, otp });
     savePublicAccount(response.account);
     localStorage.setItem(STORAGE.session, JSON.stringify({ accountId: response.account.id, token: response.session.token }));
+    await initializeCloudAppData();
     state.pendingSignupEmail = null;
     state.backendNotice = "";
     state.currentView = "welcome";
@@ -2179,6 +2302,7 @@ async function handleLogin() {
     const response = await apiRequest("/auth/login", { email, password });
     savePublicAccount(response.account);
     localStorage.setItem(STORAGE.session, JSON.stringify({ accountId: response.account.id, token: response.session.token }));
+    await initializeCloudAppData();
     state.backendNotice = "";
     state.currentView = "welcome";
     render();
@@ -3920,12 +4044,12 @@ function getEstimateDraft() {
 }
 
 function saveEstimateDraft(draft) {
-  localStorage.setItem(STORAGE.estimateDraft, JSON.stringify({
+  setSyncedJson(STORAGE.estimateDraft, {
     title: draft.title || "Untitled Estimate",
     selectedStore: draft.selectedStore || "",
     rows: Array.isArray(draft.rows) ? draft.rows.map(normalizeEstimateRow).filter(hasEstimateRowData) : [],
     updatedAt: draft.updatedAt || new Date().toISOString()
-  }));
+  });
 }
 
 function defaultEstimateDraft() {
@@ -3942,7 +4066,7 @@ function getEstimateV2Draft() {
 }
 
 function saveEstimateV2Draft(draft) {
-  localStorage.setItem(STORAGE.estimateV2Draft, JSON.stringify(normalizeEstimateV2Draft(draft)));
+  setSyncedJson(STORAGE.estimateV2Draft, normalizeEstimateV2Draft(draft));
 }
 
 function defaultEstimateV2Draft() {
@@ -4145,7 +4269,7 @@ function getEstimateTemplates() {
 }
 
 function saveEstimateTemplates(templates) {
-  localStorage.setItem(STORAGE.estimateTemplates, JSON.stringify(templates));
+  setSyncedJson(STORAGE.estimateTemplates, templates);
 }
 
 function getMaterialPrices() {
@@ -4156,7 +4280,7 @@ function getMaterialPrices() {
 }
 
 function saveMaterialPrices(prices) {
-  localStorage.setItem(STORAGE.materialPrices, JSON.stringify(prices.map(normalizePriceRow).filter(hasPriceRowData)));
+  setSyncedJson(STORAGE.materialPrices, prices.map(normalizePriceRow).filter(hasPriceRowData));
 }
 
 function blankEstimateRow() {

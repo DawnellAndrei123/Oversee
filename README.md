@@ -55,4 +55,6 @@ SUPABASE_URL="https://your-project-ref.supabase.co" SUPABASE_SERVICE_ROLE_KEY="y
 
 You may also copy `.env.example` to `.env`, fill it in, and run `node server.js`.
 
+The schema includes `oversee_app_data`, which stores per-account app data so projects, SWA, estimates, templates, and material price lists can appear after login on another device.
+
 See `BACKEND.md` for the full Supabase setup and local JSON migration command.

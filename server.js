@@ -17,6 +17,7 @@ const HOST = cleanEnvValue(process.env.HOST) || (process.env.RENDER || process.e
 const OTP_TTL_MINUTES = Number(process.env.OTP_TTL_MINUTES || 10);
 const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS || 30);
 const MAX_JSON_BODY_BYTES = Number(process.env.MAX_JSON_BODY_BYTES || 65536);
+const MAX_APP_DATA_BODY_BYTES = Number(process.env.MAX_APP_DATA_BODY_BYTES || 2 * 1024 * 1024);
 const MAX_PDF_UPLOAD_BYTES = Number(process.env.MAX_PDF_UPLOAD_BYTES || 8 * 1024 * 1024);
 const MAX_PDF_JSON_BODY_BYTES = Math.ceil(MAX_PDF_UPLOAD_BYTES * 1.38) + 4096;
 const PDF_TEXT_PREVIEW_LIMIT = 12000;
@@ -106,6 +107,16 @@ const PUBLIC_ACCOUNT_FIELDS = [
   "createdAt",
   "emailVerifiedAt",
   "lastLoginAt"
+];
+
+const APP_DATA_KEYS = [
+  "projects",
+  "swa",
+  "estimateDraft",
+  "estimateV2Draft",
+  "estimateTemplates",
+  "materialPrices",
+  "subscription"
 ];
 
 const MIME_TYPES = {
@@ -228,6 +239,7 @@ function emptyStore() {
     sessions: [],
     invites: [],
     auditLog: [],
+    appData: [],
     createdAt: new Date().toISOString()
   };
 }
@@ -1094,6 +1106,106 @@ async function listAccounts(req, res) {
   jsonResponse(req, res, 200, { ok: true, accounts: store.accounts.map(publicAccount) });
 }
 
+async function loadAccountAppData(req, res) {
+  const store = await readStore();
+  const account = sessionAccountFromRequest(req, store);
+  if (!account) return jsonResponse(req, res, 401, { ok: false, error: "Sign in is required." });
+
+  const record = await readAccountAppData(account.id, store);
+  audit(store, "app_data_loaded", { accountId: account.id, hasData: Boolean(record), meta: requestMeta(req) });
+  await writeStore(store);
+  jsonResponse(req, res, 200, {
+    ok: true,
+    empty: !record,
+    data: record ? record.data : {},
+    updatedAt: record ? record.updatedAt : null
+  });
+}
+
+async function saveAccountAppData(req, res) {
+  const store = await readStore();
+  const account = sessionAccountFromRequest(req, store);
+  if (!account) return jsonResponse(req, res, 401, { ok: false, error: "Sign in is required." });
+
+  const body = await readJsonBody(req, MAX_APP_DATA_BODY_BYTES);
+  const data = normalizeAccountAppData(body.data);
+  const updatedAt = new Date().toISOString();
+  await writeAccountAppData(account.id, data, updatedAt, store);
+  audit(store, "app_data_saved", { accountId: account.id, keys: Object.keys(data), meta: requestMeta(req) });
+  await writeStore(store);
+  jsonResponse(req, res, 200, { ok: true, updatedAt });
+}
+
+async function readAccountAppData(accountId, store) {
+  if (SUPABASE_ENABLED) {
+    try {
+      const rows = await supabaseRequest("oversee_app_data", {
+        query: `?account_id=eq.${encodeURIComponent(accountId)}&select=data,updated_at&limit=1`
+      });
+      const row = rows && rows[0];
+      return row ? { data: normalizeAccountAppData(row.data), updatedAt: row.updated_at || null } : null;
+    } catch (error) {
+      throw appDataStorageError(error);
+    }
+  }
+
+  const records = Array.isArray(store.appData) ? store.appData : [];
+  const record = records.find((item) => item.accountId === accountId);
+  return record ? { data: normalizeAccountAppData(record.data), updatedAt: record.updatedAt || null } : null;
+}
+
+async function writeAccountAppData(accountId, data, updatedAt, store) {
+  if (SUPABASE_ENABLED) {
+    try {
+      await supabaseRequest("oversee_app_data", {
+        method: "POST",
+        query: "?on_conflict=account_id",
+        body: [{
+          account_id: accountId,
+          data,
+          updated_at: updatedAt
+        }],
+        prefer: "resolution=merge-duplicates,return=minimal"
+      });
+      return;
+    } catch (error) {
+      throw appDataStorageError(error);
+    }
+  }
+
+  const records = Array.isArray(store.appData) ? store.appData : [];
+  const record = {
+    accountId,
+    data,
+    updatedAt
+  };
+  store.appData = records.some((item) => item.accountId === accountId)
+    ? records.map((item) => item.accountId === accountId ? record : item)
+    : [...records, record];
+}
+
+function normalizeAccountAppData(data) {
+  const source = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  return APP_DATA_KEYS.reduce((result, key) => {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      result[key] = source[key];
+    }
+    return result;
+  }, {
+    savedAt: String(source.savedAt || new Date().toISOString())
+  });
+}
+
+function appDataStorageError(error) {
+  const message = String(error && error.message || "");
+  if (/oversee_app_data|relation .* does not exist|schema cache/i.test(message)) {
+    const nextError = httpError("Supabase app data table is not created yet. Run the updated supabase/schema.sql in Supabase SQL Editor, then redeploy.", 503);
+    nextError.publicMessage = nextError.message;
+    return nextError;
+  }
+  return error;
+}
+
 async function extractEstimateV2Pdf(req, res) {
   const { store, account } = await requireEngineeringAccount(req, res);
   if (!account) return;
@@ -1598,6 +1710,12 @@ async function routeApi(req, res, url) {
     }
     if (req.method === "GET" && url.pathname === "/api/accounts") {
       return await listAccounts(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/app-data/load") {
+      return await loadAccountAppData(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/app-data/save") {
+      return await saveAccountAppData(req, res);
     }
     if (req.method === "POST" && url.pathname === "/api/estimate-v2/extract-pdf") {
       return await extractEstimateV2Pdf(req, res);
