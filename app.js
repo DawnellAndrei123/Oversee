@@ -41,10 +41,12 @@ const ESTIMATE_V2_TAKEOFF_TOOLS = [
   { key: "footing-concrete", label: "Footing", type: "concrete-count", unit: "cu.m", defaultName: "Column Footing Concrete", color: "#8b5cf6" },
   { key: "pipe-length", label: "Pipe Length", type: "linear", unit: "lm", defaultName: "Pipe Line", color: "#38bdf8" },
   { key: "wire-length", label: "Wire Length", type: "linear", unit: "lm", defaultName: "Electrical Wiring", color: "#a78bfa" },
+  { key: "curve-line", label: "Curve Line", type: "curve", unit: "lm", defaultName: "Curved Line", color: "#ec4899" },
   { key: "door-count", label: "Doors", type: "count", unit: "pcs", defaultName: "Door", color: "#fb7185" },
   { key: "window-count", label: "Windows", type: "count", unit: "pcs", defaultName: "Window", color: "#f97316" }
 ];
 const CHB_SIZE_OPTIONS = ['4" CHB', '6" CHB', '8" CHB'];
+const SNAP_GRID_TOOL_TYPES = new Set(["area", "linear", "curve", "chb"]);
 const LOCAL_VISION_LIBS = {
   pdfScript: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js",
   pdfWorker: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js",
@@ -251,6 +253,7 @@ document.addEventListener("click", (event) => {
     "set-estimate-v2-tool": () => setEstimateV2TakeoffTool(target.dataset.tool),
     "estimate-v2-plan-click": () => handleEstimateV2PlanClick(event),
     "finish-estimate-v2-takeoff": finishEstimateV2Takeoff,
+    "add-estimate-v2-perpendicular": () => addEstimateV2PerpendicularPoint(false),
     "undo-estimate-v2-point": undoEstimateV2Point,
     "clear-estimate-v2-points": clearEstimateV2Points,
     "delete-estimate-v2-takeoff": () => deleteEstimateV2Takeoff(id),
@@ -284,9 +287,25 @@ document.addEventListener("submit", (event) => {
 
 document.addEventListener("keydown", (event) => {
   const priceInput = event.target.closest("[data-price-input]");
-  if (!priceInput || event.key !== "Enter") return;
-  event.preventDefault();
-  handlePriceListEnter(priceInput);
+  if (priceInput && event.key === "Enter") {
+    event.preventDefault();
+    handlePriceListEnter(priceInput);
+    return;
+  }
+  if (isTypingTarget(event.target)) return;
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  if (state.currentView !== "engineering" || state.engineeringView !== "estimate-v2") return;
+  const key = event.key.toLowerCase();
+  if (key === "p") {
+    event.preventDefault();
+    addEstimateV2PerpendicularPoint(event.shiftKey);
+  } else if (key === "g") {
+    event.preventDefault();
+    toggleEstimateV2SnapGrid();
+  } else if (key === "c") {
+    event.preventDefault();
+    setEstimateV2TakeoffTool("curve-line");
+  }
 });
 
 document.addEventListener("input", (event) => {
@@ -315,6 +334,7 @@ document.addEventListener("input", (event) => {
   if (estimateV2TakeoffInput) {
     saveEstimateV2Draft(collectEstimateV2DraftFromDom());
     updateEstimateV2TakeoffTotals();
+    if (estimateV2TakeoffInput.matches("[data-estimate-v2-snap-grid]")) render();
     return;
   }
   const priceInput = event.target.closest("[data-price-input]");
@@ -336,6 +356,7 @@ document.addEventListener("change", (event) => {
   if (estimateV2TakeoffInput) {
     saveEstimateV2Draft(collectEstimateV2DraftFromDom());
     updateEstimateV2TakeoffTotals();
+    if (estimateV2TakeoffInput.matches("[data-estimate-v2-snap-grid], [data-estimate-v2-snap-size]")) render();
     return;
   }
   const target = event.target.closest("[data-action]");
@@ -1101,7 +1122,7 @@ function renderEstimateV2View() {
   const activeTool = estimateV2TakeoffTool(draft.takeoffTool);
   const totalCost = estimateV2TakeoffTotal(rows);
   const totalArea = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "area").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
-  const totalLength = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "linear").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
+  const totalLength = rows.filter((row) => ["linear", "curve"].includes(estimateV2TakeoffTool(row.tool).type)).reduce((total, row) => total + (Number(row.quantity) || 0), 0);
   const totalChb = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "chb").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
   const totalConcrete = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "concrete-count").reduce((total, row) => total + (Number(row.concreteVolume || row.quantity) || 0), 0);
   const totalConcreteMix = concreteMixBreakdown(totalConcrete);
@@ -1133,6 +1154,7 @@ function renderEstimateV2View() {
             <button class="secondary-btn compact-btn ${tool.key === activeTool.key ? "active-tool" : ""}" data-action="set-estimate-v2-tool" data-tool="${escapeAttribute(tool.key)}">${escapeHtml(tool.label)}</button>
           `).join("")}
         </div>
+        ${renderEstimateV2DrawingControls(draft, activeTool)}
         <div class="estimate-v2-takeoff-actions">
           <button class="primary-btn" data-action="finish-estimate-v2-takeoff">${activeTool.type === "calibrate" ? "Set Scale" : "Add Takeoff"}</button>
           <button class="secondary-btn" data-action="undo-estimate-v2-point">Undo Point</button>
@@ -1169,6 +1191,23 @@ function renderEstimateV2View() {
     </div>
     ${renderEstimateV2TakeoffWorkspace(draft)}
     ${renderEstimateV2TakeoffTable(rows)}
+  `;
+}
+
+function renderEstimateV2DrawingControls(draft, activeTool) {
+  const canPerpendicular = ["linear", "curve", "chb"].includes(activeTool.type);
+  return `
+    <div class="estimate-v2-drawing-controls">
+      <label class="estimate-v2-snap-toggle" title="Shortcut: G">
+        <input data-estimate-v2-takeoff-input data-estimate-v2-snap-grid type="checkbox" ${draft.snapGridEnabled ? "checked" : ""}>
+        <span>Snap Grid</span>
+      </label>
+      <label class="estimate-v2-field compact-field">
+        <span>Grid Size (px)</span>
+        <input data-estimate-v2-takeoff-input data-estimate-v2-snap-size type="number" min="8" max="200" step="1" value="${numberInputValue(draft.snapGridSize)}" placeholder="32">
+      </label>
+      <button class="secondary-btn compact-btn" data-action="add-estimate-v2-perpendicular" ${canPerpendicular ? "" : "disabled"} title="Shortcut: P">Perpendicular</button>
+    </div>
   `;
 }
 
@@ -1328,9 +1367,24 @@ function renderEstimateV2TakeoffOverlay(draft, pageWidth, pageHeight) {
   const activeTool = estimateV2TakeoffTool(draft.takeoffTool);
   const activePoints = state.estimateV2ActivePoints || [];
   return `
+    ${renderEstimateV2SnapGrid(draft, pageWidth, pageHeight)}
     ${rows.map(renderEstimateV2TakeoffShape).join("")}
     ${renderEstimateV2ActiveShape(activeTool, activePoints)}
     <rect class="estimate-v2-click-catcher" x="0" y="0" width="${pageWidth}" height="${pageHeight}"></rect>
+  `;
+}
+
+function renderEstimateV2SnapGrid(draft, pageWidth, pageHeight) {
+  if (!draft.snapGridEnabled) return "";
+  const size = estimateV2SnapGridSize(draft);
+  const patternId = `estimate-v2-grid-${formatInteger(size)}`;
+  return `
+    <defs>
+      <pattern id="${patternId}" width="${size}" height="${size}" patternUnits="userSpaceOnUse">
+        <path d="M ${size} 0 L 0 0 0 ${size}" class="estimate-v2-grid-line"></path>
+      </pattern>
+    </defs>
+    <rect class="estimate-v2-snap-grid" x="0" y="0" width="${pageWidth}" height="${pageHeight}" fill="url(#${patternId})"></rect>
   `;
 }
 
@@ -1344,6 +1398,9 @@ function renderEstimateV2TakeoffShape(row) {
   }
   if ((tool.type === "linear" || tool.type === "chb") && points.length >= 2) {
     return `<polyline class="estimate-v2-shape line" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polyline>`;
+  }
+  if (tool.type === "curve" && points.length >= 2) {
+    return `<path class="estimate-v2-shape line curve" d="${escapeAttribute(estimateV2CurvePath(points))}" style="--takeoff-color:${escapeAttribute(color)}"></path>`;
   }
   if (tool.type === "count" || tool.type === "concrete-count") {
     return points.map((point) => `<circle class="estimate-v2-shape count" cx="${point.x}" cy="${point.y}" r="10" style="--takeoff-color:${escapeAttribute(color)}"></circle>`).join("");
@@ -1363,6 +1420,9 @@ function renderEstimateV2ActiveShape(tool, points) {
   }
   if ((tool.type === "linear" || tool.type === "chb" || tool.type === "calibrate") && points.length >= 2) {
     return `<polyline class="estimate-v2-active-line" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polyline>${markers}`;
+  }
+  if (tool.type === "curve" && points.length >= 2) {
+    return `<path class="estimate-v2-active-line curve" d="${escapeAttribute(estimateV2CurvePath(points))}" style="--takeoff-color:${escapeAttribute(color)}"></path>${markers}`;
   }
   return markers;
 }
@@ -1584,12 +1644,67 @@ function pointsToSvg(points) {
   return (Array.isArray(points) ? points : []).map((point) => `${Number(point.x) || 0},${Number(point.y) || 0}`).join(" ");
 }
 
+function estimateV2CurvePath(points) {
+  const normalizedPoints = (Array.isArray(points) ? points : []).map(normalizePoint).filter(Boolean);
+  if (!normalizedPoints.length) return "";
+  if (normalizedPoints.length === 1) return `M ${normalizedPoints[0].x} ${normalizedPoints[0].y}`;
+  if (normalizedPoints.length === 2) return `M ${normalizedPoints[0].x} ${normalizedPoints[0].y} L ${normalizedPoints[1].x} ${normalizedPoints[1].y}`;
+  const segments = estimateV2CurveSegments(normalizedPoints);
+  return segments.reduce((path, segment) => {
+    return `${path} Q ${segment.control.x} ${segment.control.y} ${segment.end.x} ${segment.end.y}`;
+  }, `M ${segments[0].start.x} ${segments[0].start.y}`);
+}
+
+function estimateV2CurveSegments(points) {
+  if (!Array.isArray(points) || points.length < 3) return [];
+  const segments = [];
+  let start = points[0];
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const control = points[index];
+    const isLast = index === points.length - 2;
+    const end = isLast
+      ? points[index + 1]
+      : {
+          x: (points[index].x + points[index + 1].x) / 2,
+          y: (points[index].y + points[index + 1].y) / 2
+        };
+    segments.push({ start, control, end });
+    start = end;
+  }
+  return segments;
+}
+
 function estimateV2PolylinePixels(points) {
   if (!Array.isArray(points) || points.length < 2) return 0;
   return points.slice(1).reduce((total, point, index) => {
     const previous = points[index];
     return total + Math.hypot(point.x - previous.x, point.y - previous.y);
   }, 0);
+}
+
+function estimateV2CurvePixels(points) {
+  const normalizedPoints = (Array.isArray(points) ? points : []).map(normalizePoint).filter(Boolean);
+  if (normalizedPoints.length < 2) return 0;
+  if (normalizedPoints.length === 2) return estimateV2PolylinePixels(normalizedPoints);
+  return estimateV2CurveSegments(normalizedPoints).reduce((total, segment) => {
+    return total + estimateV2QuadraticLength(segment.start, segment.control, segment.end);
+  }, 0);
+}
+
+function estimateV2QuadraticLength(start, control, end) {
+  const samples = 24;
+  let previous = start;
+  let length = 0;
+  for (let index = 1; index <= samples; index += 1) {
+    const t = index / samples;
+    const point = {
+      x: ((1 - t) ** 2 * start.x) + (2 * (1 - t) * t * control.x) + (t ** 2 * end.x),
+      y: ((1 - t) ** 2 * start.y) + (2 * (1 - t) * t * control.y) + (t ** 2 * end.y)
+    };
+    length += Math.hypot(point.x - previous.x, point.y - previous.y);
+    previous = point;
+  }
+  return length;
 }
 
 function estimateV2PolygonPixels(points) {
@@ -2948,15 +3063,78 @@ function handleEstimateV2PlanClick(event) {
   const rect = canvasNode.getBoundingClientRect();
   const width = Number(canvasNode.dataset.width) || state.estimateV2PageWidth || draft.takeoffPageWidth;
   const height = Number(canvasNode.dataset.height) || state.estimateV2PageHeight || draft.takeoffPageHeight;
-  const point = normalizePoint({
+  const rawPoint = normalizePoint({
     x: (event.clientX - rect.left) * width / rect.width,
     y: (event.clientY - rect.top) * height / rect.height
   });
+  const point = estimateV2ClampPoint(estimateV2SnapPoint(estimateV2ClampPoint(rawPoint, width, height), draft, tool), width, height);
   if (!point) return;
   if (tool.type === "calibrate" && state.estimateV2ActivePoints.length >= 2) state.estimateV2ActivePoints = [];
   state.estimateV2ActivePoints.push(point);
   saveEstimateV2Draft(draft);
   render();
+}
+
+function estimateV2SnapGridSize(draft) {
+  return Math.max(8, Math.min(200, Number(draft.snapGridSize) || 32));
+}
+
+function estimateV2SnapPoint(point, draft, tool) {
+  if (!point) return null;
+  if (!draft.snapGridEnabled || !SNAP_GRID_TOOL_TYPES.has(tool.type)) return point;
+  const size = estimateV2SnapGridSize(draft);
+  return normalizePoint({
+    x: Math.round(point.x / size) * size,
+    y: Math.round(point.y / size) * size
+  });
+}
+
+function estimateV2ClampPoint(point, width, height) {
+  if (!point) return null;
+  return normalizePoint({
+    x: Math.min(Math.max(0, point.x), Math.max(0, Number(width) || point.x)),
+    y: Math.min(Math.max(0, point.y), Math.max(0, Number(height) || point.y))
+  });
+}
+
+function toggleEstimateV2SnapGrid() {
+  const draft = collectEstimateV2DraftFromDom();
+  draft.snapGridEnabled = !draft.snapGridEnabled;
+  saveEstimateV2Draft(draft);
+  render();
+  toast(draft.snapGridEnabled ? "Snap Grid on." : "Snap Grid off.");
+}
+
+function addEstimateV2PerpendicularPoint(reverse = false) {
+  const draft = collectEstimateV2DraftFromDom();
+  const tool = estimateV2TakeoffTool(draft.takeoffTool);
+  if (!["linear", "curve", "chb"].includes(tool.type)) {
+    toast("Use a line tool before adding a perpendicular line.");
+    return;
+  }
+  const points = (state.estimateV2ActivePoints || []).map(normalizePoint).filter(Boolean);
+  if (points.length < 2) {
+    toast("Add at least two line points first.");
+    return;
+  }
+  const last = points[points.length - 1];
+  const previous = points[points.length - 2];
+  const dx = last.x - previous.x;
+  const dy = last.y - previous.y;
+  if (!dx && !dy) {
+    toast("The last line segment is too short.");
+    return;
+  }
+  const next = reverse
+    ? { x: last.x + dy, y: last.y - dx }
+    : { x: last.x - dy, y: last.y + dx };
+  const clamped = estimateV2ClampPoint(next, state.estimateV2PageWidth || draft.takeoffPageWidth, state.estimateV2PageHeight || draft.takeoffPageHeight);
+  const snapped = estimateV2ClampPoint(estimateV2SnapPoint(clamped, draft, tool), state.estimateV2PageWidth || draft.takeoffPageWidth, state.estimateV2PageHeight || draft.takeoffPageHeight);
+  if (!snapped) return;
+  state.estimateV2ActivePoints.push(snapped);
+  saveEstimateV2Draft(draft);
+  render();
+  toast("Perpendicular point added.");
 }
 
 function finishEstimateV2Takeoff() {
@@ -2985,7 +3163,7 @@ function finishEstimateV2Takeoff() {
     toast("Scale calibrated.");
     return;
   }
-  if ((tool.type === "area" || tool.type === "linear" || tool.type === "chb") && !draft.metersPerPixel) {
+  if ((tool.type === "area" || tool.type === "linear" || tool.type === "curve" || tool.type === "chb") && !draft.metersPerPixel) {
     toast("Calibrate scale first.");
     return;
   }
@@ -3005,6 +3183,12 @@ function finishEstimateV2Takeoff() {
       return;
     }
     quantity = estimateV2PolylinePixels(points) * draft.metersPerPixel;
+  } else if (tool.type === "curve") {
+    if (points.length < 2) {
+      toast("Curve takeoff needs at least 2 points.");
+      return;
+    }
+    quantity = estimateV2CurvePixels(points) * draft.metersPerPixel;
   } else if (tool.type === "chb") {
     if (points.length < 2) {
       toast("CHB wall takeoff needs at least 2 points.");
@@ -3314,6 +3498,8 @@ function collectEstimateV2DraftFromDom() {
   const pedestalDepthInput = document.querySelector("[data-estimate-v2-pedestal-depth]");
   const pedestalHeightInput = document.querySelector("[data-estimate-v2-pedestal-height]");
   const concreteWasteInput = document.querySelector("[data-estimate-v2-concrete-waste]");
+  const snapGridInput = document.querySelector("[data-estimate-v2-snap-grid]");
+  const snapGridSizeInput = document.querySelector("[data-estimate-v2-snap-size]");
   const activeTool = estimateV2TakeoffTool(current.takeoffTool);
   return normalizeEstimateV2Draft({
     ...current,
@@ -3337,6 +3523,8 @@ function collectEstimateV2DraftFromDom() {
     pedestalDepth: pedestalDepthInput ? pedestalDepthInput.value : current.pedestalDepth,
     pedestalHeight: pedestalHeightInput ? pedestalHeightInput.value : current.pedestalHeight,
     concreteWastePercent: concreteWasteInput ? concreteWasteInput.value : current.concreteWastePercent,
+    snapGridEnabled: snapGridInput ? snapGridInput.checked : current.snapGridEnabled,
+    snapGridSize: snapGridSizeInput ? snapGridSizeInput.value : current.snapGridSize,
     takeoffItemName: currentNameInput ? currentNameInput.value : current.takeoffItemName,
     takeoffCostPerUnit: currentCostInput ? currentCostInput.value : current.takeoffCostPerUnit,
     calibrationLength: calibrationLengthInput ? calibrationLengthInput.value : current.calibrationLength,
@@ -3987,6 +4175,12 @@ function labelForAccess(key) {
   return item ? item.label : key;
 }
 
+function isTypingTarget(target) {
+  if (!target) return false;
+  const tagName = String(target.tagName || "").toLowerCase();
+  return target.isContentEditable || ["input", "textarea", "select"].includes(tagName);
+}
+
 function accessText(access) {
   const labels = ACCESS_KEYS.filter((item) => access && access[item.key]).map((item) => item.label);
   return labels.length ? labels.join(", ") : "No module access";
@@ -4102,6 +4296,8 @@ function defaultEstimateV2Draft() {
     takeoffTool: "calibrate",
     takeoffItemName: "Scale Reference",
     takeoffCostPerUnit: 0,
+    snapGridEnabled: false,
+    snapGridSize: 32,
     takeoffRows: [],
     fileName: "",
     extractedAt: "",
@@ -4153,6 +4349,8 @@ function normalizeEstimateV2Draft(draft) {
     takeoffTool: estimateV2TakeoffTool(source.takeoffTool).key,
     takeoffItemName: String(source.takeoffItemName || estimateV2TakeoffTool(source.takeoffTool).defaultName).trim(),
     takeoffCostPerUnit: Math.max(0, Number(source.takeoffCostPerUnit) || 0),
+    snapGridEnabled: Boolean(source.snapGridEnabled),
+    snapGridSize: Math.max(8, Math.min(200, Number(source.snapGridSize) || 32)),
     takeoffRows: Array.isArray(source.takeoffRows) ? source.takeoffRows.map(normalizeEstimateV2TakeoffRow).filter((row) => row.description) : [],
     fileName: String(source.fileName || "").trim(),
     extractedAt: String(source.extractedAt || "").trim(),

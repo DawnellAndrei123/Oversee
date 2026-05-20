@@ -1355,6 +1355,36 @@ tfoot td {
   gap: 8px;
 }
 
+.estimate-v2-drawing-controls {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) minmax(130px, 180px) max-content;
+  gap: 8px;
+  align-items: end;
+}
+
+.estimate-v2-snap-toggle {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.045);
+  font-weight: 900;
+}
+
+.estimate-v2-snap-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--cyan);
+}
+
+.estimate-v2-field.compact-field {
+  gap: 4px;
+}
+
 .estimate-v2-tool-strip .active-tool {
   color: #07111a;
   background: linear-gradient(135deg, var(--cyan), #7bffcf);
@@ -1455,6 +1485,18 @@ tfoot td {
 
 .estimate-v2-click-catcher {
   fill: transparent;
+}
+
+.estimate-v2-snap-grid,
+.estimate-v2-grid-line {
+  pointer-events: none;
+}
+
+.estimate-v2-grid-line {
+  fill: none;
+  stroke: rgba(40, 244, 255, 0.28);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 .estimate-v2-shape {
@@ -2422,7 +2464,8 @@ body[data-theme="light"] .premium-access-notice {
   }
 
   .estimate-v2-summary-panel,
-  .estimate-v2-file-card {
+  .estimate-v2-file-card,
+  .estimate-v2-drawing-controls {
     grid-template-columns: 1fr;
   }
 
