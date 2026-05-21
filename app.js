@@ -1148,7 +1148,6 @@ function renderEstimateV2View() {
           <span>Current Item</span>
           <input data-estimate-v2-takeoff-input data-estimate-v2-current-name value="${escapeAttribute(draft.takeoffItemName || activeTool.defaultName)}" placeholder="Material or scope">
         </label>
-        ${renderEstimateV2TakeoffActiveInputs(draft, activeTool)}
         <div class="estimate-v2-tool-strip">
           ${ESTIMATE_V2_TAKEOFF_TOOLS.map((tool) => `
             <button class="secondary-btn compact-btn ${tool.key === activeTool.key ? "active-tool" : ""}" data-action="set-estimate-v2-tool" data-tool="${escapeAttribute(tool.key)}">${escapeHtml(tool.label)}</button>
@@ -1338,9 +1337,14 @@ function renderEstimateV2TakeoffWorkspace(draft) {
   return `
     <section class="estimate-v2-plan-shell">
       <div class="estimate-v2-page-controls">
-        <button class="secondary-btn compact-btn" data-action="estimate-v2-prev-page">Previous Page</button>
-        <span>Page ${formatInteger(draft.takeoffPage)} of ${formatInteger(draft.takeoffPageCount || 1)}</span>
-        <button class="secondary-btn compact-btn" data-action="estimate-v2-next-page">Next Page</button>
+        <div class="estimate-v2-page-nav">
+          <button class="secondary-btn compact-btn" data-action="estimate-v2-prev-page">Previous Page</button>
+          <span>Page ${formatInteger(draft.takeoffPage)} of ${formatInteger(draft.takeoffPageCount || 1)}</span>
+          <button class="secondary-btn compact-btn" data-action="estimate-v2-next-page">Next Page</button>
+        </div>
+        <div class="estimate-v2-plan-active-controls">
+          ${renderEstimateV2TakeoffActiveInputs(draft, estimateV2TakeoffTool(draft.takeoffTool))}
+        </div>
       </div>
       <div class="estimate-v2-plan-stage">
         <div class="estimate-v2-plan-surface">
@@ -1480,22 +1484,8 @@ function renderEstimateV2TakeoffRow(row) {
 
 function renderEstimateV2ChbDetails(row) {
   return `
-    <small>${formatSwaNumber(row.wallLength)} m wall length</small>
-    <div class="estimate-v2-chb-row-fields">
-      <label>
-        <span>Height (m)</span>
-        <input class="estimate-input mini" data-estimate-v2-takeoff-input data-field="chbWallHeight" type="number" min="0" step="0.01" value="${numberInputValue(row.chbWallHeight)}" placeholder="3.00">
-      </label>
-      <label>
-        <span>CHB / sq.m</span>
-        <input class="estimate-input mini" data-estimate-v2-takeoff-input data-field="chbBlocksPerSquareMeter" type="number" min="0" step="0.01" value="${numberInputValue(row.chbBlocksPerSquareMeter)}" placeholder="12.5">
-      </label>
-      <label>
-        <span>Waste %</span>
-        <input class="estimate-input mini" data-estimate-v2-takeoff-input data-field="chbWastePercent" type="number" min="0" step="0.01" value="${numberInputValue(row.chbWastePercent)}" placeholder="5">
-      </label>
-    </div>
-    <small><span data-estimate-v2-chb-wall-area>${formatSwaNumber(row.wallArea)}</span> sq.m wall area</small>
+    <small><span data-estimate-v2-chb-length>${formatSwaNumber(row.wallLength)}</span> m wall x <span data-estimate-v2-chb-height>${formatSwaNumber(row.chbWallHeight)}</span> m high</small>
+    <small><span data-estimate-v2-chb-wall-area>${formatSwaNumber(row.wallArea)}</span> sq.m @ <span data-estimate-v2-chb-blocks>${formatSwaNumber(row.chbBlocksPerSquareMeter)}</span> CHB/sq.m + <span data-estimate-v2-chb-waste>${formatSwaNumber(row.chbWastePercent)}</span>% waste</small>
   `;
 }
 
@@ -3343,13 +3333,19 @@ function deleteEstimateV2Takeoff(rowId) {
 }
 
 function updateEstimateV2TakeoffTotals() {
-  const rows = collectEstimateV2TakeoffRowsFromDom(getEstimateV2Draft().takeoffRows);
+  const rows = collectEstimateV2DraftFromDom().takeoffRows;
   document.querySelectorAll("[data-estimate-v2-takeoff-row]").forEach((rowNode) => {
     const row = rows.find((item) => item.id === rowNode.dataset.estimateV2TakeoffRow);
     const totalNode = rowNode.querySelector("[data-estimate-v2-row-total]");
     const quantityInput = rowNode.querySelector('[data-field="quantity"]');
+    const heightNode = rowNode.querySelector("[data-estimate-v2-chb-height]");
+    const blocksNode = rowNode.querySelector("[data-estimate-v2-chb-blocks]");
+    const wasteNode = rowNode.querySelector("[data-estimate-v2-chb-waste]");
     const wallAreaNode = rowNode.querySelector("[data-estimate-v2-chb-wall-area]");
     if (row && estimateV2TakeoffTool(row.tool).type === "chb" && quantityInput) quantityInput.value = numberInputValue(row.quantity);
+    if (row && heightNode) heightNode.textContent = formatSwaNumber(row.chbWallHeight);
+    if (row && blocksNode) blocksNode.textContent = formatSwaNumber(row.chbBlocksPerSquareMeter);
+    if (row && wasteNode) wasteNode.textContent = formatSwaNumber(row.chbWastePercent);
     if (row && wallAreaNode) wallAreaNode.textContent = formatSwaNumber(row.wallArea);
     if (row && totalNode) totalNode.textContent = formatCurrency(estimateV2TakeoffRowTotal(row));
   });
@@ -3533,15 +3529,18 @@ function collectEstimateV2DraftFromDom() {
   const snapGridInput = document.querySelector("[data-estimate-v2-snap-grid]");
   const snapGridSizeInput = document.querySelector("[data-estimate-v2-snap-size]");
   const activeTool = estimateV2TakeoffTool(current.takeoffTool);
+  const nextChbWallHeight = chbHeightInput ? chbHeightInput.value : current.chbWallHeight;
+  const nextChbWastePercent = chbWasteInput ? chbWasteInput.value : current.chbWastePercent;
+  const nextChbBlocksPerSquareMeter = chbBlocksInput ? chbBlocksInput.value : current.chbBlocksPerSquareMeter;
   return normalizeEstimateV2Draft({
     ...current,
     planType: planTypeInput ? planTypeInput.value : current.planType,
     drawingScale: scaleInput ? scaleInput.value : current.drawingScale,
     structuralElevation: elevationInput ? elevationInput.value : current.structuralElevation,
     chbWallLength: chbLengthInput ? chbLengthInput.value : current.chbWallLength,
-    chbWallHeight: chbHeightInput ? chbHeightInput.value : current.chbWallHeight,
-    chbWastePercent: chbWasteInput ? chbWasteInput.value : current.chbWastePercent,
-    chbBlocksPerSquareMeter: chbBlocksInput ? chbBlocksInput.value : current.chbBlocksPerSquareMeter,
+    chbWallHeight: nextChbWallHeight,
+    chbWastePercent: nextChbWastePercent,
+    chbBlocksPerSquareMeter: nextChbBlocksPerSquareMeter,
     chbSize: chbSizeInput ? chbSizeInput.value : current.chbSize,
     concreteTypeMark: concreteMarkInput && activeTool.key === "column-concrete" ? concreteMarkInput.value : current.concreteTypeMark,
     footingTypeMark: concreteMarkInput && activeTool.key === "footing-concrete" ? concreteMarkInput.value : current.footingTypeMark,
@@ -3560,12 +3559,16 @@ function collectEstimateV2DraftFromDom() {
     takeoffItemName: currentNameInput ? currentNameInput.value : current.takeoffItemName,
     takeoffCostPerUnit: currentCostInput ? currentCostInput.value : current.takeoffCostPerUnit,
     calibrationLength: calibrationLengthInput ? calibrationLengthInput.value : current.calibrationLength,
-    takeoffRows: collectEstimateV2TakeoffRowsFromDom(current.takeoffRows),
+    takeoffRows: collectEstimateV2TakeoffRowsFromDom(current.takeoffRows, {
+      chbWallHeight: nextChbWallHeight,
+      chbWastePercent: nextChbWastePercent,
+      chbBlocksPerSquareMeter: nextChbBlocksPerSquareMeter
+    }),
     materials: [...document.querySelectorAll("[data-estimate-v2-row]")].map(readEstimateV2RowFromDom)
   });
 }
 
-function collectEstimateV2TakeoffRowsFromDom(fallbackRows = []) {
+function collectEstimateV2TakeoffRowsFromDom(fallbackRows = [], activeSettings = {}) {
   const rowNodes = [...document.querySelectorAll("[data-estimate-v2-takeoff-row]")];
   if (!rowNodes.length) return fallbackRows;
   return rowNodes.map((rowNode) => {
@@ -3575,9 +3578,9 @@ function collectEstimateV2TakeoffRowsFromDom(fallbackRows = []) {
     const takeoffDetails = {};
     if (tool.type === "chb") {
       const wallLength = Math.max(0, Number(previous.wallLength) || 0);
-      const chbWallHeight = getRowInputNumber(rowNode, "chbWallHeight");
-      const chbBlocksPerSquareMeter = getRowInputNumber(rowNode, "chbBlocksPerSquareMeter") || CHB_TAKEOFF.blocksPerSquareMeter;
-      const chbWastePercent = getRowInputNumber(rowNode, "chbWastePercent");
+      const chbWallHeight = Math.max(0, Number(activeSettings.chbWallHeight) || 0);
+      const chbBlocksPerSquareMeter = Math.max(0, Number(activeSettings.chbBlocksPerSquareMeter) || CHB_TAKEOFF.blocksPerSquareMeter);
+      const chbWastePercent = Math.max(0, Number(activeSettings.chbWastePercent) || 0);
       const wallArea = wallLength * chbWallHeight;
       quantity = estimateV2ChbPieces(wallArea, chbBlocksPerSquareMeter, chbWastePercent);
       Object.assign(takeoffDetails, {
