@@ -1484,8 +1484,8 @@ function renderEstimateV2TakeoffRow(row) {
 
 function renderEstimateV2ChbDetails(row) {
   return `
-    <small><span data-estimate-v2-chb-length>${formatSwaNumber(row.wallLength)}</span> m wall x <span data-estimate-v2-chb-height>${formatSwaNumber(row.chbWallHeight)}</span> m high</small>
-    <small><span data-estimate-v2-chb-wall-area>${formatSwaNumber(row.wallArea)}</span> sq.m @ <span data-estimate-v2-chb-blocks>${formatSwaNumber(row.chbBlocksPerSquareMeter)}</span> CHB/sq.m + <span data-estimate-v2-chb-waste>${formatSwaNumber(row.chbWastePercent)}</span>% waste</small>
+    <small><span data-estimate-v2-chb-length-display>${formatSwaNumber(row.wallLength)}</span> m wall x <span data-estimate-v2-chb-height-display>${formatSwaNumber(row.chbWallHeight)}</span> m high</small>
+    <small><span data-estimate-v2-chb-wall-area-display>${formatSwaNumber(row.wallArea)}</span> sq.m @ <span data-estimate-v2-chb-blocks-display>${formatSwaNumber(row.chbBlocksPerSquareMeter)}</span> CHB/sq.m + <span data-estimate-v2-chb-waste-display>${formatSwaNumber(row.chbWastePercent)}</span>% waste</small>
   `;
 }
 
@@ -3338,10 +3338,10 @@ function updateEstimateV2TakeoffTotals() {
     const row = rows.find((item) => item.id === rowNode.dataset.estimateV2TakeoffRow);
     const totalNode = rowNode.querySelector("[data-estimate-v2-row-total]");
     const quantityInput = rowNode.querySelector('[data-field="quantity"]');
-    const heightNode = rowNode.querySelector("[data-estimate-v2-chb-height]");
-    const blocksNode = rowNode.querySelector("[data-estimate-v2-chb-blocks]");
-    const wasteNode = rowNode.querySelector("[data-estimate-v2-chb-waste]");
-    const wallAreaNode = rowNode.querySelector("[data-estimate-v2-chb-wall-area]");
+    const heightNode = rowNode.querySelector("[data-estimate-v2-chb-height-display]");
+    const blocksNode = rowNode.querySelector("[data-estimate-v2-chb-blocks-display]");
+    const wasteNode = rowNode.querySelector("[data-estimate-v2-chb-waste-display]");
+    const wallAreaNode = rowNode.querySelector("[data-estimate-v2-chb-wall-area-display]");
     if (row && estimateV2TakeoffTool(row.tool).type === "chb" && quantityInput) quantityInput.value = numberInputValue(row.quantity);
     if (row && heightNode) heightNode.textContent = formatSwaNumber(row.chbWallHeight);
     if (row && blocksNode) blocksNode.textContent = formatSwaNumber(row.chbBlocksPerSquareMeter);
