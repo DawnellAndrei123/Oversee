@@ -1461,7 +1461,7 @@ function renderEstimateV2TakeoffRow(row) {
   const normalized = normalizeEstimateV2TakeoffRow(row);
   const tool = estimateV2TakeoffTool(normalized.tool);
   const typeDetails = tool.type === "chb"
-    ? `<small>${formatSwaNumber(normalized.wallLength)} m wall x ${formatSwaNumber(normalized.chbWallHeight)} m high</small><small>${formatSwaNumber(normalized.wallArea)} sq.m @ ${formatSwaNumber(normalized.chbBlocksPerSquareMeter)} CHB/sq.m + ${formatSwaNumber(normalized.chbWastePercent)}% waste</small>`
+    ? renderEstimateV2ChbDetails(normalized)
     : tool.type === "concrete-count"
       ? renderEstimateV2ConcreteDetails(normalized)
     : "";
@@ -1469,12 +1469,33 @@ function renderEstimateV2TakeoffRow(row) {
     <tr data-estimate-v2-takeoff-row="${escapeAttribute(normalized.id)}">
       <td><input class="estimate-input description" data-estimate-v2-takeoff-input data-field="description" value="${escapeAttribute(normalized.description)}" placeholder="Item"></td>
       <td><strong>${escapeHtml(tool.label)}</strong>${typeDetails}</td>
-      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0"></td>
+      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0" ${tool.type === "chb" ? "readonly" : ""}></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="unit" value="${escapeAttribute(normalized.unit)}" placeholder="unit"></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(normalized.costPerUnit)}" placeholder="0.00"></td>
       <td data-estimate-v2-row-total>${formatCurrency(estimateV2TakeoffRowTotal(normalized))}</td>
       <td><button class="ghost-btn danger compact-btn" data-action="delete-estimate-v2-takeoff" data-id="${escapeAttribute(normalized.id)}">Delete</button></td>
     </tr>
+  `;
+}
+
+function renderEstimateV2ChbDetails(row) {
+  return `
+    <small>${formatSwaNumber(row.wallLength)} m wall length</small>
+    <div class="estimate-v2-chb-row-fields">
+      <label>
+        <span>Height (m)</span>
+        <input class="estimate-input mini" data-estimate-v2-takeoff-input data-field="chbWallHeight" type="number" min="0" step="0.01" value="${numberInputValue(row.chbWallHeight)}" placeholder="3.00">
+      </label>
+      <label>
+        <span>CHB / sq.m</span>
+        <input class="estimate-input mini" data-estimate-v2-takeoff-input data-field="chbBlocksPerSquareMeter" type="number" min="0" step="0.01" value="${numberInputValue(row.chbBlocksPerSquareMeter)}" placeholder="12.5">
+      </label>
+      <label>
+        <span>Waste %</span>
+        <input class="estimate-input mini" data-estimate-v2-takeoff-input data-field="chbWastePercent" type="number" min="0" step="0.01" value="${numberInputValue(row.chbWastePercent)}" placeholder="5">
+      </label>
+    </div>
+    <small><span data-estimate-v2-chb-wall-area>${formatSwaNumber(row.wallArea)}</span> sq.m wall area</small>
   `;
 }
 
@@ -1638,6 +1659,13 @@ function estimateV2TakeoffTotal(rows) {
 
 function estimateV2TakeoffRowTotal(row) {
   return (Number(row.quantity) || 0) * (Number(row.costPerUnit) || 0);
+}
+
+function estimateV2ChbPieces(wallArea, blocksPerSquareMeter, wastePercent) {
+  const area = Math.max(0, Number(wallArea) || 0);
+  const blocks = Math.max(0, Number(blocksPerSquareMeter) || 0);
+  const waste = Math.max(0, Number(wastePercent) || 0);
+  return area > 0 && blocks > 0 ? Math.ceil(area * blocks * (1 + waste / 100)) : 0;
 }
 
 function pointsToSvg(points) {
@@ -3203,7 +3231,7 @@ function finishEstimateV2Takeoff() {
     const wallArea = wallLength * wallHeight;
     const blocksPerSquareMeter = Math.max(0, Number(draft.chbBlocksPerSquareMeter) || CHB_TAKEOFF.blocksPerSquareMeter);
     const wastePercent = Math.max(0, Number(draft.chbWastePercent) || 0);
-    quantity = Math.ceil(wallArea * blocksPerSquareMeter * (1 + wastePercent / 100));
+    quantity = estimateV2ChbPieces(wallArea, blocksPerSquareMeter, wastePercent);
     unit = "pcs";
     description = `${description} ${draft.chbSize || ""}`.trim();
     Object.assign(takeoffDetails, {
@@ -3319,6 +3347,10 @@ function updateEstimateV2TakeoffTotals() {
   document.querySelectorAll("[data-estimate-v2-takeoff-row]").forEach((rowNode) => {
     const row = rows.find((item) => item.id === rowNode.dataset.estimateV2TakeoffRow);
     const totalNode = rowNode.querySelector("[data-estimate-v2-row-total]");
+    const quantityInput = rowNode.querySelector('[data-field="quantity"]');
+    const wallAreaNode = rowNode.querySelector("[data-estimate-v2-chb-wall-area]");
+    if (row && estimateV2TakeoffTool(row.tool).type === "chb" && quantityInput) quantityInput.value = numberInputValue(row.quantity);
+    if (row && wallAreaNode) wallAreaNode.textContent = formatSwaNumber(row.wallArea);
     if (row && totalNode) totalNode.textContent = formatCurrency(estimateV2TakeoffRowTotal(row));
   });
   document.querySelectorAll("[data-estimate-v2-takeoff-total]").forEach((node) => {
@@ -3538,10 +3570,27 @@ function collectEstimateV2TakeoffRowsFromDom(fallbackRows = []) {
   if (!rowNodes.length) return fallbackRows;
   return rowNodes.map((rowNode) => {
     const previous = fallbackRows.find((row) => row.id === rowNode.dataset.estimateV2TakeoffRow) || {};
-    const quantity = getRowInputNumber(rowNode, "quantity");
     const tool = estimateV2TakeoffTool(previous.tool);
+    let quantity = getRowInputNumber(rowNode, "quantity");
+    const takeoffDetails = {};
+    if (tool.type === "chb") {
+      const wallLength = Math.max(0, Number(previous.wallLength) || 0);
+      const chbWallHeight = getRowInputNumber(rowNode, "chbWallHeight");
+      const chbBlocksPerSquareMeter = getRowInputNumber(rowNode, "chbBlocksPerSquareMeter") || CHB_TAKEOFF.blocksPerSquareMeter;
+      const chbWastePercent = getRowInputNumber(rowNode, "chbWastePercent");
+      const wallArea = wallLength * chbWallHeight;
+      quantity = estimateV2ChbPieces(wallArea, chbBlocksPerSquareMeter, chbWastePercent);
+      Object.assign(takeoffDetails, {
+        wallLength,
+        wallArea,
+        chbWallHeight,
+        chbBlocksPerSquareMeter,
+        chbWastePercent
+      });
+    }
     return normalizeEstimateV2TakeoffRow({
       ...previous,
+      ...takeoffDetails,
       id: rowNode.dataset.estimateV2TakeoffRow || cryptoId(),
       description: getRowInputValue(rowNode, "description"),
       quantity,
@@ -4315,6 +4364,7 @@ function defaultEstimateV2Draft() {
 
 function normalizeEstimateV2Draft(draft) {
   const source = draft && typeof draft === "object" ? draft : {};
+  const chbWallHeight = Number(source.chbWallHeight);
   const chbWastePercent = Number(source.chbWastePercent);
   const concreteWastePercent = Number(source.concreteWastePercent);
   return {
@@ -4322,7 +4372,7 @@ function normalizeEstimateV2Draft(draft) {
     drawingScale: DRAWING_SCALES.includes(source.drawingScale) ? source.drawingScale : "1:100",
     structuralElevation: Math.max(0, Number(source.structuralElevation) || 0),
     chbWallLength: Math.max(0, Number(source.chbWallLength) || 0),
-    chbWallHeight: Math.max(0, Number(source.chbWallHeight) || 3),
+    chbWallHeight: Number.isFinite(chbWallHeight) ? Math.max(0, chbWallHeight) : 3,
     chbWastePercent: Number.isFinite(chbWastePercent) ? Math.max(0, chbWastePercent) : CHB_TAKEOFF.defaultWastePercent,
     chbBlocksPerSquareMeter: Math.max(0, Number(source.chbBlocksPerSquareMeter) || CHB_TAKEOFF.blocksPerSquareMeter),
     chbSize: CHB_SIZE_OPTIONS.includes(source.chbSize) ? source.chbSize : CHB_SIZE_OPTIONS[1],
