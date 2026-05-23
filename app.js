@@ -47,6 +47,9 @@ const ESTIMATE_V2_TAKEOFF_TOOLS = [
 ];
 const CHB_SIZE_OPTIONS = ['4" CHB', '6" CHB', '8" CHB'];
 const SNAP_GRID_TOOL_TYPES = new Set(["area", "linear", "curve", "chb"]);
+const ORTHO_TOOL_TYPES = new Set(["area", "linear", "chb"]);
+const OBJECT_SNAP_TOOL_TYPES = new Set(["area", "linear", "curve", "chb"]);
+const OBJECT_SNAP_SCREEN_TOLERANCE = 16;
 const LOCAL_VISION_LIBS = {
   pdfScript: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js",
   pdfWorker: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js",
@@ -302,6 +305,11 @@ document.addEventListener("keydown", (event) => {
     handlePriceListEnter(priceInput);
     return;
   }
+  if (state.currentView === "engineering" && state.engineeringView === "estimate-v2" && event.key === "F8") {
+    event.preventDefault();
+    toggleEstimateV2OrthoMode();
+    return;
+  }
   if (isTypingTarget(event.target)) return;
   if (state.currentView !== "engineering" || state.engineeringView !== "estimate-v2") return;
   const key = event.key.toLowerCase();
@@ -366,7 +374,7 @@ document.addEventListener("input", (event) => {
     }
     saveEstimateV2Draft(collectEstimateV2DraftFromDom());
     updateEstimateV2TakeoffTotals();
-    if (estimateV2TakeoffInput.matches("[data-estimate-v2-snap-grid], [data-estimate-v2-layer-toggle], [data-estimate-v2-label-toggle]")) render();
+    if (estimateV2TakeoffInput.matches("[data-estimate-v2-snap-grid], [data-estimate-v2-ortho], [data-estimate-v2-object-snap], [data-estimate-v2-layer-toggle], [data-estimate-v2-label-toggle]")) render();
     return;
   }
   const priceInput = event.target.closest("[data-price-input]");
@@ -394,7 +402,7 @@ document.addEventListener("change", (event) => {
     }
     saveEstimateV2Draft(collectEstimateV2DraftFromDom());
     updateEstimateV2TakeoffTotals();
-    if (estimateV2TakeoffInput.matches("[data-estimate-v2-snap-grid], [data-estimate-v2-snap-size], [data-estimate-v2-project-select], [data-estimate-v2-layer-toggle], [data-estimate-v2-label-toggle]")) render();
+    if (estimateV2TakeoffInput.matches("[data-estimate-v2-snap-grid], [data-estimate-v2-snap-size], [data-estimate-v2-ortho], [data-estimate-v2-object-snap], [data-estimate-v2-project-select], [data-estimate-v2-layer-toggle], [data-estimate-v2-label-toggle]")) render();
     return;
   }
   const target = event.target.closest("[data-action]");
@@ -1273,6 +1281,14 @@ function renderEstimateV2DrawingControls(draft, activeTool) {
   const canPerpendicular = ["linear", "curve", "chb"].includes(activeTool.type);
   return `
     <div class="estimate-v2-drawing-controls">
+      <label class="estimate-v2-snap-toggle" title="Shortcut: F8">
+        <input data-estimate-v2-takeoff-input data-estimate-v2-ortho type="checkbox" ${draft.orthoModeEnabled ? "checked" : ""}>
+        <span>Ortho F8</span>
+      </label>
+      <label class="estimate-v2-snap-toggle" title="Snap to existing endpoints and line segments">
+        <input data-estimate-v2-takeoff-input data-estimate-v2-object-snap type="checkbox" ${draft.objectSnapEnabled ? "checked" : ""}>
+        <span>Object Snap</span>
+      </label>
       <label class="estimate-v2-snap-toggle" title="Shortcut: G">
         <input data-estimate-v2-takeoff-input data-estimate-v2-snap-grid type="checkbox" ${draft.snapGridEnabled ? "checked" : ""}>
         <span>Snap Grid</span>
@@ -3279,16 +3295,32 @@ function handleEstimateV2PlanClick(event) {
   render();
 }
 
-function estimateV2PointFromCanvasEvent(event, canvasNode, draft, tool) {
+function estimateV2PointFromCanvasEvent(event, canvasNode, draft, tool, options = {}) {
   const rect = canvasNode.getBoundingClientRect();
   const width = Number(canvasNode.dataset.width) || state.estimateV2PageWidth || draft.takeoffPageWidth;
   const height = Number(canvasNode.dataset.height) || state.estimateV2PageHeight || draft.takeoffPageHeight;
   if (!rect.width || !rect.height || !width || !height) return null;
+  const screenToPlan = Math.max(width / rect.width, height / rect.height);
+  const snapTolerance = Math.max(8, OBJECT_SNAP_SCREEN_TOLERANCE * screenToPlan);
   const rawPoint = normalizePoint({
     x: (event.clientX - rect.left) * width / rect.width,
     y: (event.clientY - rect.top) * height / rect.height
   });
-  return estimateV2ClampPoint(estimateV2SnapPoint(estimateV2ClampPoint(rawPoint, width, height), draft, tool), width, height);
+  return estimateV2ApplyDraftingConstraints(rawPoint, draft, tool, width, height, snapTolerance, options);
+}
+
+function estimateV2ApplyDraftingConstraints(rawPoint, draft, tool, width, height, snapTolerance, options = {}) {
+  const clamped = estimateV2ClampPoint(rawPoint, width, height);
+  if (!clamped) return null;
+  const objectSnap = estimateV2ObjectSnapPoint(clamped, draft, tool, snapTolerance);
+  let nextPoint = objectSnap ? objectSnap.point : clamped;
+  if (options.useOrtho !== false) {
+    nextPoint = estimateV2OrthoPoint(nextPoint, draft, tool);
+  }
+  if (!objectSnap || (draft.orthoModeEnabled && options.useOrtho !== false)) {
+    nextPoint = estimateV2SnapPoint(nextPoint, draft, tool);
+  }
+  return estimateV2ClampPoint(nextPoint, width, height);
 }
 
 function handleEstimateV2PointPointerDown(event) {
@@ -3314,7 +3346,7 @@ function handleEstimateV2PointPointerMove(event) {
   event.preventDefault();
   const draft = collectEstimateV2DraftFromDom();
   const tool = estimateV2TakeoffTool(draft.takeoffTool);
-  const point = estimateV2PointFromCanvasEvent(event, canvasNode, draft, tool);
+  const point = estimateV2PointFromCanvasEvent(event, canvasNode, draft, tool, { useOrtho: false });
   if (!point) return;
   const points = [...(state.estimateV2ActivePoints || [])];
   if (!points[state.estimateV2DraggingPointIndex]) return;
@@ -3335,6 +3367,88 @@ function handleEstimateV2PointPointerUp() {
 
 function estimateV2SnapGridSize(draft) {
   return Math.max(8, Math.min(200, Number(draft.snapGridSize) || 32));
+}
+
+function estimateV2OrthoPoint(point, draft, tool) {
+  if (!point || !draft.orthoModeEnabled || !ORTHO_TOOL_TYPES.has(tool.type)) return point;
+  const points = (state.estimateV2ActivePoints || []).map(normalizePoint).filter(Boolean);
+  const last = points[points.length - 1];
+  if (!last) return point;
+  const dx = point.x - last.x;
+  const dy = point.y - last.y;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return { x: point.x, y: last.y };
+  }
+  return { x: last.x, y: point.y };
+}
+
+function estimateV2ObjectSnapPoint(point, draft, tool, tolerance) {
+  if (!point || !draft.objectSnapEnabled || !OBJECT_SNAP_TOOL_TYPES.has(tool.type)) return null;
+  const geometry = estimateV2ObjectSnapGeometry(draft);
+  const snapTolerance = Math.max(4, Number(tolerance) || OBJECT_SNAP_SCREEN_TOLERANCE);
+  let bestEndpoint = null;
+  geometry.points.forEach((target) => {
+    const distance = estimateV2Distance(point, target);
+    if (distance <= snapTolerance * 1.15 && (!bestEndpoint || distance < bestEndpoint.distance)) {
+      bestEndpoint = { point: target, distance };
+    }
+  });
+  if (bestEndpoint) return bestEndpoint;
+
+  let bestSegment = null;
+  geometry.segments.forEach((segment) => {
+    const projected = estimateV2NearestPointOnSegment(point, segment.start, segment.end);
+    const distance = estimateV2Distance(point, projected);
+    if (distance <= snapTolerance && (!bestSegment || distance < bestSegment.distance)) {
+      bestSegment = { point: projected, distance };
+    }
+  });
+  return bestSegment;
+}
+
+function estimateV2ObjectSnapGeometry(draft) {
+  const geometry = { points: [], segments: [] };
+  const currentPage = Number(draft.takeoffPage || 1);
+  estimateV2ProjectRows(draft)
+    .filter((row) => row.id !== state.estimateV2EditingRowId && Number(row.page || 1) === currentPage)
+    .forEach((row) => {
+      const tool = estimateV2TakeoffTool(row.tool);
+      if (!OBJECT_SNAP_TOOL_TYPES.has(tool.type)) return;
+      estimateV2AddSnapGeometry(geometry, row.points, tool.type === "area");
+    });
+  const activeTool = estimateV2TakeoffTool(draft.takeoffTool);
+  estimateV2AddSnapGeometry(geometry, state.estimateV2ActivePoints, activeTool.type === "area");
+  return geometry;
+}
+
+function estimateV2AddSnapGeometry(geometry, points, closeShape = false) {
+  const normalizedPoints = (Array.isArray(points) ? points : []).map(normalizePoint).filter(Boolean);
+  normalizedPoints.forEach((point) => geometry.points.push(point));
+  normalizedPoints.forEach((point, index) => {
+    const nextPoint = normalizedPoints[index + 1];
+    if (nextPoint) geometry.segments.push({ start: point, end: nextPoint });
+  });
+  if (closeShape && normalizedPoints.length > 2) {
+    geometry.segments.push({ start: normalizedPoints[normalizedPoints.length - 1], end: normalizedPoints[0] });
+  }
+}
+
+function estimateV2NearestPointOnSegment(point, start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (!lengthSquared) return start;
+  const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
+  return {
+    x: start.x + t * dx,
+    y: start.y + t * dy
+  };
+}
+
+function estimateV2Distance(firstPoint, secondPoint) {
+  const dx = firstPoint.x - secondPoint.x;
+  const dy = firstPoint.y - secondPoint.y;
+  return Math.sqrt(dx * dx + dy * dy);
 }
 
 function estimateV2SnapPoint(point, draft, tool) {
@@ -3361,6 +3475,14 @@ function toggleEstimateV2SnapGrid() {
   saveEstimateV2Draft(draft);
   render();
   toast(draft.snapGridEnabled ? "Snap Grid on." : "Snap Grid off.");
+}
+
+function toggleEstimateV2OrthoMode() {
+  const draft = collectEstimateV2DraftFromDom();
+  draft.orthoModeEnabled = !draft.orthoModeEnabled;
+  saveEstimateV2Draft(draft);
+  render();
+  toast(draft.orthoModeEnabled ? "Ortho F8 on." : "Ortho F8 off.");
 }
 
 function changeEstimateV2Zoom(delta) {
@@ -3865,6 +3987,8 @@ function collectEstimateV2DraftFromDom() {
   const pedestalDepthInput = document.querySelector("[data-estimate-v2-pedestal-depth]");
   const pedestalHeightInput = document.querySelector("[data-estimate-v2-pedestal-height]");
   const concreteWasteInput = document.querySelector("[data-estimate-v2-concrete-waste]");
+  const orthoModeInput = document.querySelector("[data-estimate-v2-ortho]");
+  const objectSnapInput = document.querySelector("[data-estimate-v2-object-snap]");
   const snapGridInput = document.querySelector("[data-estimate-v2-snap-grid]");
   const snapGridSizeInput = document.querySelector("[data-estimate-v2-snap-size]");
   const labelToggle = document.querySelector("[data-estimate-v2-label-toggle]");
@@ -3896,6 +4020,8 @@ function collectEstimateV2DraftFromDom() {
     pedestalDepth: pedestalDepthInput ? pedestalDepthInput.value : current.pedestalDepth,
     pedestalHeight: pedestalHeightInput ? pedestalHeightInput.value : current.pedestalHeight,
     concreteWastePercent: concreteWasteInput ? concreteWasteInput.value : current.concreteWastePercent,
+    orthoModeEnabled: orthoModeInput ? orthoModeInput.checked : current.orthoModeEnabled,
+    objectSnapEnabled: objectSnapInput ? objectSnapInput.checked : current.objectSnapEnabled,
     snapGridEnabled: snapGridInput ? snapGridInput.checked : current.snapGridEnabled,
     snapGridSize: snapGridSizeInput ? snapGridSizeInput.value : current.snapGridSize,
     showTakeoffLabels: labelToggle ? labelToggle.checked : current.showTakeoffLabels,
@@ -4701,6 +4827,8 @@ function defaultEstimateV2Draft() {
     takeoffTool: "calibrate",
     takeoffItemName: "Scale Reference",
     takeoffCostPerUnit: 0,
+    orthoModeEnabled: false,
+    objectSnapEnabled: true,
     snapGridEnabled: false,
     snapGridSize: 32,
     showTakeoffLabels: true,
@@ -4759,6 +4887,8 @@ function normalizeEstimateV2Draft(draft) {
     takeoffTool: estimateV2TakeoffTool(source.takeoffTool).key,
     takeoffItemName: String(source.takeoffItemName || estimateV2TakeoffTool(source.takeoffTool).defaultName).trim(),
     takeoffCostPerUnit: Math.max(0, Number(source.takeoffCostPerUnit) || 0),
+    orthoModeEnabled: Boolean(source.orthoModeEnabled),
+    objectSnapEnabled: source.objectSnapEnabled !== false,
     snapGridEnabled: Boolean(source.snapGridEnabled),
     snapGridSize: Math.max(8, Math.min(200, Number(source.snapGridSize) || 32)),
     showTakeoffLabels: source.showTakeoffLabels !== false,
