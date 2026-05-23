@@ -1348,6 +1348,10 @@ tfoot td {
   padding: 14px;
 }
 
+.estimate-v2-summary-panel-wide {
+  margin-bottom: 12px;
+}
+
 .estimate-v2-tool-strip,
 .estimate-v2-takeoff-actions {
   display: flex;
@@ -1443,6 +1447,39 @@ tfoot td {
   background:
     linear-gradient(145deg, rgba(40, 244, 255, 0.075), transparent 58%),
     rgba(255, 255, 255, 0.045);
+}
+
+.estimate-v2-plan-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: grid;
+  gap: 10px;
+  margin: -2px -2px 12px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background:
+    linear-gradient(145deg, rgba(40, 244, 255, 0.12), rgba(255, 79, 216, 0.06)),
+    rgba(15, 0, 28, 0.94);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.18);
+}
+
+.estimate-v2-plan-toolbar-top {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(280px, 1.2fr);
+  gap: 10px;
+}
+
+.estimate-v2-plan-control-row {
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) max-content;
+  gap: 10px;
+  align-items: end;
+}
+
+.estimate-v2-plan-status-card {
+  margin-bottom: 10px;
 }
 
 .estimate-v2-page-controls {
@@ -2261,6 +2298,7 @@ body[data-theme="light"] .estimate-v2-upload-panel,
 body[data-theme="light"] .estimate-v2-summary-panel,
 body[data-theme="light"] .estimate-v2-file-card,
 body[data-theme="light"] .estimate-v2-plan-shell,
+body[data-theme="light"] .estimate-v2-plan-toolbar,
 body[data-theme="light"] .estimate-v2-structural-panel,
 body[data-theme="light"] .estimate-v2-structural-card,
 body[data-theme="light"] .estimate-v2-region-panel,
@@ -2484,7 +2522,9 @@ body[data-theme="light"] .premium-access-notice {
   .estimate-v2-summary-panel,
   .estimate-v2-file-card,
   .estimate-v2-drawing-controls,
-  .estimate-v2-page-controls {
+  .estimate-v2-page-controls,
+  .estimate-v2-plan-toolbar-top,
+  .estimate-v2-plan-control-row {
     grid-template-columns: 1fr;
   }
 

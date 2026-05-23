@@ -1119,7 +1119,6 @@ function renderEstimateRow(row) {
 function renderEstimateV2View() {
   const draft = getEstimateV2Draft();
   const rows = draft.takeoffRows || [];
-  const activeTool = estimateV2TakeoffTool(draft.takeoffTool);
   const totalCost = estimateV2TakeoffTotal(rows);
   const totalArea = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "area").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
   const totalLength = rows.filter((row) => ["linear", "curve"].includes(estimateV2TakeoffTool(row.tool).type)).reduce((total, row) => total + (Number(row.quantity) || 0), 0);
@@ -1138,58 +1137,47 @@ function renderEstimateV2View() {
         <button class="ghost-btn danger" data-action="clear-estimate-v2">Clear</button>
       </div>
     </div>
-    <div class="estimate-v2-takeoff-grid">
-      <section class="estimate-v2-upload-panel">
+    <section class="estimate-v2-summary-panel estimate-v2-summary-panel-wide">
+      ${renderEstimateV2Metric("Floor Area", `${formatSwaNumber(totalArea)} m2`)}
+      ${renderEstimateV2Metric("Length", `${formatSwaNumber(totalLength)} m`)}
+      ${renderEstimateV2Metric("CHB", `${formatInteger(totalChb)} pcs`)}
+      ${renderEstimateV2Metric("Concrete", `${formatSwaNumber(totalConcrete)} cu.m`)}
+      ${renderEstimateV2Metric("Cement", `${formatInteger(totalConcreteMix.cementBags)} bags`)}
+      ${renderEstimateV2Metric("Count", formatInteger(totalCount))}
+      ${renderEstimateV2Metric("Total Cost", formatCurrency(totalCost))}
+    </section>
+    ${renderEstimateV2TakeoffWorkspace(draft)}
+    ${renderEstimateV2TakeoffTable(rows)}
+  `;
+}
+
+function renderEstimateV2PlanToolbar(draft, activeTool) {
+  return `
+    <div class="estimate-v2-plan-toolbar">
+      <div class="estimate-v2-plan-toolbar-top">
         <label class="estimate-v2-field">
-          <span>Floor Plan PDF</span>
+          <span>Insert PDF</span>
           <input type="file" accept="application/pdf,.pdf" data-estimate-v2-file>
         </label>
         <label class="estimate-v2-field">
           <span>Current Item</span>
           <input data-estimate-v2-takeoff-input data-estimate-v2-current-name value="${escapeAttribute(draft.takeoffItemName || activeTool.defaultName)}" placeholder="Material or scope">
         </label>
-        <div class="estimate-v2-tool-strip">
-          ${ESTIMATE_V2_TAKEOFF_TOOLS.map((tool) => `
-            <button class="secondary-btn compact-btn ${tool.key === activeTool.key ? "active-tool" : ""}" data-action="set-estimate-v2-tool" data-tool="${escapeAttribute(tool.key)}">${escapeHtml(tool.label)}</button>
-          `).join("")}
-        </div>
+      </div>
+      <div class="estimate-v2-tool-strip">
+        ${ESTIMATE_V2_TAKEOFF_TOOLS.map((tool) => `
+          <button class="secondary-btn compact-btn ${tool.key === activeTool.key ? "active-tool" : ""}" data-action="set-estimate-v2-tool" data-tool="${escapeAttribute(tool.key)}">${escapeHtml(tool.label)}</button>
+        `).join("")}
+      </div>
+      <div class="estimate-v2-plan-control-row">
         ${renderEstimateV2DrawingControls(draft, activeTool)}
         <div class="estimate-v2-takeoff-actions">
           <button class="primary-btn" data-action="finish-estimate-v2-takeoff">${activeTool.type === "calibrate" ? "Set Scale" : "Add Takeoff"}</button>
           <button class="secondary-btn" data-action="undo-estimate-v2-point">Undo Point</button>
           <button class="ghost-btn" data-action="clear-estimate-v2-points">Clear Points</button>
         </div>
-      </section>
-      <section class="estimate-v2-summary-panel">
-        ${renderEstimateV2Metric("Floor Area", `${formatSwaNumber(totalArea)} m2`)}
-        ${renderEstimateV2Metric("Length", `${formatSwaNumber(totalLength)} m`)}
-        ${renderEstimateV2Metric("CHB", `${formatInteger(totalChb)} pcs`)}
-        ${renderEstimateV2Metric("Concrete", `${formatSwaNumber(totalConcrete)} cu.m`)}
-        ${renderEstimateV2Metric("Cement", `${formatInteger(totalConcreteMix.cementBags)} bags`)}
-        ${renderEstimateV2Metric("Count", formatInteger(totalCount))}
-        ${renderEstimateV2Metric("Total Cost", formatCurrency(totalCost))}
-      </section>
-    </div>
-    <div class="estimate-v2-file-card">
-      <div>
-        <span class="eyebrow">Current PDF</span>
-        <strong>${draft.planFileName ? escapeHtml(draft.planFileName) : "No PDF loaded yet"}</strong>
-      </div>
-      <div>
-        <span class="eyebrow">Page</span>
-        <strong>${draft.takeoffPageCount ? `${formatInteger(draft.takeoffPage)} / ${formatInteger(draft.takeoffPageCount)}` : "-"}</strong>
-      </div>
-      <div>
-        <span class="eyebrow">Scale</span>
-        <strong>${draft.metersPerPixel ? `${formatSwaNumber(1 / draft.metersPerPixel)} px / m` : "Not calibrated"}</strong>
-      </div>
-      <div>
-        <span class="eyebrow">Active Tool</span>
-        <strong>${escapeHtml(activeTool.label)}</strong>
       </div>
     </div>
-    ${renderEstimateV2TakeoffWorkspace(draft)}
-    ${renderEstimateV2TakeoffTable(rows)}
   `;
 }
 
@@ -1331,37 +1319,57 @@ function renderEstimateV2TakeoffWorkspace(draft) {
   const pageImage = state.estimateV2PageImage;
   const pageWidth = state.estimateV2PageWidth || draft.takeoffPageWidth || 0;
   const pageHeight = state.estimateV2PageHeight || draft.takeoffPageHeight || 0;
-  if (!pageImage || !pageWidth || !pageHeight) {
-    return `<div class="placeholder estimate-v2-plan-placeholder">Upload a floor plan PDF to begin takeoff.</div>`;
-  }
+  const activeTool = estimateV2TakeoffTool(draft.takeoffTool);
+  const hasPage = Boolean(pageImage && pageWidth && pageHeight);
   return `
     <section class="estimate-v2-plan-shell">
+      ${renderEstimateV2PlanToolbar(draft, activeTool)}
+      <div class="estimate-v2-file-card estimate-v2-plan-status-card">
+        <div>
+          <span class="eyebrow">Current PDF</span>
+          <strong>${draft.planFileName ? escapeHtml(draft.planFileName) : "No PDF loaded yet"}</strong>
+        </div>
+        <div>
+          <span class="eyebrow">Page</span>
+          <strong>${draft.takeoffPageCount ? `${formatInteger(draft.takeoffPage)} / ${formatInteger(draft.takeoffPageCount)}` : "-"}</strong>
+        </div>
+        <div>
+          <span class="eyebrow">Scale</span>
+          <strong>${draft.metersPerPixel ? `${formatSwaNumber(1 / draft.metersPerPixel)} px / m` : "Not calibrated"}</strong>
+        </div>
+        <div>
+          <span class="eyebrow">Active Tool</span>
+          <strong>${escapeHtml(activeTool.label)}</strong>
+        </div>
+      </div>
       <div class="estimate-v2-page-controls">
         <div class="estimate-v2-page-nav">
-          <button class="secondary-btn compact-btn" data-action="estimate-v2-prev-page">Previous Page</button>
+          <button class="secondary-btn compact-btn" data-action="estimate-v2-prev-page" ${draft.takeoffPageCount ? "" : "disabled"}>Previous Page</button>
           <span>Page ${formatInteger(draft.takeoffPage)} of ${formatInteger(draft.takeoffPageCount || 1)}</span>
-          <button class="secondary-btn compact-btn" data-action="estimate-v2-next-page">Next Page</button>
+          <button class="secondary-btn compact-btn" data-action="estimate-v2-next-page" ${draft.takeoffPageCount ? "" : "disabled"}>Next Page</button>
         </div>
         <div class="estimate-v2-plan-active-controls">
-          ${renderEstimateV2TakeoffActiveInputs(draft, estimateV2TakeoffTool(draft.takeoffTool))}
+          ${renderEstimateV2TakeoffActiveInputs(draft, activeTool)}
         </div>
       </div>
-      <div class="estimate-v2-plan-stage">
-        <div class="estimate-v2-plan-surface">
-          <img class="estimate-v2-plan-image" src="${pageImage}" alt="Uploaded plan page">
-          <svg
-            class="estimate-v2-plan-overlay"
-            viewBox="0 0 ${pageWidth} ${pageHeight}"
-            preserveAspectRatio="none"
-            data-action="estimate-v2-plan-click"
-            data-estimate-v2-plan-canvas
-            data-width="${pageWidth}"
-            data-height="${pageHeight}"
-          >
-            ${renderEstimateV2TakeoffOverlay(draft, pageWidth, pageHeight)}
-          </svg>
+      ${hasPage ? `
+        <div class="estimate-v2-plan-stage">
+          <div class="estimate-v2-plan-surface">
+            <img class="estimate-v2-plan-image" src="${pageImage}" alt="Uploaded plan page">
+            <svg
+              class="estimate-v2-plan-overlay"
+              viewBox="0 0 ${pageWidth} ${pageHeight}"
+              preserveAspectRatio="none"
+              data-action="estimate-v2-plan-click"
+              data-estimate-v2-plan-canvas
+              data-width="${pageWidth}"
+              data-height="${pageHeight}"
+            >
+              ${renderEstimateV2TakeoffOverlay(draft, pageWidth, pageHeight)}
+            </svg>
+          </div>
         </div>
-      </div>
+      ` : `<div class="placeholder estimate-v2-plan-placeholder">Upload a floor plan PDF to begin takeoff.</div>`}
     </section>
   `;
 }
