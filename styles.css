@@ -1758,10 +1758,16 @@ tfoot td {
   vector-effect: non-scaling-stroke;
 }
 
+.estimate-v2-measure-label.active-label rect {
+  stroke: rgba(255, 255, 255, 0.88);
+  stroke-dasharray: 4 3;
+}
+
 .estimate-v2-measure-label text {
   fill: #ffffff;
   font-size: 14px;
   font-weight: 900;
+  text-anchor: middle;
 }
 
 .estimate-v2-takeoff-table tr.editing-row td {

@@ -1533,6 +1533,7 @@ function renderEstimateV2TakeoffOverlay(draft, pageWidth, pageHeight) {
     ${rows.map(renderEstimateV2TakeoffShape).join("")}
     ${draft.showTakeoffLabels ? rows.map(renderEstimateV2TakeoffLabel).join("") : ""}
     ${renderEstimateV2ActiveShape(activeTool, activePoints)}
+    ${draft.showTakeoffLabels ? renderEstimateV2ActiveLabels(activeTool, activePoints, draft) : ""}
     <rect class="estimate-v2-click-catcher" x="0" y="0" width="${pageWidth}" height="${pageHeight}"></rect>
   `;
 }
@@ -1577,14 +1578,30 @@ function renderEstimateV2TakeoffShape(row) {
 
 function renderEstimateV2TakeoffLabel(row) {
   const tool = estimateV2TakeoffTool(row.tool);
+  const points = (Array.isArray(row.points) ? row.points : []).map(normalizePoint).filter(Boolean);
+  if (tool.type === "count" || tool.type === "concrete-count") {
+    return points.map((point, index) => renderEstimateV2LabelNode(point, estimateV2PointLabelText(row, tool, index))).join("");
+  }
   const point = estimateV2LabelPoint(row.points);
   if (!point) return "";
   const text = estimateV2LabelText(row, tool);
   if (!text) return "";
+  return renderEstimateV2LabelNode(point, text);
+}
+
+function renderEstimateV2ActiveLabels(tool, points, draft) {
+  if (!["count", "concrete-count"].includes(tool.type)) return "";
+  const normalizedPoints = (Array.isArray(points) ? points : []).map(normalizePoint).filter(Boolean);
+  return normalizedPoints.map((point, index) => renderEstimateV2LabelNode(point, estimateV2ActivePointLabelText(tool, draft, index, normalizedPoints.length), " active-label")).join("");
+}
+
+function renderEstimateV2LabelNode(point, text, className = "") {
+  if (!point || !text) return "";
+  const width = Math.max(72, text.length * 7.2 + 16);
   return `
-    <g class="estimate-v2-measure-label">
-      <rect x="${point.x - 5}" y="${point.y - 20}" width="${Math.max(72, text.length * 7.2)}" height="22" rx="5"></rect>
-      <text x="${point.x}" y="${point.y - 5}">${escapeHtml(text)}</text>
+    <g class="estimate-v2-measure-label${className}">
+      <rect x="${point.x - width / 2}" y="${point.y - 34}" width="${width}" height="24" rx="5"></rect>
+      <text x="${point.x}" y="${point.y - 17}">${escapeHtml(text)}</text>
     </g>
   `;
 }
@@ -1895,6 +1912,21 @@ function estimateV2LabelText(row, tool) {
   if (tool.type === "concrete-count") return `${formatSwaNumber(row.concreteVolume || quantity)} cu.m`;
   if (tool.type === "count") return `${formatInteger(quantity)} pcs`;
   return `${formatSwaNumber(quantity)} ${tool.unit}`;
+}
+
+function estimateV2PointLabelText(row, tool, index) {
+  if (tool.key === "column-concrete") return String(row.typeMark || "Column").trim();
+  if (tool.key === "footing-concrete") return String(row.typeMark || "Footing").trim();
+  const baseName = String(row.description || tool.defaultName || tool.label).trim();
+  const points = Array.isArray(row.points) ? row.points : [];
+  return points.length > 1 ? `${baseName} ${index + 1}` : baseName;
+}
+
+function estimateV2ActivePointLabelText(tool, draft, index, pointCount) {
+  if (tool.key === "column-concrete") return String(draft.concreteTypeMark || "Column").trim();
+  if (tool.key === "footing-concrete") return String(draft.footingTypeMark || "Footing").trim();
+  const baseName = String(draft.takeoffItemName || tool.defaultName || tool.label).trim();
+  return pointCount > 1 ? `${baseName} ${index + 1}` : baseName;
 }
 
 function estimateV2CurvePath(points) {
