@@ -1361,7 +1361,7 @@ tfoot td {
 
 .estimate-v2-drawing-controls {
   display: grid;
-  grid-template-columns: minmax(120px, auto) minmax(130px, 180px) max-content;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 8px;
   align-items: end;
 }
@@ -1472,19 +1472,36 @@ tfoot td {
 }
 
 .estimate-v2-plan-control-row {
-  display: grid;
-  grid-template-columns: minmax(320px, 1fr) max-content max-content;
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: end;
 }
 
+.estimate-v2-plan-control-row > * {
+  min-width: 0;
+}
+
+.estimate-v2-plan-control-row .estimate-v2-drawing-controls {
+  flex: 1 1 360px;
+}
+
 .estimate-v2-zoom-controls {
+  flex: 1 1 260px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   color: var(--muted);
   font-weight: 900;
+}
+
+.estimate-v2-plan-control-row .estimate-v2-takeoff-actions {
+  flex: 1 1 360px;
+}
+
+.estimate-v2-plan-toolbar button {
+  white-space: nowrap;
 }
 
 .estimate-v2-zoom-controls span {
@@ -2545,6 +2562,11 @@ body[data-theme="light"] .premium-access-notice {
 
   .estimate-v2-plan-active-controls {
     justify-self: stretch;
+  }
+
+  .estimate-v2-plan-control-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .dashboard-filter select {
