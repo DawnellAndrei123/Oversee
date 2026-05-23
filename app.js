@@ -166,6 +166,7 @@ const state = {
   estimateV2PageWidth: 0,
   estimateV2PageHeight: 0,
   estimateV2ActivePoints: [],
+  estimateV2RedoPoints: [],
   cloudSyncApplying: false,
   cloudSyncTimer: null,
   cloudSyncLoaded: false,
@@ -255,7 +256,11 @@ document.addEventListener("click", (event) => {
     "finish-estimate-v2-takeoff": finishEstimateV2Takeoff,
     "add-estimate-v2-perpendicular": () => addEstimateV2PerpendicularPoint(false),
     "undo-estimate-v2-point": undoEstimateV2Point,
+    "redo-estimate-v2-point": redoEstimateV2Point,
     "clear-estimate-v2-points": clearEstimateV2Points,
+    "estimate-v2-zoom-in": () => changeEstimateV2Zoom(0.25),
+    "estimate-v2-zoom-out": () => changeEstimateV2Zoom(-0.25),
+    "estimate-v2-zoom-reset": resetEstimateV2Zoom,
     "delete-estimate-v2-takeoff": () => deleteEstimateV2Takeoff(id),
     "estimate-v2-prev-page": () => changeEstimateV2Page(-1),
     "estimate-v2-next-page": () => changeEstimateV2Page(1),
@@ -293,9 +298,20 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (isTypingTarget(event.target)) return;
-  if (event.metaKey || event.ctrlKey || event.altKey) return;
   if (state.currentView !== "engineering" || state.engineeringView !== "estimate-v2") return;
   const key = event.key.toLowerCase();
+  if (!event.altKey && (event.metaKey || event.ctrlKey)) {
+    if (key === "z") {
+      event.preventDefault();
+      if (event.shiftKey) redoEstimateV2Point();
+      else undoEstimateV2Point();
+    } else if (key === "y") {
+      event.preventDefault();
+      redoEstimateV2Point();
+    }
+    return;
+  }
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
   if (key === "p") {
     event.preventDefault();
     addEstimateV2PerpendicularPoint(event.shiftKey);
@@ -453,6 +469,7 @@ function applyCloudAppData(data) {
     state.estimateV2PageWidth = 0;
     state.estimateV2PageHeight = 0;
     state.estimateV2ActivePoints = [];
+    state.estimateV2RedoPoints = [];
   } finally {
     state.cloudSyncApplying = false;
   }
@@ -518,6 +535,7 @@ function clearLocalAppData() {
     state.estimateV2PageWidth = 0;
     state.estimateV2PageHeight = 0;
     state.estimateV2ActivePoints = [];
+    state.estimateV2RedoPoints = [];
   } finally {
     state.cloudSyncApplying = false;
   }
@@ -1171,12 +1189,26 @@ function renderEstimateV2PlanToolbar(draft, activeTool) {
       </div>
       <div class="estimate-v2-plan-control-row">
         ${renderEstimateV2DrawingControls(draft, activeTool)}
+        ${renderEstimateV2ZoomControls(draft)}
         <div class="estimate-v2-takeoff-actions">
           <button class="primary-btn" data-action="finish-estimate-v2-takeoff">${activeTool.type === "calibrate" ? "Set Scale" : "Add Takeoff"}</button>
-          <button class="secondary-btn" data-action="undo-estimate-v2-point">Undo Point</button>
+          <button class="secondary-btn" data-action="undo-estimate-v2-point" title="Shortcut: Ctrl/Cmd+Z">Undo Point</button>
+          <button class="secondary-btn" data-action="redo-estimate-v2-point" title="Shortcut: Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y">Redo Point</button>
           <button class="ghost-btn" data-action="clear-estimate-v2-points">Clear Points</button>
         </div>
       </div>
+    </div>
+  `;
+}
+
+function renderEstimateV2ZoomControls(draft) {
+  const zoom = estimateV2ZoomValue(draft);
+  return `
+    <div class="estimate-v2-zoom-controls">
+      <button class="secondary-btn compact-btn" data-action="estimate-v2-zoom-out">Zoom Out</button>
+      <button class="secondary-btn compact-btn" data-action="estimate-v2-zoom-in">Zoom In</button>
+      <button class="ghost-btn compact-btn" data-action="estimate-v2-zoom-reset">Reset</button>
+      <span>${formatInteger(zoom * 100)}%</span>
     </div>
   `;
 }
@@ -1321,6 +1353,8 @@ function renderEstimateV2TakeoffWorkspace(draft) {
   const pageHeight = state.estimateV2PageHeight || draft.takeoffPageHeight || 0;
   const activeTool = estimateV2TakeoffTool(draft.takeoffTool);
   const hasPage = Boolean(pageImage && pageWidth && pageHeight);
+  const zoom = estimateV2ZoomValue(draft);
+  const surfaceWidth = Math.max(720, pageWidth * zoom);
   return `
     <section class="estimate-v2-plan-shell">
       ${renderEstimateV2PlanToolbar(draft, activeTool)}
@@ -1354,7 +1388,7 @@ function renderEstimateV2TakeoffWorkspace(draft) {
       </div>
       ${hasPage ? `
         <div class="estimate-v2-plan-stage">
-          <div class="estimate-v2-plan-surface">
+          <div class="estimate-v2-plan-surface" style="width:${surfaceWidth}px">
             <img class="estimate-v2-plan-image" src="${pageImage}" alt="Uploaded plan page">
             <svg
               class="estimate-v2-plan-overlay"
@@ -1657,6 +1691,10 @@ function estimateV2TakeoffTotal(rows) {
 
 function estimateV2TakeoffRowTotal(row) {
   return (Number(row.quantity) || 0) * (Number(row.costPerUnit) || 0);
+}
+
+function estimateV2ZoomValue(draft) {
+  return Math.max(0.5, Math.min(3, Number(draft && draft.takeoffZoom) || 1));
 }
 
 function estimateV2ChbPieces(wallArea, blocksPerSquareMeter, wastePercent) {
@@ -3009,6 +3047,7 @@ function setEstimateV2TakeoffTool(toolKey) {
   draft.takeoffItemName = tool.defaultName;
   if (tool.type === "calibrate") draft.takeoffCostPerUnit = 0;
   state.estimateV2ActivePoints = [];
+  state.estimateV2RedoPoints = [];
   saveEstimateV2Draft(draft);
   render();
 }
@@ -3030,6 +3069,7 @@ async function loadEstimateV2TakeoffPdf(file) {
     const pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
     state.estimateV2Pdf = pdf;
     state.estimateV2ActivePoints = [];
+    state.estimateV2RedoPoints = [];
     const draft = collectEstimateV2DraftFromDom();
     draft.planFileName = file.name;
     draft.takeoffPage = 1;
@@ -3051,6 +3091,7 @@ async function changeEstimateV2Page(delta) {
   const nextPage = Math.min(Math.max(1, (Number(draft.takeoffPage) || 1) + delta), pdf.numPages || 1);
   if (nextPage === draft.takeoffPage) return;
   state.estimateV2ActivePoints = [];
+  state.estimateV2RedoPoints = [];
   await renderEstimateV2TakeoffPage(draft, nextPage);
 }
 
@@ -3095,8 +3136,12 @@ function handleEstimateV2PlanClick(event) {
   });
   const point = estimateV2ClampPoint(estimateV2SnapPoint(estimateV2ClampPoint(rawPoint, width, height), draft, tool), width, height);
   if (!point) return;
-  if (tool.type === "calibrate" && state.estimateV2ActivePoints.length >= 2) state.estimateV2ActivePoints = [];
+  if (tool.type === "calibrate" && state.estimateV2ActivePoints.length >= 2) {
+    state.estimateV2ActivePoints = [];
+    state.estimateV2RedoPoints = [];
+  }
   state.estimateV2ActivePoints.push(point);
+  state.estimateV2RedoPoints = [];
   saveEstimateV2Draft(draft);
   render();
 }
@@ -3131,6 +3176,20 @@ function toggleEstimateV2SnapGrid() {
   toast(draft.snapGridEnabled ? "Snap Grid on." : "Snap Grid off.");
 }
 
+function changeEstimateV2Zoom(delta) {
+  const draft = collectEstimateV2DraftFromDom();
+  draft.takeoffZoom = Math.round((estimateV2ZoomValue(draft) + delta) * 100) / 100;
+  saveEstimateV2Draft(draft);
+  render();
+}
+
+function resetEstimateV2Zoom() {
+  const draft = collectEstimateV2DraftFromDom();
+  draft.takeoffZoom = 1;
+  saveEstimateV2Draft(draft);
+  render();
+}
+
 function addEstimateV2PerpendicularPoint(reverse = false) {
   const draft = collectEstimateV2DraftFromDom();
   const tool = estimateV2TakeoffTool(draft.takeoffTool);
@@ -3158,6 +3217,7 @@ function addEstimateV2PerpendicularPoint(reverse = false) {
   const snapped = estimateV2ClampPoint(estimateV2SnapPoint(clamped, draft, tool), state.estimateV2PageWidth || draft.takeoffPageWidth, state.estimateV2PageHeight || draft.takeoffPageHeight);
   if (!snapped) return;
   state.estimateV2ActivePoints.push(snapped);
+  state.estimateV2RedoPoints = [];
   saveEstimateV2Draft(draft);
   render();
   toast("Perpendicular point added.");
@@ -3184,6 +3244,7 @@ function finishEstimateV2Takeoff() {
     draft.metersPerPixel = draft.calibrationLength / pixelLength;
     draft.calibrationPoints = points.slice(0, 2);
     state.estimateV2ActivePoints = [];
+    state.estimateV2RedoPoints = [];
     saveEstimateV2Draft(draft);
     render();
     toast("Scale calibrated.");
@@ -3262,6 +3323,7 @@ function finishEstimateV2Takeoff() {
     ...takeoffDetails
   }));
   state.estimateV2ActivePoints = [];
+  state.estimateV2RedoPoints = [];
   saveEstimateV2Draft(draft);
   render();
   toast(`${tool.label} takeoff added.`);
@@ -3323,12 +3385,20 @@ function estimateV2ConcreteCountTakeoff(tool, draft, count) {
 }
 
 function undoEstimateV2Point() {
-  state.estimateV2ActivePoints.pop();
+  const point = state.estimateV2ActivePoints.pop();
+  if (point) state.estimateV2RedoPoints.push(point);
+  render();
+}
+
+function redoEstimateV2Point() {
+  const point = state.estimateV2RedoPoints.pop();
+  if (point) state.estimateV2ActivePoints.push(point);
   render();
 }
 
 function clearEstimateV2Points() {
   state.estimateV2ActivePoints = [];
+  state.estimateV2RedoPoints = [];
   render();
 }
 
@@ -3412,6 +3482,7 @@ function clearEstimateV2Draft() {
   state.estimateV2PageWidth = 0;
   state.estimateV2PageHeight = 0;
   state.estimateV2ActivePoints = [];
+  state.estimateV2RedoPoints = [];
   saveEstimateV2Draft(defaultEstimateV2Draft());
   render();
   toast("Estimate v2 cleared.");
@@ -4350,6 +4421,7 @@ function defaultEstimateV2Draft() {
     takeoffPageCount: 0,
     takeoffPageWidth: 0,
     takeoffPageHeight: 0,
+    takeoffZoom: 1,
     metersPerPixel: 0,
     calibrationLength: 0,
     calibrationPoints: [],
@@ -4404,6 +4476,7 @@ function normalizeEstimateV2Draft(draft) {
     takeoffPageCount: Math.max(0, Number(source.takeoffPageCount) || 0),
     takeoffPageWidth: Math.max(0, Number(source.takeoffPageWidth) || 0),
     takeoffPageHeight: Math.max(0, Number(source.takeoffPageHeight) || 0),
+    takeoffZoom: estimateV2ZoomValue(source),
     metersPerPixel: Math.max(0, Number(source.metersPerPixel) || 0),
     calibrationLength: Math.max(0, Number(source.calibrationLength) || 0),
     calibrationPoints: Array.isArray(source.calibrationPoints) ? source.calibrationPoints.map(normalizePoint).filter(Boolean).slice(0, 2) : [],
