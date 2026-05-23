@@ -1467,8 +1467,47 @@ tfoot td {
 
 .estimate-v2-plan-toolbar-top {
   display: grid;
-  grid-template-columns: minmax(260px, 0.8fr) minmax(280px, 1.2fr);
+  grid-template-columns: minmax(220px, 0.8fr) minmax(220px, 0.8fr) minmax(280px, 1.2fr);
   gap: 10px;
+}
+
+.estimate-v2-layer-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.estimate-v2-layer-panel summary {
+  cursor: pointer;
+  color: var(--cyan);
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.estimate-v2-layer-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.estimate-v2-layer-toggle {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.045);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.estimate-v2-layer-toggle input {
+  accent-color: var(--cyan);
 }
 
 .estimate-v2-plan-control-row {
@@ -1594,6 +1633,11 @@ tfoot td {
   pointer-events: none;
 }
 
+.estimate-v2-shape.selected {
+  stroke-width: 9;
+  filter: drop-shadow(0 0 10px rgba(255, 79, 216, 0.78));
+}
+
 .estimate-v2-shape.area {
   fill: color-mix(in srgb, var(--takeoff-color) 24%, transparent);
 }
@@ -1607,6 +1651,15 @@ tfoot td {
   pointer-events: none;
 }
 
+.estimate-v2-active-point {
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.estimate-v2-active-point:active {
+  cursor: grabbing;
+}
+
 .estimate-v2-active-line {
   fill: none;
   stroke: var(--takeoff-color);
@@ -1614,6 +1667,27 @@ tfoot td {
   stroke-dasharray: 10 8;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
+}
+
+.estimate-v2-measure-label {
+  pointer-events: none;
+}
+
+.estimate-v2-measure-label rect {
+  fill: rgba(7, 0, 13, 0.82);
+  stroke: rgba(40, 244, 255, 0.68);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.estimate-v2-measure-label text {
+  fill: #ffffff;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.estimate-v2-takeoff-table tr.editing-row td {
+  background: rgba(255, 79, 216, 0.12);
 }
 
 .estimate-v2-takeoff-table tfoot td {
@@ -2331,6 +2405,7 @@ body[data-theme="light"] .estimate-v2-summary-panel,
 body[data-theme="light"] .estimate-v2-file-card,
 body[data-theme="light"] .estimate-v2-plan-shell,
 body[data-theme="light"] .estimate-v2-plan-toolbar,
+body[data-theme="light"] .estimate-v2-layer-panel,
 body[data-theme="light"] .estimate-v2-structural-panel,
 body[data-theme="light"] .estimate-v2-structural-card,
 body[data-theme="light"] .estimate-v2-region-panel,

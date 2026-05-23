@@ -167,6 +167,9 @@ const state = {
   estimateV2PageHeight: 0,
   estimateV2ActivePoints: [],
   estimateV2RedoPoints: [],
+  estimateV2EditingRowId: "",
+  estimateV2DraggingPointIndex: null,
+  estimateV2SuppressNextPlanClick: false,
   cloudSyncApplying: false,
   cloudSyncTimer: null,
   cloudSyncLoaded: false,
@@ -258,10 +261,12 @@ document.addEventListener("click", (event) => {
     "undo-estimate-v2-point": undoEstimateV2Point,
     "redo-estimate-v2-point": redoEstimateV2Point,
     "clear-estimate-v2-points": clearEstimateV2Points,
+    "cancel-estimate-v2-edit": cancelEstimateV2ShapeEdit,
     "estimate-v2-zoom-in": () => changeEstimateV2Zoom(0.25),
     "estimate-v2-zoom-out": () => changeEstimateV2Zoom(-0.25),
     "estimate-v2-zoom-reset": resetEstimateV2Zoom,
     "delete-estimate-v2-takeoff": () => deleteEstimateV2Takeoff(id),
+    "edit-estimate-v2-takeoff": () => editEstimateV2Takeoff(id),
     "estimate-v2-prev-page": () => changeEstimateV2Page(-1),
     "estimate-v2-next-page": () => changeEstimateV2Page(1),
     "use-estimate-template": () => useEstimateTemplate(id),
@@ -324,6 +329,11 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+document.addEventListener("pointerdown", handleEstimateV2PointPointerDown);
+document.addEventListener("pointermove", handleEstimateV2PointPointerMove);
+document.addEventListener("pointerup", handleEstimateV2PointPointerUp);
+document.addEventListener("pointercancel", handleEstimateV2PointPointerUp);
+
 document.addEventListener("input", (event) => {
   const estimateTitle = event.target.closest("[data-estimate-title]");
   if (estimateTitle) {
@@ -348,9 +358,15 @@ document.addEventListener("input", (event) => {
   }
   const estimateV2TakeoffInput = event.target.closest("[data-estimate-v2-takeoff-input]");
   if (estimateV2TakeoffInput) {
+    if (estimateV2TakeoffInput.matches("[data-estimate-v2-project-select]")) {
+      state.estimateV2EditingRowId = "";
+      state.estimateV2ActivePoints = [];
+      state.estimateV2RedoPoints = [];
+      state.estimateV2DraggingPointIndex = null;
+    }
     saveEstimateV2Draft(collectEstimateV2DraftFromDom());
     updateEstimateV2TakeoffTotals();
-    if (estimateV2TakeoffInput.matches("[data-estimate-v2-snap-grid]")) render();
+    if (estimateV2TakeoffInput.matches("[data-estimate-v2-snap-grid], [data-estimate-v2-layer-toggle], [data-estimate-v2-label-toggle]")) render();
     return;
   }
   const priceInput = event.target.closest("[data-price-input]");
@@ -370,9 +386,15 @@ document.addEventListener("change", (event) => {
   }
   const estimateV2TakeoffInput = event.target.closest("[data-estimate-v2-takeoff-input]");
   if (estimateV2TakeoffInput) {
+    if (estimateV2TakeoffInput.matches("[data-estimate-v2-project-select]")) {
+      state.estimateV2EditingRowId = "";
+      state.estimateV2ActivePoints = [];
+      state.estimateV2RedoPoints = [];
+      state.estimateV2DraggingPointIndex = null;
+    }
     saveEstimateV2Draft(collectEstimateV2DraftFromDom());
     updateEstimateV2TakeoffTotals();
-    if (estimateV2TakeoffInput.matches("[data-estimate-v2-snap-grid], [data-estimate-v2-snap-size]")) render();
+    if (estimateV2TakeoffInput.matches("[data-estimate-v2-snap-grid], [data-estimate-v2-snap-size], [data-estimate-v2-project-select], [data-estimate-v2-layer-toggle], [data-estimate-v2-label-toggle]")) render();
     return;
   }
   const target = event.target.closest("[data-action]");
@@ -470,6 +492,8 @@ function applyCloudAppData(data) {
     state.estimateV2PageHeight = 0;
     state.estimateV2ActivePoints = [];
     state.estimateV2RedoPoints = [];
+    state.estimateV2EditingRowId = "";
+    state.estimateV2DraggingPointIndex = null;
   } finally {
     state.cloudSyncApplying = false;
   }
@@ -536,6 +560,8 @@ function clearLocalAppData() {
     state.estimateV2PageHeight = 0;
     state.estimateV2ActivePoints = [];
     state.estimateV2RedoPoints = [];
+    state.estimateV2EditingRowId = "";
+    state.estimateV2DraggingPointIndex = null;
   } finally {
     state.cloudSyncApplying = false;
   }
@@ -1136,7 +1162,7 @@ function renderEstimateRow(row) {
 
 function renderEstimateV2View() {
   const draft = getEstimateV2Draft();
-  const rows = draft.takeoffRows || [];
+  const rows = estimateV2ProjectRows(draft);
   const totalCost = estimateV2TakeoffTotal(rows);
   const totalArea = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "area").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
   const totalLength = rows.filter((row) => ["linear", "curve"].includes(estimateV2TakeoffTool(row.tool).type)).reduce((total, row) => total + (Number(row.quantity) || 0), 0);
@@ -1170,9 +1196,17 @@ function renderEstimateV2View() {
 }
 
 function renderEstimateV2PlanToolbar(draft, activeTool) {
+  const projects = getProjects();
   return `
     <div class="estimate-v2-plan-toolbar">
       <div class="estimate-v2-plan-toolbar-top">
+        <label class="estimate-v2-field">
+          <span>Project</span>
+          <select data-estimate-v2-takeoff-input data-estimate-v2-project-select>
+            <option value="" ${draft.selectedProjectId ? "" : "selected"}>${projects.length ? "Unassigned Takeoff" : "No project yet"}</option>
+            ${projects.map((project) => `<option value="${escapeAttribute(project.id)}" ${project.id === draft.selectedProjectId ? "selected" : ""}>${escapeHtml(project.name)}</option>`).join("")}
+          </select>
+        </label>
         <label class="estimate-v2-field">
           <span>Insert PDF</span>
           <input type="file" accept="application/pdf,.pdf" data-estimate-v2-file>
@@ -1187,17 +1221,39 @@ function renderEstimateV2PlanToolbar(draft, activeTool) {
           <button class="secondary-btn compact-btn ${tool.key === activeTool.key ? "active-tool" : ""}" data-action="set-estimate-v2-tool" data-tool="${escapeAttribute(tool.key)}">${escapeHtml(tool.label)}</button>
         `).join("")}
       </div>
+      ${renderEstimateV2LayerControls(draft)}
       <div class="estimate-v2-plan-control-row">
         ${renderEstimateV2DrawingControls(draft, activeTool)}
         ${renderEstimateV2ZoomControls(draft)}
         <div class="estimate-v2-takeoff-actions">
-          <button class="primary-btn" data-action="finish-estimate-v2-takeoff">${activeTool.type === "calibrate" ? "Set Scale" : "Add Takeoff"}</button>
+          <button class="primary-btn" data-action="finish-estimate-v2-takeoff">${activeTool.type === "calibrate" ? "Set Scale" : state.estimateV2EditingRowId ? "Update Shape" : "Add Takeoff"}</button>
           <button class="secondary-btn" data-action="undo-estimate-v2-point" title="Shortcut: Ctrl/Cmd+Z">Undo Point</button>
           <button class="secondary-btn" data-action="redo-estimate-v2-point" title="Shortcut: Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y">Redo Point</button>
           <button class="ghost-btn" data-action="clear-estimate-v2-points">Clear Points</button>
         </div>
       </div>
     </div>
+  `;
+}
+
+function renderEstimateV2LayerControls(draft) {
+  const layers = estimateV2LayerTools();
+  return `
+    <details class="estimate-v2-layer-panel" open>
+      <summary>Layers</summary>
+      <div class="estimate-v2-layer-list">
+        <label class="estimate-v2-layer-toggle">
+          <input data-estimate-v2-takeoff-input data-estimate-v2-label-toggle type="checkbox" ${draft.showTakeoffLabels ? "checked" : ""}>
+          <span>Measurement Labels</span>
+        </label>
+        ${layers.map((tool) => `
+          <label class="estimate-v2-layer-toggle">
+            <input data-estimate-v2-takeoff-input data-estimate-v2-layer-toggle value="${escapeAttribute(tool.key)}" type="checkbox" ${estimateV2LayerVisible(draft, tool.key) ? "checked" : ""}>
+            <span>${escapeHtml(tool.label)}</span>
+          </label>
+        `).join("")}
+      </div>
+    </details>
   `;
 }
 
@@ -1409,12 +1465,13 @@ function renderEstimateV2TakeoffWorkspace(draft) {
 }
 
 function renderEstimateV2TakeoffOverlay(draft, pageWidth, pageHeight) {
-  const rows = (draft.takeoffRows || []).filter((row) => Number(row.page || 1) === Number(draft.takeoffPage || 1));
+  const rows = estimateV2VisibleOverlayRows(draft).filter((row) => Number(row.page || 1) === Number(draft.takeoffPage || 1));
   const activeTool = estimateV2TakeoffTool(draft.takeoffTool);
   const activePoints = state.estimateV2ActivePoints || [];
   return `
     ${renderEstimateV2SnapGrid(draft, pageWidth, pageHeight)}
     ${rows.map(renderEstimateV2TakeoffShape).join("")}
+    ${draft.showTakeoffLabels ? rows.map(renderEstimateV2TakeoffLabel).join("") : ""}
     ${renderEstimateV2ActiveShape(activeTool, activePoints)}
     <rect class="estimate-v2-click-catcher" x="0" y="0" width="${pageWidth}" height="${pageHeight}"></rect>
   `;
@@ -1438,29 +1495,44 @@ function renderEstimateV2TakeoffShape(row) {
   const tool = estimateV2TakeoffTool(row.tool);
   const color = row.color || tool.color;
   const points = Array.isArray(row.points) ? row.points : [];
+  const selectedClass = state.estimateV2EditingRowId === row.id ? " selected" : "";
   if (!points.length) return "";
   if (tool.type === "area" && points.length >= 3) {
-    return `<polygon class="estimate-v2-shape area" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polygon>`;
+    return `<polygon class="estimate-v2-shape area${selectedClass}" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polygon>`;
   }
   if ((tool.type === "linear" || tool.type === "chb") && points.length >= 2) {
-    return `<polyline class="estimate-v2-shape line" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polyline>`;
+    return `<polyline class="estimate-v2-shape line${selectedClass}" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polyline>`;
   }
   if (tool.type === "curve" && points.length >= 2) {
-    return `<path class="estimate-v2-shape line curve" d="${escapeAttribute(estimateV2CurvePath(points))}" style="--takeoff-color:${escapeAttribute(color)}"></path>`;
+    return `<path class="estimate-v2-shape line curve${selectedClass}" d="${escapeAttribute(estimateV2CurvePath(points))}" style="--takeoff-color:${escapeAttribute(color)}"></path>`;
   }
   if (tool.type === "count" || tool.type === "concrete-count") {
-    return points.map((point) => `<circle class="estimate-v2-shape count" cx="${point.x}" cy="${point.y}" r="10" style="--takeoff-color:${escapeAttribute(color)}"></circle>`).join("");
+    return points.map((point) => `<circle class="estimate-v2-shape count${selectedClass}" cx="${point.x}" cy="${point.y}" r="10" style="--takeoff-color:${escapeAttribute(color)}"></circle>`).join("");
   }
   if (tool.type === "calibrate" && points.length >= 2) {
-    return `<polyline class="estimate-v2-shape calibration" points="${pointsToSvg(points.slice(0, 2))}" style="--takeoff-color:${escapeAttribute(color)}"></polyline>`;
+    return `<polyline class="estimate-v2-shape calibration${selectedClass}" points="${pointsToSvg(points.slice(0, 2))}" style="--takeoff-color:${escapeAttribute(color)}"></polyline>`;
   }
   return "";
+}
+
+function renderEstimateV2TakeoffLabel(row) {
+  const tool = estimateV2TakeoffTool(row.tool);
+  const point = estimateV2LabelPoint(row.points);
+  if (!point) return "";
+  const text = estimateV2LabelText(row, tool);
+  if (!text) return "";
+  return `
+    <g class="estimate-v2-measure-label">
+      <rect x="${point.x - 5}" y="${point.y - 20}" width="${Math.max(72, text.length * 7.2)}" height="22" rx="5"></rect>
+      <text x="${point.x}" y="${point.y - 5}">${escapeHtml(text)}</text>
+    </g>
+  `;
 }
 
 function renderEstimateV2ActiveShape(tool, points) {
   if (!points.length) return "";
   const color = tool.color;
-  const markers = points.map((point) => `<circle class="estimate-v2-active-point" cx="${point.x}" cy="${point.y}" r="8" style="--takeoff-color:${escapeAttribute(color)}"></circle>`).join("");
+  const markers = points.map((point, index) => `<circle class="estimate-v2-active-point" data-estimate-v2-active-point-index="${index}" cx="${point.x}" cy="${point.y}" r="8" style="--takeoff-color:${escapeAttribute(color)}"></circle>`).join("");
   if (tool.type === "area" && points.length >= 2) {
     return `<polyline class="estimate-v2-active-line" points="${pointsToSvg(points)}" style="--takeoff-color:${escapeAttribute(color)}"></polyline>${markers}`;
   }
@@ -1474,6 +1546,7 @@ function renderEstimateV2ActiveShape(tool, points) {
 }
 
 function renderEstimateV2TakeoffTable(rows) {
+  const isEditing = Boolean(state.estimateV2EditingRowId);
   return `
     <div class="table-wrap estimate-v2-table-wrap">
       <table class="estimate-v2-table estimate-v2-takeoff-table">
@@ -1495,7 +1568,7 @@ function renderEstimateV2TakeoffTable(rows) {
           <tr>
             <td colspan="5">Total Estimate</td>
             <td data-estimate-v2-takeoff-total>${formatCurrency(estimateV2TakeoffTotal(rows))}</td>
-            <td></td>
+            <td>${isEditing ? `<button class="ghost-btn compact-btn" data-action="cancel-estimate-v2-edit">Cancel Edit</button>` : ""}</td>
           </tr>
         </tfoot>
       </table>
@@ -1512,14 +1585,17 @@ function renderEstimateV2TakeoffRow(row) {
       ? renderEstimateV2ConcreteDetails(normalized)
     : "";
   return `
-    <tr data-estimate-v2-takeoff-row="${escapeAttribute(normalized.id)}">
+    <tr data-estimate-v2-takeoff-row="${escapeAttribute(normalized.id)}" class="${state.estimateV2EditingRowId === normalized.id ? "editing-row" : ""}">
       <td><input class="estimate-input description" data-estimate-v2-takeoff-input data-field="description" value="${escapeAttribute(normalized.description)}" placeholder="Item"></td>
       <td><strong>${escapeHtml(tool.label)}</strong>${typeDetails}</td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0" ${tool.type === "chb" ? "readonly" : ""}></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="unit" value="${escapeAttribute(normalized.unit)}" placeholder="unit"></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(normalized.costPerUnit)}" placeholder="0.00"></td>
       <td data-estimate-v2-row-total>${formatCurrency(estimateV2TakeoffRowTotal(normalized))}</td>
-      <td><button class="ghost-btn danger compact-btn" data-action="delete-estimate-v2-takeoff" data-id="${escapeAttribute(normalized.id)}">Delete</button></td>
+      <td>
+        <button class="secondary-btn compact-btn" data-action="edit-estimate-v2-takeoff" data-id="${escapeAttribute(normalized.id)}">Edit Shape</button>
+        <button class="ghost-btn danger compact-btn" data-action="delete-estimate-v2-takeoff" data-id="${escapeAttribute(normalized.id)}">Delete</button>
+      </td>
     </tr>
   `;
 }
@@ -1685,6 +1761,41 @@ function estimateV2TakeoffTool(toolKey) {
   return ESTIMATE_V2_TAKEOFF_TOOLS.find((tool) => tool.key === toolKey) || ESTIMATE_V2_TAKEOFF_TOOLS[0];
 }
 
+function estimateV2LayerTools() {
+  return ESTIMATE_V2_TAKEOFF_TOOLS.filter((tool) => tool.type !== "calibrate");
+}
+
+function defaultEstimateV2Layers() {
+  return estimateV2LayerTools().reduce((layers, tool) => ({ ...layers, [tool.key]: true }), {});
+}
+
+function normalizeEstimateV2Layers(layers) {
+  const source = layers && typeof layers === "object" ? layers : {};
+  return estimateV2LayerTools().reduce((normalized, tool) => ({ ...normalized, [tool.key]: source[tool.key] !== false }), {});
+}
+
+function estimateV2LayerVisible(draft, toolKey) {
+  const layers = draft && draft.visibleTakeoffLayers && typeof draft.visibleTakeoffLayers === "object" ? draft.visibleTakeoffLayers : {};
+  return layers[toolKey] !== false;
+}
+
+function estimateV2ProjectKey(projectId) {
+  return projectId || "__unassigned";
+}
+
+function sameEstimateV2Project(firstProjectId, secondProjectId) {
+  return estimateV2ProjectKey(firstProjectId) === estimateV2ProjectKey(secondProjectId);
+}
+
+function estimateV2ProjectRows(draft) {
+  const selectedProjectId = draft && draft.selectedProjectId || "";
+  return (draft && Array.isArray(draft.takeoffRows) ? draft.takeoffRows : []).filter((row) => sameEstimateV2Project(row.projectId, selectedProjectId));
+}
+
+function estimateV2VisibleOverlayRows(draft) {
+  return estimateV2ProjectRows(draft).filter((row) => estimateV2LayerVisible(draft, row.tool));
+}
+
 function estimateV2TakeoffTotal(rows) {
   return (Array.isArray(rows) ? rows : []).reduce((total, row) => total + estimateV2TakeoffRowTotal(row), 0);
 }
@@ -1706,6 +1817,24 @@ function estimateV2ChbPieces(wallArea, blocksPerSquareMeter, wastePercent) {
 
 function pointsToSvg(points) {
   return (Array.isArray(points) ? points : []).map((point) => `${Number(point.x) || 0},${Number(point.y) || 0}`).join(" ");
+}
+
+function estimateV2LabelPoint(points) {
+  const normalizedPoints = (Array.isArray(points) ? points : []).map(normalizePoint).filter(Boolean);
+  if (!normalizedPoints.length) return null;
+  const center = normalizedPoints.reduce((total, point) => ({ x: total.x + point.x, y: total.y + point.y }), { x: 0, y: 0 });
+  return {
+    x: center.x / normalizedPoints.length,
+    y: center.y / normalizedPoints.length
+  };
+}
+
+function estimateV2LabelText(row, tool) {
+  const quantity = Number(row && row.quantity) || 0;
+  if (tool.type === "chb") return `${formatInteger(quantity)} CHB`;
+  if (tool.type === "concrete-count") return `${formatSwaNumber(row.concreteVolume || quantity)} cu.m`;
+  if (tool.type === "count") return `${formatInteger(quantity)} pcs`;
+  return `${formatSwaNumber(quantity)} ${tool.unit}`;
 }
 
 function estimateV2CurvePath(points) {
@@ -3048,6 +3177,8 @@ function setEstimateV2TakeoffTool(toolKey) {
   if (tool.type === "calibrate") draft.takeoffCostPerUnit = 0;
   state.estimateV2ActivePoints = [];
   state.estimateV2RedoPoints = [];
+  state.estimateV2EditingRowId = "";
+  state.estimateV2DraggingPointIndex = null;
   saveEstimateV2Draft(draft);
   render();
 }
@@ -3070,6 +3201,8 @@ async function loadEstimateV2TakeoffPdf(file) {
     state.estimateV2Pdf = pdf;
     state.estimateV2ActivePoints = [];
     state.estimateV2RedoPoints = [];
+    state.estimateV2EditingRowId = "";
+    state.estimateV2DraggingPointIndex = null;
     const draft = collectEstimateV2DraftFromDom();
     draft.planFileName = file.name;
     draft.takeoffPage = 1;
@@ -3092,6 +3225,8 @@ async function changeEstimateV2Page(delta) {
   if (nextPage === draft.takeoffPage) return;
   state.estimateV2ActivePoints = [];
   state.estimateV2RedoPoints = [];
+  state.estimateV2EditingRowId = "";
+  state.estimateV2DraggingPointIndex = null;
   await renderEstimateV2TakeoffPage(draft, nextPage);
 }
 
@@ -3123,18 +3258,16 @@ async function renderEstimateV2TakeoffPage(draft, pageNumber) {
 }
 
 function handleEstimateV2PlanClick(event) {
+  if (state.estimateV2SuppressNextPlanClick) {
+    state.estimateV2SuppressNextPlanClick = false;
+    return;
+  }
+  if (event.target.closest("[data-estimate-v2-active-point-index]")) return;
   const canvasNode = event.target.closest("[data-estimate-v2-plan-canvas]");
   if (!canvasNode) return;
   const draft = collectEstimateV2DraftFromDom();
   const tool = estimateV2TakeoffTool(draft.takeoffTool);
-  const rect = canvasNode.getBoundingClientRect();
-  const width = Number(canvasNode.dataset.width) || state.estimateV2PageWidth || draft.takeoffPageWidth;
-  const height = Number(canvasNode.dataset.height) || state.estimateV2PageHeight || draft.takeoffPageHeight;
-  const rawPoint = normalizePoint({
-    x: (event.clientX - rect.left) * width / rect.width,
-    y: (event.clientY - rect.top) * height / rect.height
-  });
-  const point = estimateV2ClampPoint(estimateV2SnapPoint(estimateV2ClampPoint(rawPoint, width, height), draft, tool), width, height);
+  const point = estimateV2PointFromCanvasEvent(event, canvasNode, draft, tool);
   if (!point) return;
   if (tool.type === "calibrate" && state.estimateV2ActivePoints.length >= 2) {
     state.estimateV2ActivePoints = [];
@@ -3144,6 +3277,60 @@ function handleEstimateV2PlanClick(event) {
   state.estimateV2RedoPoints = [];
   saveEstimateV2Draft(draft);
   render();
+}
+
+function estimateV2PointFromCanvasEvent(event, canvasNode, draft, tool) {
+  const rect = canvasNode.getBoundingClientRect();
+  const width = Number(canvasNode.dataset.width) || state.estimateV2PageWidth || draft.takeoffPageWidth;
+  const height = Number(canvasNode.dataset.height) || state.estimateV2PageHeight || draft.takeoffPageHeight;
+  if (!rect.width || !rect.height || !width || !height) return null;
+  const rawPoint = normalizePoint({
+    x: (event.clientX - rect.left) * width / rect.width,
+    y: (event.clientY - rect.top) * height / rect.height
+  });
+  return estimateV2ClampPoint(estimateV2SnapPoint(estimateV2ClampPoint(rawPoint, width, height), draft, tool), width, height);
+}
+
+function handleEstimateV2PointPointerDown(event) {
+  const pointNode = event.target.closest("[data-estimate-v2-active-point-index]");
+  if (!pointNode) return;
+  const canvasNode = pointNode.closest("[data-estimate-v2-plan-canvas]");
+  if (!canvasNode) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const pointIndex = Number(pointNode.dataset.estimateV2ActivePointIndex);
+  if (!Number.isInteger(pointIndex)) return;
+  state.estimateV2DraggingPointIndex = pointIndex;
+  state.estimateV2SuppressNextPlanClick = true;
+  if (typeof pointNode.setPointerCapture === "function") {
+    pointNode.setPointerCapture(event.pointerId);
+  }
+}
+
+function handleEstimateV2PointPointerMove(event) {
+  if (state.estimateV2DraggingPointIndex === null) return;
+  const canvasNode = document.querySelector("[data-estimate-v2-plan-canvas]");
+  if (!canvasNode) return;
+  event.preventDefault();
+  const draft = collectEstimateV2DraftFromDom();
+  const tool = estimateV2TakeoffTool(draft.takeoffTool);
+  const point = estimateV2PointFromCanvasEvent(event, canvasNode, draft, tool);
+  if (!point) return;
+  const points = [...(state.estimateV2ActivePoints || [])];
+  if (!points[state.estimateV2DraggingPointIndex]) return;
+  points[state.estimateV2DraggingPointIndex] = point;
+  state.estimateV2ActivePoints = points;
+  state.estimateV2RedoPoints = [];
+  render();
+}
+
+function handleEstimateV2PointPointerUp() {
+  if (state.estimateV2DraggingPointIndex === null) return;
+  state.estimateV2DraggingPointIndex = null;
+  saveEstimateV2Draft(collectEstimateV2DraftFromDom());
+  window.setTimeout(() => {
+    state.estimateV2SuppressNextPlanClick = false;
+  }, 120);
 }
 
 function estimateV2SnapGridSize(draft) {
@@ -3311,7 +3498,10 @@ function finishEstimateV2Takeoff() {
   } else if (tool.type === "count") {
     quantity = points.length;
   }
-  draft.takeoffRows.push(normalizeEstimateV2TakeoffRow({
+  const editingRowId = state.estimateV2EditingRowId;
+  const takeoffRow = normalizeEstimateV2TakeoffRow({
+    id: editingRowId || cryptoId(),
+    projectId: draft.selectedProjectId,
     description,
     tool: tool.key,
     quantity,
@@ -3321,12 +3511,19 @@ function finishEstimateV2Takeoff() {
     page: draft.takeoffPage,
     color: tool.color,
     ...takeoffDetails
-  }));
+  });
+  if (editingRowId) {
+    draft.takeoffRows = draft.takeoffRows.map((row) => row.id === editingRowId ? takeoffRow : row);
+  } else {
+    draft.takeoffRows.push(takeoffRow);
+  }
   state.estimateV2ActivePoints = [];
   state.estimateV2RedoPoints = [];
+  state.estimateV2EditingRowId = "";
+  state.estimateV2DraggingPointIndex = null;
   saveEstimateV2Draft(draft);
   render();
-  toast(`${tool.label} takeoff added.`);
+  toast(`${tool.label} takeoff ${editingRowId ? "updated" : "added"}.`);
 }
 
 function estimateV2ConcreteCountTakeoff(tool, draft, count) {
@@ -3399,19 +3596,79 @@ function redoEstimateV2Point() {
 function clearEstimateV2Points() {
   state.estimateV2ActivePoints = [];
   state.estimateV2RedoPoints = [];
+  state.estimateV2DraggingPointIndex = null;
   render();
+}
+
+async function editEstimateV2Takeoff(rowId) {
+  const draft = collectEstimateV2DraftFromDom();
+  const row = draft.takeoffRows.find((item) => item.id === rowId);
+  if (!row) return;
+  const previousPage = draft.takeoffPage;
+  const nextPage = row.page || draft.takeoffPage;
+  draft.selectedProjectId = row.projectId || "";
+  draft.takeoffTool = row.tool;
+  draft.takeoffItemName = row.description || estimateV2TakeoffTool(row.tool).defaultName;
+  draft.takeoffCostPerUnit = row.costPerUnit || 0;
+  draft.takeoffPage = nextPage;
+  if (row.chbWallHeight) draft.chbWallHeight = row.chbWallHeight;
+  if (row.chbWastePercent || row.chbWastePercent === 0) draft.chbWastePercent = row.chbWastePercent;
+  if (row.chbBlocksPerSquareMeter) draft.chbBlocksPerSquareMeter = row.chbBlocksPerSquareMeter;
+  if (row.chbSize) draft.chbSize = row.chbSize;
+  if (row.concreteKind === "column") {
+    draft.concreteTypeMark = row.typeMark || draft.concreteTypeMark;
+    draft.columnWidth = row.columnWidth || draft.columnWidth;
+    draft.columnDepth = row.columnDepth || draft.columnDepth;
+    draft.columnHeight = row.columnHeight || draft.columnHeight;
+  }
+  if (row.concreteKind === "footing") {
+    draft.footingTypeMark = row.typeMark || draft.footingTypeMark;
+    draft.footingLength = row.footingLength || draft.footingLength;
+    draft.footingWidth = row.footingWidth || draft.footingWidth;
+    draft.footingThickness = row.footingThickness || draft.footingThickness;
+    draft.pedestalWidth = row.pedestalWidth || 0;
+    draft.pedestalDepth = row.pedestalDepth || 0;
+    draft.pedestalHeight = row.pedestalHeight || 0;
+  }
+  state.estimateV2EditingRowId = row.id;
+  state.estimateV2ActivePoints = Array.isArray(row.points) ? row.points.map(normalizePoint).filter(Boolean) : [];
+  state.estimateV2RedoPoints = [];
+  state.estimateV2DraggingPointIndex = null;
+  saveEstimateV2Draft(draft);
+  if (state.estimateV2Pdf && Number(nextPage) !== Number(previousPage)) {
+    await renderEstimateV2TakeoffPage(draft, nextPage);
+  } else {
+    render();
+  }
+  toast("Shape loaded for editing.");
+}
+
+function cancelEstimateV2ShapeEdit() {
+  state.estimateV2EditingRowId = "";
+  state.estimateV2ActivePoints = [];
+  state.estimateV2RedoPoints = [];
+  state.estimateV2DraggingPointIndex = null;
+  render();
+  toast("Shape editing cancelled.");
 }
 
 function deleteEstimateV2Takeoff(rowId) {
   const draft = collectEstimateV2DraftFromDom();
   draft.takeoffRows = draft.takeoffRows.filter((row) => row.id !== rowId);
+  if (state.estimateV2EditingRowId === rowId) {
+    state.estimateV2EditingRowId = "";
+    state.estimateV2ActivePoints = [];
+    state.estimateV2RedoPoints = [];
+    state.estimateV2DraggingPointIndex = null;
+  }
   saveEstimateV2Draft(draft);
   render();
   toast("Takeoff row deleted.");
 }
 
 function updateEstimateV2TakeoffTotals() {
-  const rows = collectEstimateV2DraftFromDom().takeoffRows;
+  const draft = collectEstimateV2DraftFromDom();
+  const rows = estimateV2ProjectRows(draft);
   document.querySelectorAll("[data-estimate-v2-takeoff-row]").forEach((rowNode) => {
     const row = rows.find((item) => item.id === rowNode.dataset.estimateV2TakeoffRow);
     const totalNode = rowNode.querySelector("[data-estimate-v2-row-total]");
@@ -3483,6 +3740,8 @@ function clearEstimateV2Draft() {
   state.estimateV2PageHeight = 0;
   state.estimateV2ActivePoints = [];
   state.estimateV2RedoPoints = [];
+  state.estimateV2EditingRowId = "";
+  state.estimateV2DraggingPointIndex = null;
   saveEstimateV2Draft(defaultEstimateV2Draft());
   render();
   toast("Estimate v2 cleared.");
@@ -3583,6 +3842,7 @@ function collectEstimateDraftFromDom() {
 
 function collectEstimateV2DraftFromDom() {
   const current = getEstimateV2Draft();
+  const projectInput = document.querySelector("[data-estimate-v2-project-select]");
   const planTypeInput = document.querySelector('[data-action="estimate-v2-plan-type"]');
   const scaleInput = document.querySelector('[data-action="estimate-v2-scale"]');
   const elevationInput = document.querySelector("[data-estimate-v2-structural-elevation]");
@@ -3607,12 +3867,15 @@ function collectEstimateV2DraftFromDom() {
   const concreteWasteInput = document.querySelector("[data-estimate-v2-concrete-waste]");
   const snapGridInput = document.querySelector("[data-estimate-v2-snap-grid]");
   const snapGridSizeInput = document.querySelector("[data-estimate-v2-snap-size]");
+  const labelToggle = document.querySelector("[data-estimate-v2-label-toggle]");
+  const layerToggles = [...document.querySelectorAll("[data-estimate-v2-layer-toggle]")];
   const activeTool = estimateV2TakeoffTool(current.takeoffTool);
   const nextChbWallHeight = chbHeightInput ? chbHeightInput.value : current.chbWallHeight;
   const nextChbWastePercent = chbWasteInput ? chbWasteInput.value : current.chbWastePercent;
   const nextChbBlocksPerSquareMeter = chbBlocksInput ? chbBlocksInput.value : current.chbBlocksPerSquareMeter;
   return normalizeEstimateV2Draft({
     ...current,
+    selectedProjectId: projectInput ? projectInput.value : current.selectedProjectId,
     planType: planTypeInput ? planTypeInput.value : current.planType,
     drawingScale: scaleInput ? scaleInput.value : current.drawingScale,
     structuralElevation: elevationInput ? elevationInput.value : current.structuralElevation,
@@ -3635,6 +3898,10 @@ function collectEstimateV2DraftFromDom() {
     concreteWastePercent: concreteWasteInput ? concreteWasteInput.value : current.concreteWastePercent,
     snapGridEnabled: snapGridInput ? snapGridInput.checked : current.snapGridEnabled,
     snapGridSize: snapGridSizeInput ? snapGridSizeInput.value : current.snapGridSize,
+    showTakeoffLabels: labelToggle ? labelToggle.checked : current.showTakeoffLabels,
+    visibleTakeoffLayers: layerToggles.length
+      ? layerToggles.reduce((layers, input) => ({ ...layers, [input.value]: input.checked }), {})
+      : current.visibleTakeoffLayers,
     takeoffItemName: currentNameInput ? currentNameInput.value : current.takeoffItemName,
     takeoffCostPerUnit: currentCostInput ? currentCostInput.value : current.takeoffCostPerUnit,
     calibrationLength: calibrationLengthInput ? calibrationLengthInput.value : current.calibrationLength,
@@ -3650,7 +3917,7 @@ function collectEstimateV2DraftFromDom() {
 function collectEstimateV2TakeoffRowsFromDom(fallbackRows = [], activeSettings = {}) {
   const rowNodes = [...document.querySelectorAll("[data-estimate-v2-takeoff-row]")];
   if (!rowNodes.length) return fallbackRows;
-  return rowNodes.map((rowNode) => {
+  const updatedRows = rowNodes.map((rowNode) => {
     const previous = fallbackRows.find((row) => row.id === rowNode.dataset.estimateV2TakeoffRow) || {};
     const tool = estimateV2TakeoffTool(previous.tool);
     let quantity = getRowInputNumber(rowNode, "quantity");
@@ -3681,6 +3948,11 @@ function collectEstimateV2TakeoffRowsFromDom(fallbackRows = [], activeSettings =
       costPerUnit: getRowInputNumber(rowNode, "costPerUnit")
     });
   });
+  const updatedIds = new Set(updatedRows.map((row) => row.id));
+  return [
+    ...fallbackRows.filter((row) => !updatedIds.has(row.id)),
+    ...updatedRows
+  ];
 }
 
 function readEstimateV2RowFromDom(rowNode) {
@@ -4396,6 +4668,7 @@ function saveEstimateV2Draft(draft) {
 
 function defaultEstimateV2Draft() {
   return {
+    selectedProjectId: "",
     planType: PLAN_TYPES[0],
     drawingScale: "1:100",
     structuralElevation: 0,
@@ -4430,6 +4703,8 @@ function defaultEstimateV2Draft() {
     takeoffCostPerUnit: 0,
     snapGridEnabled: false,
     snapGridSize: 32,
+    showTakeoffLabels: true,
+    visibleTakeoffLayers: defaultEstimateV2Layers(),
     takeoffRows: [],
     fileName: "",
     extractedAt: "",
@@ -4451,6 +4726,7 @@ function normalizeEstimateV2Draft(draft) {
   const chbWastePercent = Number(source.chbWastePercent);
   const concreteWastePercent = Number(source.concreteWastePercent);
   return {
+    selectedProjectId: String(source.selectedProjectId || "").trim(),
     planType: PLAN_TYPES.includes(source.planType) ? source.planType : PLAN_TYPES[0],
     drawingScale: DRAWING_SCALES.includes(source.drawingScale) ? source.drawingScale : "1:100",
     structuralElevation: Math.max(0, Number(source.structuralElevation) || 0),
@@ -4485,6 +4761,8 @@ function normalizeEstimateV2Draft(draft) {
     takeoffCostPerUnit: Math.max(0, Number(source.takeoffCostPerUnit) || 0),
     snapGridEnabled: Boolean(source.snapGridEnabled),
     snapGridSize: Math.max(8, Math.min(200, Number(source.snapGridSize) || 32)),
+    showTakeoffLabels: source.showTakeoffLabels !== false,
+    visibleTakeoffLayers: normalizeEstimateV2Layers(source.visibleTakeoffLayers),
     takeoffRows: Array.isArray(source.takeoffRows) ? source.takeoffRows.map(normalizeEstimateV2TakeoffRow).filter((row) => row.description) : [],
     fileName: String(source.fileName || "").trim(),
     extractedAt: String(source.extractedAt || "").trim(),
@@ -4533,6 +4811,7 @@ function normalizeEstimateV2TakeoffRow(row) {
   const concreteVolume = Math.max(0, Number(row && row.concreteVolume) || 0);
   return {
     id: row && row.id || cryptoId(),
+    projectId: String(row && row.projectId || "").trim(),
     description: String(row && row.description || tool.defaultName).trim(),
     tool: tool.key,
     quantity: Math.max(0, Number(row && row.quantity) || 0),
