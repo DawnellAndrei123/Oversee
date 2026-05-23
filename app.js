@@ -1463,7 +1463,16 @@ function renderEstimateV2TakeoffWorkspace(draft) {
   const zoom = estimateV2ZoomValue(draft);
   const surfaceWidth = Math.max(720, pageWidth * zoom);
   return `
-    <section class="estimate-v2-plan-shell ${state.estimateV2PlanExpanded ? "expanded" : ""}">
+    <section class="estimate-v2-plan-shell ${state.estimateV2PlanExpanded ? "full-pdf-ui" : ""}">
+      ${state.estimateV2PlanExpanded ? `
+        <div class="estimate-v2-full-pdf-head">
+          <div>
+            <span class="eyebrow">Full PDF View</span>
+            <strong>${draft.planFileName ? escapeHtml(draft.planFileName) : "No PDF loaded yet"}</strong>
+          </div>
+          <button class="primary-btn compact-btn" data-action="toggle-estimate-v2-plan-fullscreen">Exit Full PDF</button>
+        </div>
+      ` : ""}
       ${renderEstimateV2PlanToolbar(draft, activeTool)}
       <div class="estimate-v2-file-card estimate-v2-plan-status-card">
         <div>
@@ -1488,7 +1497,6 @@ function renderEstimateV2TakeoffWorkspace(draft) {
           <button class="secondary-btn compact-btn" data-action="estimate-v2-prev-page" ${draft.takeoffPageCount ? "" : "disabled"}>Previous Page</button>
           <span>Page ${formatInteger(draft.takeoffPage)} of ${formatInteger(draft.takeoffPageCount || 1)}</span>
           <button class="secondary-btn compact-btn" data-action="estimate-v2-next-page" ${draft.takeoffPageCount ? "" : "disabled"}>Next Page</button>
-          <button class="secondary-btn compact-btn" data-action="toggle-estimate-v2-plan-fullscreen">${state.estimateV2PlanExpanded ? "Exit Full PDF" : "Full PDF"}</button>
         </div>
         <div class="estimate-v2-plan-active-controls">
           ${renderEstimateV2TakeoffActiveInputs(draft, activeTool)}

@@ -1449,27 +1449,44 @@ tfoot td {
     rgba(255, 255, 255, 0.045);
 }
 
-.estimate-v2-plan-shell.expanded {
+.estimate-v2-plan-shell.full-pdf-ui {
   position: fixed;
-  top: 172px;
+  top: 160px;
   right: 18px;
   bottom: 18px;
   left: 306px;
-  z-index: 16;
+  z-index: 28;
   display: flex;
   flex-direction: column;
   margin: 0;
   overflow: hidden;
+  background:
+    linear-gradient(145deg, rgba(40, 244, 255, 0.14), rgba(255, 79, 216, 0.08)),
+    rgba(8, 0, 14, 0.98);
   box-shadow: 0 30px 90px rgba(0, 0, 0, 0.45);
 }
 
-.estimate-v2-plan-shell.expanded .estimate-v2-plan-toolbar,
-.estimate-v2-plan-shell.expanded .estimate-v2-file-card,
-.estimate-v2-plan-shell.expanded .estimate-v2-page-controls {
+.estimate-v2-full-pdf-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 2px 12px;
+}
+
+.estimate-v2-full-pdf-head strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+}
+
+.estimate-v2-plan-shell.full-pdf-ui .estimate-v2-plan-toolbar,
+.estimate-v2-plan-shell.full-pdf-ui .estimate-v2-file-card,
+.estimate-v2-plan-shell.full-pdf-ui .estimate-v2-page-controls {
   flex: 0 0 auto;
 }
 
-.estimate-v2-plan-shell.expanded .estimate-v2-plan-stage {
+.estimate-v2-plan-shell.full-pdf-ui .estimate-v2-plan-stage {
   flex: 1 1 auto;
   min-height: 0;
   max-height: none;
@@ -2681,7 +2698,7 @@ body[data-theme="light"] .premium-access-notice {
     align-items: stretch;
   }
 
-  .estimate-v2-plan-shell.expanded {
+  .estimate-v2-plan-shell.full-pdf-ui {
     top: 148px;
     right: 10px;
     bottom: 10px;
