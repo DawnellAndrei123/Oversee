@@ -325,7 +325,10 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (event.metaKey || event.ctrlKey || event.altKey) return;
-  if (key === "p") {
+  if (key === "enter") {
+    event.preventDefault();
+    finishEstimateV2Takeoff();
+  } else if (key === "p") {
     event.preventDefault();
     addEstimateV2PerpendicularPoint(event.shiftKey);
   } else if (key === "g") {
@@ -1234,7 +1237,7 @@ function renderEstimateV2PlanToolbar(draft, activeTool) {
         ${renderEstimateV2DrawingControls(draft, activeTool)}
         ${renderEstimateV2ZoomControls(draft)}
         <div class="estimate-v2-takeoff-actions">
-          <button class="primary-btn" data-action="finish-estimate-v2-takeoff">${activeTool.type === "calibrate" ? "Set Scale" : state.estimateV2EditingRowId ? "Update Shape" : "Add Takeoff"}</button>
+          <button class="primary-btn" data-action="finish-estimate-v2-takeoff" title="Shortcut: Enter">${activeTool.type === "calibrate" ? "Set Scale" : state.estimateV2EditingRowId ? "Update Shape" : "Add Takeoff"}</button>
           <button class="secondary-btn" data-action="undo-estimate-v2-point" title="Shortcut: Ctrl/Cmd+Z">Undo Point</button>
           <button class="secondary-btn" data-action="redo-estimate-v2-point" title="Shortcut: Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y">Redo Point</button>
           <button class="ghost-btn" data-action="clear-estimate-v2-points">Clear Points</button>
