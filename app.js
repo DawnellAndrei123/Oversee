@@ -1268,6 +1268,7 @@ function renderEstimateV2PlanToolbar(draft, activeTool) {
         ${renderEstimateV2ZoomControls(draft)}
         <div class="estimate-v2-takeoff-actions">
           <button class="primary-btn" data-action="finish-estimate-v2-takeoff" title="Shortcut: Enter">${activeTool.type === "calibrate" ? "Set Scale" : state.estimateV2EditingRowId ? "Update Shape" : "Add Takeoff"}</button>
+          <button class="secondary-btn estimate-v2-full-pdf-btn ${state.estimateV2PlanExpanded ? "active-full-pdf" : ""}" data-action="toggle-estimate-v2-plan-fullscreen">${state.estimateV2PlanExpanded ? "Exit Full PDF" : "Full PDF View"}</button>
           <button class="secondary-btn" data-action="undo-estimate-v2-point" title="Shortcut: Ctrl/Cmd+Z">Undo Point</button>
           <button class="secondary-btn" data-action="undo-estimate-v2-takeoff" title="Shortcut: Ctrl/Cmd+Z after a takeoff is generated">Undo Takeoff</button>
           <button class="secondary-btn" data-action="redo-estimate-v2-point" title="Shortcut: Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y">Redo Point</button>

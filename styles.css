@@ -1569,6 +1569,17 @@ tfoot td {
   white-space: nowrap;
 }
 
+.estimate-v2-full-pdf-btn {
+  border-color: rgba(40, 244, 255, 0.55);
+  box-shadow: 0 0 0 1px rgba(40, 244, 255, 0.12) inset;
+}
+
+.estimate-v2-full-pdf-btn.active-full-pdf {
+  color: #12001d;
+  background: linear-gradient(135deg, var(--cyan), var(--green));
+  border-color: transparent;
+}
+
 .estimate-v2-zoom-controls span {
   min-width: 52px;
   text-align: right;
