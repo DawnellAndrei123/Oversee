@@ -173,6 +173,9 @@ const state = {
   estimateV2EditingRowId: "",
   estimateV2DraggingPointIndex: null,
   estimateV2SuppressNextPlanClick: false,
+  estimateV2TakeoffUndoStack: [],
+  estimateV2TakeoffRedoStack: [],
+  estimateV2PlanExpanded: false,
   cloudSyncApplying: false,
   cloudSyncTimer: null,
   cloudSyncLoaded: false,
@@ -263,8 +266,10 @@ document.addEventListener("click", (event) => {
     "add-estimate-v2-perpendicular": () => addEstimateV2PerpendicularPoint(false),
     "undo-estimate-v2-point": undoEstimateV2Point,
     "redo-estimate-v2-point": redoEstimateV2Point,
+    "undo-estimate-v2-takeoff": undoEstimateV2GeneratedTakeoff,
     "clear-estimate-v2-points": clearEstimateV2Points,
     "cancel-estimate-v2-edit": cancelEstimateV2ShapeEdit,
+    "toggle-estimate-v2-plan-fullscreen": toggleEstimateV2PlanExpanded,
     "estimate-v2-zoom-in": () => changeEstimateV2Zoom(0.25),
     "estimate-v2-zoom-out": () => changeEstimateV2Zoom(-0.25),
     "estimate-v2-zoom-reset": resetEstimateV2Zoom,
@@ -316,11 +321,11 @@ document.addEventListener("keydown", (event) => {
   if (!event.altKey && (event.metaKey || event.ctrlKey)) {
     if (key === "z") {
       event.preventDefault();
-      if (event.shiftKey) redoEstimateV2Point();
-      else undoEstimateV2Point();
+      if (event.shiftKey) redoEstimateV2PointOrTakeoff();
+      else undoEstimateV2PointOrTakeoff();
     } else if (key === "y") {
       event.preventDefault();
-      redoEstimateV2Point();
+      redoEstimateV2PointOrTakeoff();
     }
     return;
   }
@@ -374,6 +379,7 @@ document.addEventListener("input", (event) => {
       state.estimateV2ActivePoints = [];
       state.estimateV2RedoPoints = [];
       state.estimateV2DraggingPointIndex = null;
+      clearEstimateV2TakeoffHistory();
     }
     saveEstimateV2Draft(collectEstimateV2DraftFromDom());
     updateEstimateV2TakeoffTotals();
@@ -402,6 +408,7 @@ document.addEventListener("change", (event) => {
       state.estimateV2ActivePoints = [];
       state.estimateV2RedoPoints = [];
       state.estimateV2DraggingPointIndex = null;
+      clearEstimateV2TakeoffHistory();
     }
     saveEstimateV2Draft(collectEstimateV2DraftFromDom());
     updateEstimateV2TakeoffTotals();
@@ -505,6 +512,8 @@ function applyCloudAppData(data) {
     state.estimateV2RedoPoints = [];
     state.estimateV2EditingRowId = "";
     state.estimateV2DraggingPointIndex = null;
+    state.estimateV2PlanExpanded = false;
+    clearEstimateV2TakeoffHistory();
   } finally {
     state.cloudSyncApplying = false;
   }
@@ -573,6 +582,8 @@ function clearLocalAppData() {
     state.estimateV2RedoPoints = [];
     state.estimateV2EditingRowId = "";
     state.estimateV2DraggingPointIndex = null;
+    state.estimateV2PlanExpanded = false;
+    clearEstimateV2TakeoffHistory();
   } finally {
     state.cloudSyncApplying = false;
   }
@@ -700,6 +711,25 @@ function render() {
     return;
   }
   app.innerHTML = renderAppShell(account);
+}
+
+function renderPreservingEstimateV2Scroll() {
+  const scrollX = window.scrollX;
+  const scrollY = window.scrollY;
+  const planStage = document.querySelector(".estimate-v2-plan-stage");
+  const planScrollLeft = planStage ? planStage.scrollLeft : 0;
+  const planScrollTop = planStage ? planStage.scrollTop : 0;
+  render();
+  restoreEstimateV2Scroll(scrollX, scrollY, planScrollLeft, planScrollTop);
+  window.requestAnimationFrame(() => restoreEstimateV2Scroll(scrollX, scrollY, planScrollLeft, planScrollTop));
+}
+
+function restoreEstimateV2Scroll(scrollX, scrollY, planScrollLeft, planScrollTop) {
+  window.scrollTo(scrollX, scrollY);
+  const nextPlanStage = document.querySelector(".estimate-v2-plan-stage");
+  if (!nextPlanStage) return;
+  nextPlanStage.scrollLeft = planScrollLeft;
+  nextPlanStage.scrollTop = planScrollTop;
 }
 
 async function apiRequest(path, body, options = {}) {
@@ -1239,6 +1269,7 @@ function renderEstimateV2PlanToolbar(draft, activeTool) {
         <div class="estimate-v2-takeoff-actions">
           <button class="primary-btn" data-action="finish-estimate-v2-takeoff" title="Shortcut: Enter">${activeTool.type === "calibrate" ? "Set Scale" : state.estimateV2EditingRowId ? "Update Shape" : "Add Takeoff"}</button>
           <button class="secondary-btn" data-action="undo-estimate-v2-point" title="Shortcut: Ctrl/Cmd+Z">Undo Point</button>
+          <button class="secondary-btn" data-action="undo-estimate-v2-takeoff" title="Shortcut: Ctrl/Cmd+Z after a takeoff is generated">Undo Takeoff</button>
           <button class="secondary-btn" data-action="redo-estimate-v2-point" title="Shortcut: Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y">Redo Point</button>
           <button class="ghost-btn" data-action="clear-estimate-v2-points">Clear Points</button>
         </div>
@@ -1431,7 +1462,7 @@ function renderEstimateV2TakeoffWorkspace(draft) {
   const zoom = estimateV2ZoomValue(draft);
   const surfaceWidth = Math.max(720, pageWidth * zoom);
   return `
-    <section class="estimate-v2-plan-shell">
+    <section class="estimate-v2-plan-shell ${state.estimateV2PlanExpanded ? "expanded" : ""}">
       ${renderEstimateV2PlanToolbar(draft, activeTool)}
       <div class="estimate-v2-file-card estimate-v2-plan-status-card">
         <div>
@@ -1456,6 +1487,7 @@ function renderEstimateV2TakeoffWorkspace(draft) {
           <button class="secondary-btn compact-btn" data-action="estimate-v2-prev-page" ${draft.takeoffPageCount ? "" : "disabled"}>Previous Page</button>
           <span>Page ${formatInteger(draft.takeoffPage)} of ${formatInteger(draft.takeoffPageCount || 1)}</span>
           <button class="secondary-btn compact-btn" data-action="estimate-v2-next-page" ${draft.takeoffPageCount ? "" : "disabled"}>Next Page</button>
+          <button class="secondary-btn compact-btn" data-action="toggle-estimate-v2-plan-fullscreen">${state.estimateV2PlanExpanded ? "Exit Full PDF" : "Full PDF"}</button>
         </div>
         <div class="estimate-v2-plan-active-controls">
           ${renderEstimateV2TakeoffActiveInputs(draft, activeTool)}
@@ -3198,6 +3230,7 @@ function setEstimateV2TakeoffTool(toolKey) {
   state.estimateV2RedoPoints = [];
   state.estimateV2EditingRowId = "";
   state.estimateV2DraggingPointIndex = null;
+  clearEstimateV2TakeoffHistory();
   saveEstimateV2Draft(draft);
   render();
 }
@@ -3222,6 +3255,7 @@ async function loadEstimateV2TakeoffPdf(file) {
     state.estimateV2RedoPoints = [];
     state.estimateV2EditingRowId = "";
     state.estimateV2DraggingPointIndex = null;
+    clearEstimateV2TakeoffHistory();
     const draft = collectEstimateV2DraftFromDom();
     draft.planFileName = file.name;
     draft.takeoffPage = 1;
@@ -3246,6 +3280,7 @@ async function changeEstimateV2Page(delta) {
   state.estimateV2RedoPoints = [];
   state.estimateV2EditingRowId = "";
   state.estimateV2DraggingPointIndex = null;
+  clearEstimateV2TakeoffHistory();
   await renderEstimateV2TakeoffPage(draft, nextPage);
 }
 
@@ -3295,7 +3330,7 @@ function handleEstimateV2PlanClick(event) {
   state.estimateV2ActivePoints.push(point);
   state.estimateV2RedoPoints = [];
   saveEstimateV2Draft(draft);
-  render();
+  renderPreservingEstimateV2Scroll();
 }
 
 function estimateV2PointFromCanvasEvent(event, canvasNode, draft, tool, options = {}) {
@@ -3356,7 +3391,7 @@ function handleEstimateV2PointPointerMove(event) {
   points[state.estimateV2DraggingPointIndex] = point;
   state.estimateV2ActivePoints = points;
   state.estimateV2RedoPoints = [];
-  render();
+  renderPreservingEstimateV2Scroll();
 }
 
 function handleEstimateV2PointPointerUp() {
@@ -3488,6 +3523,12 @@ function toggleEstimateV2OrthoMode() {
   toast(draft.orthoModeEnabled ? "Ortho F8 on." : "Ortho F8 off.");
 }
 
+function toggleEstimateV2PlanExpanded() {
+  state.estimateV2PlanExpanded = !state.estimateV2PlanExpanded;
+  renderPreservingEstimateV2Scroll();
+  toast(state.estimateV2PlanExpanded ? "Full PDF view on." : "Full PDF view off.");
+}
+
 function changeEstimateV2Zoom(delta) {
   const draft = collectEstimateV2DraftFromDom();
   draft.takeoffZoom = Math.round((estimateV2ZoomValue(draft) + delta) * 100) / 100;
@@ -3531,7 +3572,7 @@ function addEstimateV2PerpendicularPoint(reverse = false) {
   state.estimateV2ActivePoints.push(snapped);
   state.estimateV2RedoPoints = [];
   saveEstimateV2Draft(draft);
-  render();
+  renderPreservingEstimateV2Scroll();
   toast("Perpendicular point added.");
 }
 
@@ -3624,6 +3665,7 @@ function finishEstimateV2Takeoff() {
     quantity = points.length;
   }
   const editingRowId = state.estimateV2EditingRowId;
+  const previousRow = editingRowId ? draft.takeoffRows.find((row) => row.id === editingRowId) : null;
   const takeoffRow = normalizeEstimateV2TakeoffRow({
     id: editingRowId || cryptoId(),
     projectId: draft.selectedProjectId,
@@ -3646,8 +3688,13 @@ function finishEstimateV2Takeoff() {
   state.estimateV2RedoPoints = [];
   state.estimateV2EditingRowId = "";
   state.estimateV2DraggingPointIndex = null;
+  recordEstimateV2TakeoffHistory({
+    type: editingRowId ? "update" : "add",
+    row: takeoffRow,
+    previousRow
+  });
   saveEstimateV2Draft(draft);
-  render();
+  renderPreservingEstimateV2Scroll();
   toast(`${tool.label} takeoff ${editingRowId ? "updated" : "added"}.`);
 }
 
@@ -3709,20 +3756,100 @@ function estimateV2ConcreteCountTakeoff(tool, draft, count) {
 function undoEstimateV2Point() {
   const point = state.estimateV2ActivePoints.pop();
   if (point) state.estimateV2RedoPoints.push(point);
-  render();
+  renderPreservingEstimateV2Scroll();
 }
 
 function redoEstimateV2Point() {
   const point = state.estimateV2RedoPoints.pop();
   if (point) state.estimateV2ActivePoints.push(point);
-  render();
+  renderPreservingEstimateV2Scroll();
+}
+
+function undoEstimateV2PointOrTakeoff() {
+  if ((state.estimateV2ActivePoints || []).length) {
+    undoEstimateV2Point();
+    return;
+  }
+  undoEstimateV2GeneratedTakeoff();
+}
+
+function redoEstimateV2PointOrTakeoff() {
+  if ((state.estimateV2RedoPoints || []).length) {
+    redoEstimateV2Point();
+    return;
+  }
+  redoEstimateV2GeneratedTakeoff();
+}
+
+function recordEstimateV2TakeoffHistory(action) {
+  if (!action || !action.row) return;
+  state.estimateV2TakeoffUndoStack.push(action);
+  if (state.estimateV2TakeoffUndoStack.length > 40) state.estimateV2TakeoffUndoStack.shift();
+  state.estimateV2TakeoffRedoStack = [];
+}
+
+function clearEstimateV2TakeoffHistory() {
+  state.estimateV2TakeoffUndoStack = [];
+  state.estimateV2TakeoffRedoStack = [];
+}
+
+function undoEstimateV2GeneratedTakeoff() {
+  const draft = collectEstimateV2DraftFromDom();
+  const action = state.estimateV2TakeoffUndoStack.pop() || estimateV2FallbackUndoAction(draft);
+  if (!action) {
+    toast("No generated takeoff to undo.");
+    return;
+  }
+  applyEstimateV2TakeoffUndo(draft, action);
+  state.estimateV2TakeoffRedoStack.push(action);
+  saveEstimateV2Draft(draft);
+  renderPreservingEstimateV2Scroll();
+  toast("Generated takeoff undone.");
+}
+
+function redoEstimateV2GeneratedTakeoff() {
+  const draft = collectEstimateV2DraftFromDom();
+  const action = state.estimateV2TakeoffRedoStack.pop();
+  if (!action) {
+    toast("No generated takeoff to redo.");
+    return;
+  }
+  applyEstimateV2TakeoffRedo(draft, action);
+  state.estimateV2TakeoffUndoStack.push(action);
+  saveEstimateV2Draft(draft);
+  renderPreservingEstimateV2Scroll();
+  toast("Generated takeoff restored.");
+}
+
+function estimateV2FallbackUndoAction(draft) {
+  const currentPage = Number(draft.takeoffPage || 1);
+  const rows = estimateV2ProjectRows(draft).filter((row) => Number(row.page || 1) === currentPage);
+  const row = rows[rows.length - 1];
+  return row ? { type: "add", row, previousRow: null } : null;
+}
+
+function applyEstimateV2TakeoffUndo(draft, action) {
+  if (action.type === "update" && action.previousRow) {
+    draft.takeoffRows = draft.takeoffRows.map((row) => row.id === action.row.id ? action.previousRow : row);
+    return;
+  }
+  draft.takeoffRows = draft.takeoffRows.filter((row) => row.id !== action.row.id);
+}
+
+function applyEstimateV2TakeoffRedo(draft, action) {
+  if (action.type === "update") {
+    draft.takeoffRows = draft.takeoffRows.map((row) => row.id === action.row.id ? action.row : row);
+    return;
+  }
+  if (draft.takeoffRows.some((row) => row.id === action.row.id)) return;
+  draft.takeoffRows.push(action.row);
 }
 
 function clearEstimateV2Points() {
   state.estimateV2ActivePoints = [];
   state.estimateV2RedoPoints = [];
   state.estimateV2DraggingPointIndex = null;
-  render();
+  renderPreservingEstimateV2Scroll();
 }
 
 async function editEstimateV2Takeoff(rowId) {
@@ -3867,6 +3994,8 @@ function clearEstimateV2Draft() {
   state.estimateV2RedoPoints = [];
   state.estimateV2EditingRowId = "";
   state.estimateV2DraggingPointIndex = null;
+  state.estimateV2PlanExpanded = false;
+  clearEstimateV2TakeoffHistory();
   saveEstimateV2Draft(defaultEstimateV2Draft());
   render();
   toast("Estimate v2 cleared.");

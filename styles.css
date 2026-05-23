@@ -1449,6 +1449,32 @@ tfoot td {
     rgba(255, 255, 255, 0.045);
 }
 
+.estimate-v2-plan-shell.expanded {
+  position: fixed;
+  top: 172px;
+  right: 18px;
+  bottom: 18px;
+  left: 306px;
+  z-index: 16;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  overflow: hidden;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.45);
+}
+
+.estimate-v2-plan-shell.expanded .estimate-v2-plan-toolbar,
+.estimate-v2-plan-shell.expanded .estimate-v2-file-card,
+.estimate-v2-plan-shell.expanded .estimate-v2-page-controls {
+  flex: 0 0 auto;
+}
+
+.estimate-v2-plan-shell.expanded .estimate-v2-plan-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
 .estimate-v2-plan-toolbar {
   position: sticky;
   top: 0;
@@ -2642,6 +2668,13 @@ body[data-theme="light"] .premium-access-notice {
   .estimate-v2-plan-control-row {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .estimate-v2-plan-shell.expanded {
+    top: 148px;
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
   }
 
   .dashboard-filter select {
