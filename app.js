@@ -75,13 +75,18 @@ const LOCAL_VISION_REGIONS = [
   { key: "bottom-title", label: "Bottom Schedules / Title Block", x: 0, y: 0.66, width: 1, height: 0.34 },
   { key: "upper-legends", label: "Upper Notes / Legends", x: 0, y: 0, width: 1, height: 0.36 }
 ];
-const CONCRETE_MIX_124 = {
-  cement: 1,
-  sand: 2,
-  gravel: 4,
+const CONCRETE_MIX_DEFAULT = {
   dryVolumeFactor: 1.54,
   cementBagVolume: 0.0283
 };
+const CONCRETE_MIX_OPTIONS = [
+  { key: "1:2:4", label: "1:2:4", cement: 1, sand: 2, gravel: 4 },
+  { key: "1:1.5:3", label: "1:1.5:3", cement: 1, sand: 1.5, gravel: 3 },
+  { key: "1:2:3", label: "1:2:3", cement: 1, sand: 2, gravel: 3 },
+  { key: "1:3:6", label: "1:3:6", cement: 1, sand: 3, gravel: 6 }
+];
+const DEFAULT_CONCRETE_MIX_RATIO = "1:2:4";
+const FLOOR_SLAB_THICKNESS_OPTIONS = [0.1, 0.125, 0.15, 0.2];
 const CHB_TAKEOFF = {
   blocksPerSquareMeter: 12.5,
   defaultWastePercent: 5,
@@ -1400,6 +1405,23 @@ function renderEstimateV2TakeoffActiveInputs(draft, activeTool) {
       </div>
     `;
   }
+  if (activeTool.key === "floor-slab") {
+    return `
+      <div class="estimate-v2-concrete-inputs">
+        <label class="estimate-v2-field">
+          <span>Slab Thickness</span>
+          <select data-estimate-v2-takeoff-input data-estimate-v2-floor-slab-thickness>
+            ${FLOOR_SLAB_THICKNESS_OPTIONS.map((thickness) => `<option value="${escapeAttribute(thickness)}" ${Number(draft.floorSlabThickness) === thickness ? "selected" : ""}>${formatSwaNumber(thickness)} m</option>`).join("")}
+          </select>
+        </label>
+        <label class="estimate-v2-field">
+          <span>Waste %</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-concrete-waste type="number" min="0" step="0.01" value="${numberInputValue(draft.concreteWastePercent)}" placeholder="0">
+        </label>
+        ${renderEstimateV2ConcreteCostInputs(draft, "sq.m")}
+      </div>
+    `;
+  }
   if (activeTool.key === "column-concrete") {
     return `
       <div class="estimate-v2-concrete-inputs">
@@ -1423,10 +1445,7 @@ function renderEstimateV2TakeoffActiveInputs(draft, activeTool) {
           <span>Waste %</span>
           <input data-estimate-v2-takeoff-input data-estimate-v2-concrete-waste type="number" min="0" step="0.01" value="${numberInputValue(draft.concreteWastePercent)}" placeholder="0">
         </label>
-        <label class="estimate-v2-field">
-          <span>Cost Per cu.m</span>
-          <input data-estimate-v2-takeoff-input data-estimate-v2-current-cost type="number" min="0" step="0.01" value="${numberInputValue(draft.takeoffCostPerUnit)}" placeholder="0.00">
-        </label>
+        ${renderEstimateV2ConcreteCostInputs(draft, "cu.m")}
       </div>
     `;
   }
@@ -1465,10 +1484,7 @@ function renderEstimateV2TakeoffActiveInputs(draft, activeTool) {
           <span>Waste %</span>
           <input data-estimate-v2-takeoff-input data-estimate-v2-concrete-waste type="number" min="0" step="0.01" value="${numberInputValue(draft.concreteWastePercent)}" placeholder="0">
         </label>
-        <label class="estimate-v2-field">
-          <span>Cost Per cu.m</span>
-          <input data-estimate-v2-takeoff-input data-estimate-v2-current-cost type="number" min="0" step="0.01" value="${numberInputValue(draft.takeoffCostPerUnit)}" placeholder="0.00">
-        </label>
+        ${renderEstimateV2ConcreteCostInputs(draft, "cu.m")}
       </div>
     `;
   }
@@ -1476,6 +1492,33 @@ function renderEstimateV2TakeoffActiveInputs(draft, activeTool) {
     <label class="estimate-v2-field">
       <span>Cost Per ${escapeHtml(activeTool.unit)}</span>
       <input data-estimate-v2-takeoff-input data-estimate-v2-current-cost type="number" min="0" step="0.01" value="${numberInputValue(draft.takeoffCostPerUnit)}" placeholder="0.00">
+    </label>
+  `;
+}
+
+function renderEstimateV2ConcreteCostInputs(draft, costUnit) {
+  return `
+    <label class="estimate-v2-field">
+      <span>Concrete Ratio</span>
+      <select data-estimate-v2-takeoff-input data-estimate-v2-concrete-ratio>
+        ${CONCRETE_MIX_OPTIONS.map((mix) => `<option value="${escapeAttribute(mix.key)}" ${mix.key === draft.concreteMixRatio ? "selected" : ""}>${escapeHtml(mix.label)}</option>`).join("")}
+      </select>
+    </label>
+    <label class="estimate-v2-field">
+      <span>Cement Price / bag</span>
+      <input data-estimate-v2-takeoff-input data-estimate-v2-cement-price type="number" min="0" step="0.01" value="${numberInputValue(draft.cementPrice)}" placeholder="0.00">
+    </label>
+    <label class="estimate-v2-field">
+      <span>Sand Price / cu.m</span>
+      <input data-estimate-v2-takeoff-input data-estimate-v2-sand-price type="number" min="0" step="0.01" value="${numberInputValue(draft.sandPrice)}" placeholder="0.00">
+    </label>
+    <label class="estimate-v2-field">
+      <span>Gravel Price / cu.m</span>
+      <input data-estimate-v2-takeoff-input data-estimate-v2-gravel-price type="number" min="0" step="0.01" value="${numberInputValue(draft.gravelPrice)}" placeholder="0.00">
+    </label>
+    <label class="estimate-v2-field">
+      <span>Cost Per ${escapeHtml(costUnit)}</span>
+      <input data-estimate-v2-takeoff-input data-estimate-v2-current-cost data-estimate-v2-computed-current-cost type="number" min="0" step="0.01" value="${numberInputValue(estimateV2ComputedTakeoffCostPerUnit(draft, estimateV2TakeoffTool(draft.takeoffTool)))}" placeholder="0.00" readonly>
     </label>
   `;
 }
@@ -1686,15 +1729,20 @@ function renderEstimateV2TakeoffRow(row) {
     ? renderEstimateV2ChbDetails(normalized)
     : tool.type === "concrete-count"
       ? renderEstimateV2ConcreteDetails(normalized)
+      : tool.key === "floor-slab"
+        ? renderEstimateV2FloorSlabDetails(normalized)
     : "";
+  const computedCost = estimateV2RowHasComputedMaterialCost(normalized)
+    ? estimateV2ComputedRowCostPerUnit(normalized)
+    : normalized.costPerUnit;
   return `
     <tr data-estimate-v2-takeoff-row="${escapeAttribute(normalized.id)}" class="${state.estimateV2EditingRowId === normalized.id ? "editing-row" : ""}">
       <td><input class="estimate-input description" data-estimate-v2-takeoff-input data-field="description" value="${escapeAttribute(normalized.description)}" placeholder="Item"></td>
       <td><strong>${escapeHtml(tool.label)}</strong>${typeDetails}</td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0" ${tool.type === "chb" ? "readonly" : ""}></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="unit" value="${escapeAttribute(normalized.unit)}" placeholder="unit"></td>
-      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(normalized.costPerUnit)}" placeholder="0.00"></td>
-      <td data-estimate-v2-row-total>${formatCurrency(estimateV2TakeoffRowTotal(normalized))}</td>
+      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(computedCost)}" placeholder="0.00" ${estimateV2RowHasComputedMaterialCost(normalized) ? "readonly" : ""}></td>
+      <td data-estimate-v2-row-total>${formatCurrency(estimateV2TakeoffRowTotal({ ...normalized, costPerUnit: computedCost }))}</td>
       <td>
         <button class="secondary-btn compact-btn" data-action="edit-estimate-v2-takeoff" data-id="${escapeAttribute(normalized.id)}">Edit Shape</button>
         <button class="ghost-btn danger compact-btn" data-action="delete-estimate-v2-takeoff" data-id="${escapeAttribute(normalized.id)}">Delete</button>
@@ -1711,7 +1759,8 @@ function renderEstimateV2ChbDetails(row) {
 }
 
 function renderEstimateV2ConcreteDetails(row) {
-  const mix = concreteMixBreakdown(row.concreteVolume || row.quantity);
+  const mix = concreteMixBreakdown(row.concreteVolume || row.quantity, row.concreteMixRatio);
+  const materialCost = concreteMaterialCost(mix, row);
   const countText = `${formatInteger(row.takeoffCount)} ${row.takeoffCount === 1 ? "point" : "points"}`;
   const baseText = row.concreteKind === "footing"
     ? `${formatSwaNumber(row.footingLength)} x ${formatSwaNumber(row.footingWidth)} x ${formatSwaNumber(row.footingThickness)} m footing`
@@ -1722,9 +1771,26 @@ function renderEstimateV2ConcreteDetails(row) {
   return `
     <small>${escapeHtml(row.typeMark || "-")} | ${countText} | ${baseText}</small>
     ${pedestalText}
-    <small>Concrete: ${formatSwaNumber(row.concreteVolume)} cu.m${row.concreteWastePercent ? ` incl. ${formatSwaNumber(row.concreteWastePercent)}% waste` : ""}</small>
-    <small>Cement: ${formatInteger(mix.cementBags)} bags | Sand: ${formatSwaNumber(mix.sandVolume)} cu.m | Gravel: ${formatSwaNumber(mix.gravelVolume)} cu.m</small>
+    <small>Concrete: ${formatSwaNumber(row.concreteVolume)} cu.m${row.concreteWastePercent ? ` incl. ${formatSwaNumber(row.concreteWastePercent)}% waste` : ""} | Ratio ${escapeHtml(row.concreteMixRatio || DEFAULT_CONCRETE_MIX_RATIO)}</small>
+    <small>Cement: ${formatInteger(mix.cementBags)} bags | Sand: ${formatSwaNumber(mix.sandVolume)} cu.m | Gravel: ${formatSwaNumber(mix.gravelVolume)} cu.m${materialCost ? ` | Materials ${formatCurrency(materialCost)}` : ""}</small>
+    ${renderEstimateV2ConcretePriceDetails(row)}
   `;
+}
+
+function renderEstimateV2FloorSlabDetails(row) {
+  const mix = concreteMixBreakdown(row.concreteVolume, row.concreteMixRatio);
+  const materialCost = concreteMaterialCost(mix, row);
+  return `
+    <small>${formatSwaNumber(row.quantity)} sq.m x ${formatSwaNumber(row.floorSlabThickness)} m thick</small>
+    <small>Concrete: ${formatSwaNumber(row.concreteVolume)} cu.m${row.concreteWastePercent ? ` incl. ${formatSwaNumber(row.concreteWastePercent)}% waste` : ""} | Ratio ${escapeHtml(row.concreteMixRatio || DEFAULT_CONCRETE_MIX_RATIO)}</small>
+    <small>Cement: ${formatInteger(mix.cementBags)} bags | Sand: ${formatSwaNumber(mix.sandVolume)} cu.m | Gravel: ${formatSwaNumber(mix.gravelVolume)} cu.m${materialCost ? ` | Materials ${formatCurrency(materialCost)}` : ""}</small>
+    ${renderEstimateV2ConcretePriceDetails(row)}
+  `;
+}
+
+function renderEstimateV2ConcretePriceDetails(row) {
+  if (!row.cementPrice && !row.sandPrice && !row.gravelPrice) return "";
+  return `<small>Prices: Cement ${formatCurrency(row.cementPrice)}/bag | Sand ${formatCurrency(row.sandPrice)}/cu.m | Gravel ${formatCurrency(row.gravelPrice)}/cu.m</small>`;
 }
 
 function renderEstimateV2Metric(label, value) {
@@ -1779,13 +1845,13 @@ function renderEstimateV2StructuralSummaryContent(draft) {
       <div class="estimate-v2-structural-grid">
         ${renderEstimateV2StructuralCard("Total Concrete Volume", `${formatSwaNumber(summary.concreteVolume)} cu.m`, "Sum of concrete, footing, column, beam, slab, and concrete wall rows with cu.m quantities.")}
         ${renderEstimateV2StructuralCard("Cement", `${formatSwaNumber(summary.cementVolume)} cu.m`, `${formatInteger(summary.cementBags)} bags approx. | 1 part`)}
-        ${renderEstimateV2StructuralCard("Fine Aggregate / Sand", `${formatSwaNumber(summary.sandVolume)} cu.m`, "2 parts of the 1:2:4 mix")}
-        ${renderEstimateV2StructuralCard("Coarse Aggregate / Gravel", `${formatSwaNumber(summary.gravelVolume)} cu.m`, "4 parts of the 1:2:4 mix")}
+        ${renderEstimateV2StructuralCard("Fine Aggregate / Sand", `${formatSwaNumber(summary.sandVolume)} cu.m`, "Default 1:2:4 mix")}
+        ${renderEstimateV2StructuralCard("Coarse Aggregate / Gravel", `${formatSwaNumber(summary.gravelVolume)} cu.m`, "Default 1:2:4 mix")}
         ${renderEstimateV2StructuralCard("CHB Wall Area", `${formatSwaNumber(summary.chbArea)} sq.m`, summary.chbAreaNote)}
         ${renderEstimateV2StructuralCard("CHB Count", `${formatInteger(summary.chbPiecesWithWaste)} pcs`, `${formatInteger(summary.chbPieces)} pcs + 5% allowance`)}
       </div>
       <p class="estimate-v2-structural-note">
-        Concrete mix uses 1:2:4 ratio and a 1.54 dry-volume factor. CHB count uses 12.5 blocks per sq.m; enter building elevation and wall length when the drawing does not provide wall area yet.
+        Concrete takeoffs can now use selectable ratios; this summary uses the default 1:2:4 ratio and a 1.54 dry-volume factor. CHB count uses 12.5 blocks per sq.m; enter building elevation and wall length when the drawing does not provide wall area yet.
       </p>
   `;
 }
@@ -1923,7 +1989,40 @@ function estimateV2TakeoffTotal(rows) {
 }
 
 function estimateV2TakeoffRowTotal(row) {
-  return (Number(row.quantity) || 0) * (Number(row.costPerUnit) || 0);
+  const costPerUnit = estimateV2RowHasComputedMaterialCost(row)
+    ? estimateV2ComputedRowCostPerUnit(row)
+    : Math.max(0, Number(row && row.costPerUnit) || 0);
+  return (Number(row && row.quantity) || 0) * costPerUnit;
+}
+
+function estimateV2RowHasComputedMaterialCost(row) {
+  const tool = estimateV2TakeoffTool(row && row.tool);
+  return tool.type === "concrete-count" || tool.key === "floor-slab";
+}
+
+function estimateV2ComputedRowCostPerUnit(row) {
+  if (!estimateV2RowHasComputedMaterialCost(row)) return Math.max(0, Number(row && row.costPerUnit) || 0);
+  const quantity = Math.max(0, Number(row && row.quantity) || 0);
+  const volume = Math.max(0, Number(row && row.concreteVolume) || quantity);
+  const mix = concreteMixBreakdown(volume, row && row.concreteMixRatio);
+  const materialCost = concreteMaterialCost(mix, row);
+  const tool = estimateV2TakeoffTool(row && row.tool);
+  const divisor = tool.key === "floor-slab" ? quantity : volume;
+  return divisor > 0 ? materialCost / divisor : 0;
+}
+
+function estimateV2ComputedTakeoffCostPerUnit(draft, tool) {
+  const activeTool = tool || estimateV2TakeoffTool(draft && draft.takeoffTool);
+  if (activeTool.type !== "concrete-count" && activeTool.key !== "floor-slab") {
+    return Math.max(0, Number(draft && draft.takeoffCostPerUnit) || 0);
+  }
+  const wasteFactor = 1 + (Math.max(0, Number(draft && draft.concreteWastePercent) || 0) / 100);
+  const referenceVolume = activeTool.key === "floor-slab"
+    ? Math.max(0, Number(draft && draft.floorSlabThickness) || FLOOR_SLAB_THICKNESS_OPTIONS[0]) * wasteFactor
+    : wasteFactor;
+  const mix = concreteMixBreakdown(referenceVolume, draft && draft.concreteMixRatio);
+  const materialCost = concreteMaterialCost(mix, draft);
+  return activeTool.key === "floor-slab" ? materialCost : materialCost / Math.max(wasteFactor, 1);
 }
 
 function estimateV2ZoomValue(draft) {
@@ -2066,20 +2165,37 @@ function updateEstimateV2StructuralSummary() {
   summaryNode.innerHTML = renderEstimateV2StructuralSummaryContent(collectEstimateV2DraftFromDom());
 }
 
-function concreteMixBreakdown(concreteVolume) {
+function concreteMixOption(mixKey) {
+  return CONCRETE_MIX_OPTIONS.find((mix) => mix.key === mixKey) || CONCRETE_MIX_OPTIONS[0];
+}
+
+function concreteMixBreakdown(concreteVolume, mixKey = DEFAULT_CONCRETE_MIX_RATIO) {
   const wetVolume = Math.max(0, Number(concreteVolume) || 0);
-  const dryVolume = wetVolume * CONCRETE_MIX_124.dryVolumeFactor;
-  const totalParts = CONCRETE_MIX_124.cement + CONCRETE_MIX_124.sand + CONCRETE_MIX_124.gravel;
-  const cementVolume = dryVolume * CONCRETE_MIX_124.cement / totalParts;
-  const sandVolume = dryVolume * CONCRETE_MIX_124.sand / totalParts;
-  const gravelVolume = dryVolume * CONCRETE_MIX_124.gravel / totalParts;
+  const mix = concreteMixOption(mixKey);
+  const dryVolume = wetVolume * CONCRETE_MIX_DEFAULT.dryVolumeFactor;
+  const totalParts = mix.cement + mix.sand + mix.gravel;
+  const cementVolume = dryVolume * mix.cement / totalParts;
+  const sandVolume = dryVolume * mix.sand / totalParts;
+  const gravelVolume = dryVolume * mix.gravel / totalParts;
   return {
+    mixKey: mix.key,
     dryVolume,
     cementVolume,
     sandVolume,
     gravelVolume,
-    cementBags: cementVolume > 0 ? Math.ceil(cementVolume / CONCRETE_MIX_124.cementBagVolume) : 0
+    cementBagsExact: cementVolume > 0 ? cementVolume / CONCRETE_MIX_DEFAULT.cementBagVolume : 0,
+    cementBags: cementVolume > 0 ? Math.ceil(cementVolume / CONCRETE_MIX_DEFAULT.cementBagVolume) : 0
   };
+}
+
+function concreteMaterialCost(mix, source) {
+  const cementPrice = Math.max(0, Number(source && source.cementPrice) || 0);
+  const sandPrice = Math.max(0, Number(source && source.sandPrice) || 0);
+  const gravelPrice = Math.max(0, Number(source && source.gravelPrice) || 0);
+  const cementBagsForCost = mix && mix.cementBagsExact !== undefined ? mix.cementBagsExact : mix && mix.cementBags;
+  return ((Number(cementBagsForCost) || 0) * cementPrice)
+    + ((Number(mix && mix.sandVolume) || 0) * sandPrice)
+    + ((Number(mix && mix.gravelVolume) || 0) * gravelPrice);
 }
 
 function estimateChbTakeoff(rows, draft) {
@@ -3719,6 +3835,7 @@ function finishEstimateV2Takeoff() {
   let quantity = 0;
   let description = draft.takeoffItemName || tool.defaultName;
   let unit = tool.unit;
+  let costPerUnit = estimateV2ComputedTakeoffCostPerUnit(draft, tool);
   const takeoffDetails = {};
   if (tool.type === "area") {
     if (points.length < 3) {
@@ -3726,18 +3843,43 @@ function finishEstimateV2Takeoff() {
       return;
     }
     quantity = estimateV2PolygonPixels(points) * draft.metersPerPixel * draft.metersPerPixel;
+    if (tool.key === "floor-slab") {
+      const floorSlabThickness = Math.max(0, Number(draft.floorSlabThickness) || FLOOR_SLAB_THICKNESS_OPTIONS[0]);
+      const concreteWastePercent = Math.max(0, Number(draft.concreteWastePercent) || 0);
+      const concreteVolumeBase = quantity * floorSlabThickness;
+      Object.assign(takeoffDetails, {
+        concreteKind: "floor-slab",
+        floorSlabThickness,
+        concreteMixRatio: draft.concreteMixRatio,
+        cementPrice: draft.cementPrice,
+        sandPrice: draft.sandPrice,
+        gravelPrice: draft.gravelPrice,
+        concreteWastePercent,
+        concreteVolumeBase,
+        concreteVolume: concreteVolumeBase * (1 + concreteWastePercent / 100)
+      });
+      costPerUnit = estimateV2ComputedRowCostPerUnit({
+        tool: tool.key,
+        quantity,
+        ...takeoffDetails
+      });
+    } else {
+      costPerUnit = draft.takeoffCostPerUnit;
+    }
   } else if (tool.type === "linear") {
     if (points.length < 2) {
       toast("Length takeoff needs at least 2 points.");
       return;
     }
     quantity = estimateV2PolylinePixels(points) * draft.metersPerPixel;
+    costPerUnit = draft.takeoffCostPerUnit;
   } else if (tool.type === "curve") {
     if (points.length < 2) {
       toast("Curve takeoff needs at least 2 points.");
       return;
     }
     quantity = estimateV2CurvePixels(points) * draft.metersPerPixel;
+    costPerUnit = draft.takeoffCostPerUnit;
   } else if (tool.type === "chb") {
     if (points.length < 2) {
       toast("CHB wall takeoff needs at least 2 points.");
@@ -3763,6 +3905,7 @@ function finishEstimateV2Takeoff() {
       chbBlocksPerSquareMeter: blocksPerSquareMeter,
       chbSize: draft.chbSize
     });
+    costPerUnit = draft.takeoffCostPerUnit;
   } else if (tool.type === "concrete-count") {
     const concrete = estimateV2ConcreteCountTakeoff(tool, draft, points.length);
     if (!concrete) return;
@@ -3770,8 +3913,14 @@ function finishEstimateV2Takeoff() {
     unit = "cu.m";
     description = `${description} ${concrete.typeMark}`.trim();
     Object.assign(takeoffDetails, concrete);
+    costPerUnit = estimateV2ComputedRowCostPerUnit({
+      tool: tool.key,
+      quantity,
+      ...takeoffDetails
+    });
   } else if (tool.type === "count") {
     quantity = points.length;
+    costPerUnit = draft.takeoffCostPerUnit;
   }
   const editingRowId = state.estimateV2EditingRowId;
   const previousRow = editingRowId ? draft.takeoffRows.find((row) => row.id === editingRowId) : null;
@@ -3782,7 +3931,7 @@ function finishEstimateV2Takeoff() {
     tool: tool.key,
     quantity,
     unit,
-    costPerUnit: draft.takeoffCostPerUnit,
+    costPerUnit,
     points,
     page: draft.takeoffPage,
     color: tool.color,
@@ -3826,6 +3975,10 @@ function estimateV2ConcreteCountTakeoff(tool, draft, count) {
       columnWidth,
       columnDepth,
       columnHeight,
+      concreteMixRatio: draft.concreteMixRatio,
+      cementPrice: draft.cementPrice,
+      sandPrice: draft.sandPrice,
+      gravelPrice: draft.gravelPrice,
       concreteWastePercent,
       concreteVolumeBase,
       concreteVolume: concreteVolumeBase * (1 + concreteWastePercent / 100)
@@ -3856,6 +4009,10 @@ function estimateV2ConcreteCountTakeoff(tool, draft, count) {
     pedestalDepth,
     pedestalHeight,
     pedestalVolume: pedestalVolumeEach * takeoffCount,
+    concreteMixRatio: draft.concreteMixRatio,
+    cementPrice: draft.cementPrice,
+    sandPrice: draft.sandPrice,
+    gravelPrice: draft.gravelPrice,
     concreteWastePercent,
     concreteVolumeBase,
     concreteVolume: concreteVolumeBase * (1 + concreteWastePercent / 100)
@@ -3972,6 +4129,12 @@ async function editEstimateV2Takeoff(rowId) {
   draft.takeoffItemName = row.description || estimateV2TakeoffTool(row.tool).defaultName;
   draft.takeoffCostPerUnit = row.costPerUnit || 0;
   draft.takeoffPage = nextPage;
+  draft.concreteMixRatio = row.concreteMixRatio || draft.concreteMixRatio;
+  draft.cementPrice = row.cementPrice || draft.cementPrice;
+  draft.sandPrice = row.sandPrice || draft.sandPrice;
+  draft.gravelPrice = row.gravelPrice || draft.gravelPrice;
+  if (row.concreteWastePercent || row.concreteWastePercent === 0) draft.concreteWastePercent = row.concreteWastePercent;
+  if (row.floorSlabThickness) draft.floorSlabThickness = row.floorSlabThickness;
   if (row.chbWallHeight) draft.chbWallHeight = row.chbWallHeight;
   if (row.chbWastePercent || row.chbWastePercent === 0) draft.chbWastePercent = row.chbWastePercent;
   if (row.chbBlocksPerSquareMeter) draft.chbBlocksPerSquareMeter = row.chbBlocksPerSquareMeter;
@@ -3991,6 +4154,7 @@ async function editEstimateV2Takeoff(rowId) {
     draft.pedestalDepth = row.pedestalDepth || 0;
     draft.pedestalHeight = row.pedestalHeight || 0;
   }
+  state.estimateV2ToolGroup = estimateV2GroupForTool(row.tool, state.estimateV2ToolGroup);
   state.estimateV2EditingRowId = row.id;
   state.estimateV2ActivePoints = Array.isArray(row.points) ? row.points.map(normalizePoint).filter(Boolean) : [];
   state.estimateV2RedoPoints = [];
@@ -4030,15 +4194,20 @@ function deleteEstimateV2Takeoff(rowId) {
 function updateEstimateV2TakeoffTotals() {
   const draft = collectEstimateV2DraftFromDom();
   const rows = estimateV2ProjectRows(draft);
+  const activeTool = estimateV2TakeoffTool(draft.takeoffTool);
+  const activeCostNode = document.querySelector("[data-estimate-v2-computed-current-cost]");
+  if (activeCostNode) activeCostNode.value = numberInputValue(estimateV2ComputedTakeoffCostPerUnit(draft, activeTool));
   document.querySelectorAll("[data-estimate-v2-takeoff-row]").forEach((rowNode) => {
     const row = rows.find((item) => item.id === rowNode.dataset.estimateV2TakeoffRow);
     const totalNode = rowNode.querySelector("[data-estimate-v2-row-total]");
     const quantityInput = rowNode.querySelector('[data-field="quantity"]');
+    const costInput = rowNode.querySelector('[data-field="costPerUnit"]');
     const heightNode = rowNode.querySelector("[data-estimate-v2-chb-height-display]");
     const blocksNode = rowNode.querySelector("[data-estimate-v2-chb-blocks-display]");
     const wasteNode = rowNode.querySelector("[data-estimate-v2-chb-waste-display]");
     const wallAreaNode = rowNode.querySelector("[data-estimate-v2-chb-wall-area-display]");
     if (row && estimateV2TakeoffTool(row.tool).type === "chb" && quantityInput) quantityInput.value = numberInputValue(row.quantity);
+    if (row && costInput && estimateV2RowHasComputedMaterialCost(row)) costInput.value = numberInputValue(row.costPerUnit);
     if (row && heightNode) heightNode.textContent = formatSwaNumber(row.chbWallHeight);
     if (row && blocksNode) blocksNode.textContent = formatSwaNumber(row.chbBlocksPerSquareMeter);
     if (row && wasteNode) wasteNode.textContent = formatSwaNumber(row.chbWastePercent);
@@ -4228,6 +4397,11 @@ function collectEstimateV2DraftFromDom() {
   const pedestalDepthInput = document.querySelector("[data-estimate-v2-pedestal-depth]");
   const pedestalHeightInput = document.querySelector("[data-estimate-v2-pedestal-height]");
   const concreteWasteInput = document.querySelector("[data-estimate-v2-concrete-waste]");
+  const concreteRatioInput = document.querySelector("[data-estimate-v2-concrete-ratio]");
+  const cementPriceInput = document.querySelector("[data-estimate-v2-cement-price]");
+  const sandPriceInput = document.querySelector("[data-estimate-v2-sand-price]");
+  const gravelPriceInput = document.querySelector("[data-estimate-v2-gravel-price]");
+  const floorSlabThicknessInput = document.querySelector("[data-estimate-v2-floor-slab-thickness]");
   const orthoModeInput = document.querySelector("[data-estimate-v2-ortho]");
   const objectSnapInput = document.querySelector("[data-estimate-v2-object-snap]");
   const snapGridInput = document.querySelector("[data-estimate-v2-snap-grid]");
@@ -4238,7 +4412,7 @@ function collectEstimateV2DraftFromDom() {
   const nextChbWallHeight = chbHeightInput ? chbHeightInput.value : current.chbWallHeight;
   const nextChbWastePercent = chbWasteInput ? chbWasteInput.value : current.chbWastePercent;
   const nextChbBlocksPerSquareMeter = chbBlocksInput ? chbBlocksInput.value : current.chbBlocksPerSquareMeter;
-  return normalizeEstimateV2Draft({
+  const draft = normalizeEstimateV2Draft({
     ...current,
     selectedProjectId: projectInput ? projectInput.value : current.selectedProjectId,
     planType: planTypeInput ? planTypeInput.value : current.planType,
@@ -4261,6 +4435,11 @@ function collectEstimateV2DraftFromDom() {
     pedestalDepth: pedestalDepthInput ? pedestalDepthInput.value : current.pedestalDepth,
     pedestalHeight: pedestalHeightInput ? pedestalHeightInput.value : current.pedestalHeight,
     concreteWastePercent: concreteWasteInput ? concreteWasteInput.value : current.concreteWastePercent,
+    concreteMixRatio: concreteRatioInput ? concreteRatioInput.value : current.concreteMixRatio,
+    cementPrice: cementPriceInput ? cementPriceInput.value : current.cementPrice,
+    sandPrice: sandPriceInput ? sandPriceInput.value : current.sandPrice,
+    gravelPrice: gravelPriceInput ? gravelPriceInput.value : current.gravelPrice,
+    floorSlabThickness: floorSlabThicknessInput ? floorSlabThicknessInput.value : current.floorSlabThickness,
     orthoModeEnabled: orthoModeInput ? orthoModeInput.checked : current.orthoModeEnabled,
     objectSnapEnabled: objectSnapInput ? objectSnapInput.checked : current.objectSnapEnabled,
     snapGridEnabled: snapGridInput ? snapGridInput.checked : current.snapGridEnabled,
@@ -4279,6 +4458,8 @@ function collectEstimateV2DraftFromDom() {
     }),
     materials: [...document.querySelectorAll("[data-estimate-v2-row]")].map(readEstimateV2RowFromDom)
   });
+  draft.takeoffCostPerUnit = estimateV2ComputedTakeoffCostPerUnit(draft, estimateV2TakeoffTool(draft.takeoffTool));
+  return draft;
 }
 
 function collectEstimateV2TakeoffRowsFromDom(fallbackRows = [], activeSettings = {}) {
@@ -4304,15 +4485,37 @@ function collectEstimateV2TakeoffRowsFromDom(fallbackRows = [], activeSettings =
         chbWastePercent
       });
     }
+    if (tool.key === "floor-slab") {
+      const floorSlabThickness = Math.max(0, Number(previous.floorSlabThickness) || FLOOR_SLAB_THICKNESS_OPTIONS[0]);
+      const concreteWastePercent = Math.max(0, Number(previous.concreteWastePercent) || 0);
+      const concreteVolumeBase = quantity * floorSlabThickness;
+      Object.assign(takeoffDetails, {
+        concreteVolumeBase,
+        concreteVolume: concreteVolumeBase * (1 + concreteWastePercent / 100)
+      });
+    }
+    if (tool.type === "concrete-count") {
+      Object.assign(takeoffDetails, {
+        concreteVolume: quantity
+      });
+    }
+    const computedRow = normalizeEstimateV2TakeoffRow({
+      ...previous,
+      ...takeoffDetails,
+      quantity
+    });
+    const nextCostPerUnit = estimateV2RowHasComputedMaterialCost(computedRow)
+      ? estimateV2ComputedRowCostPerUnit(computedRow)
+      : getRowInputNumber(rowNode, "costPerUnit");
     return normalizeEstimateV2TakeoffRow({
       ...previous,
       ...takeoffDetails,
       id: rowNode.dataset.estimateV2TakeoffRow || cryptoId(),
       description: getRowInputValue(rowNode, "description"),
       quantity,
-      concreteVolume: tool.type === "concrete-count" ? quantity : previous.concreteVolume,
+      concreteVolume: takeoffDetails.concreteVolume ?? previous.concreteVolume,
       unit: getRowInputValue(rowNode, "unit"),
-      costPerUnit: getRowInputNumber(rowNode, "costPerUnit")
+      costPerUnit: nextCostPerUnit
     });
   });
   const updatedIds = new Set(updatedRows.map((row) => row.id));
@@ -5056,6 +5259,11 @@ function defaultEstimateV2Draft() {
     pedestalDepth: 0,
     pedestalHeight: 0,
     concreteWastePercent: 0,
+    concreteMixRatio: DEFAULT_CONCRETE_MIX_RATIO,
+    cementPrice: 0,
+    sandPrice: 0,
+    gravelPrice: 0,
+    floorSlabThickness: FLOOR_SLAB_THICKNESS_OPTIONS[0],
     planFileName: "",
     takeoffPage: 1,
     takeoffPageCount: 0,
@@ -5096,6 +5304,7 @@ function normalizeEstimateV2Draft(draft) {
   const chbWallHeight = Number(source.chbWallHeight);
   const chbWastePercent = Number(source.chbWastePercent);
   const concreteWastePercent = Number(source.concreteWastePercent);
+  const floorSlabThickness = Number(source.floorSlabThickness);
   return {
     selectedProjectId: String(source.selectedProjectId || "").trim(),
     planType: PLAN_TYPES.includes(source.planType) ? source.planType : PLAN_TYPES[0],
@@ -5118,6 +5327,11 @@ function normalizeEstimateV2Draft(draft) {
     pedestalDepth: Math.max(0, Number(source.pedestalDepth) || 0),
     pedestalHeight: Math.max(0, Number(source.pedestalHeight) || 0),
     concreteWastePercent: Number.isFinite(concreteWastePercent) ? Math.max(0, concreteWastePercent) : 0,
+    concreteMixRatio: concreteMixOption(source.concreteMixRatio).key,
+    cementPrice: Math.max(0, Number(source.cementPrice) || 0),
+    sandPrice: Math.max(0, Number(source.sandPrice) || 0),
+    gravelPrice: Math.max(0, Number(source.gravelPrice) || 0),
+    floorSlabThickness: FLOOR_SLAB_THICKNESS_OPTIONS.includes(floorSlabThickness) ? floorSlabThickness : FLOOR_SLAB_THICKNESS_OPTIONS[0],
     planFileName: String(source.planFileName || source.fileName || "").trim(),
     takeoffPage: Math.max(1, Number(source.takeoffPage) || 1),
     takeoffPageCount: Math.max(0, Number(source.takeoffPageCount) || 0),
@@ -5204,7 +5418,12 @@ function normalizeEstimateV2TakeoffRow(row) {
     takeoffCount: Math.max(0, Number(row && row.takeoffCount) || 0),
     concreteVolumeBase: Math.max(0, Number(row && row.concreteVolumeBase) || concreteVolume),
     concreteVolume,
+    concreteMixRatio: concreteMixOption(row && row.concreteMixRatio).key,
+    cementPrice: Math.max(0, Number(row && row.cementPrice) || 0),
+    sandPrice: Math.max(0, Number(row && row.sandPrice) || 0),
+    gravelPrice: Math.max(0, Number(row && row.gravelPrice) || 0),
     concreteWastePercent: Math.max(0, Number(row && row.concreteWastePercent) || 0),
+    floorSlabThickness: FLOOR_SLAB_THICKNESS_OPTIONS.includes(Number(row && row.floorSlabThickness)) ? Number(row && row.floorSlabThickness) : FLOOR_SLAB_THICKNESS_OPTIONS[0],
     columnWidth: Math.max(0, Number(row && row.columnWidth) || 0),
     columnDepth: Math.max(0, Number(row && row.columnDepth) || 0),
     columnHeight: Math.max(0, Number(row && row.columnHeight) || 0),
