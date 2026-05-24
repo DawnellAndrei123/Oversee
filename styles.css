@@ -1359,6 +1359,35 @@ tfoot td {
   gap: 8px;
 }
 
+.estimate-v2-tool-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.estimate-v2-tool-group.active-group {
+  color: #07111a;
+  background: linear-gradient(135deg, var(--cyan), #7bffcf);
+  border-color: transparent;
+  font-weight: 900;
+}
+
+.estimate-v2-tool-members {
+  align-items: center;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.estimate-v2-group-title {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .estimate-v2-drawing-controls {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));

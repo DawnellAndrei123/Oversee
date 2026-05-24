@@ -34,8 +34,9 @@ const PLAN_TYPES = ["Architectural", "Structural", "Plumbing", "Electrical", "Me
 const DRAWING_SCALES = ["1:20", "1:25", "1:50", "1:75", "1:100", "1:150", "1:200", "Custom"];
 const ESTIMATE_V2_TAKEOFF_TOOLS = [
   { key: "calibrate", label: "Calibrate", type: "calibrate", unit: "m", defaultName: "Scale Reference", color: "#28f4ff" },
-  { key: "tile-area", label: "Tiles / Floor", type: "area", unit: "sq.m", defaultName: "Floor Tiles", color: "#22c55e" },
-  { key: "wall-area", label: "Wall Area", type: "area", unit: "sq.m", defaultName: "Wall Finish", color: "#f59e0b" },
+  { key: "tile-area", label: "Tiles", type: "area", unit: "sq.m", defaultName: "Floor Tiles", color: "#22c55e" },
+  { key: "floor-slab", label: "Floor Slab", type: "area", unit: "sq.m", defaultName: "Floor Slab", color: "#f59e0b" },
+  { key: "wall-area", label: "Wall Area", type: "area", unit: "sq.m", defaultName: "Wall Finish", color: "#f59e0b", hidden: true },
   { key: "chb-wall", label: "CHB Wall", type: "chb", unit: "pcs", defaultName: "Concrete Hollow Block", color: "#14b8a6" },
   { key: "column-concrete", label: "Column", type: "concrete-count", unit: "cu.m", defaultName: "Column Concrete", color: "#06b6d4" },
   { key: "footing-concrete", label: "Footing", type: "concrete-count", unit: "cu.m", defaultName: "Column Footing Concrete", color: "#8b5cf6" },
@@ -44,6 +45,14 @@ const ESTIMATE_V2_TAKEOFF_TOOLS = [
   { key: "curve-line", label: "Curve Line", type: "curve", unit: "lm", defaultName: "Curved Line", color: "#ec4899" },
   { key: "door-count", label: "Doors", type: "count", unit: "pcs", defaultName: "Door", color: "#fb7185" },
   { key: "window-count", label: "Windows", type: "count", unit: "pcs", defaultName: "Window", color: "#f97316" }
+];
+const ESTIMATE_V2_TAKEOFF_GROUPS = [
+  { key: "setup", label: "Setup", tools: ["calibrate"] },
+  { key: "architectural", label: "Architectural", tools: ["door-count", "window-count", "curve-line", "tile-area"] },
+  { key: "structural", label: "Structural", tools: ["column-concrete", "footing-concrete", "floor-slab"] },
+  { key: "masonry", label: "Masonry", tools: ["tile-area", "chb-wall"] },
+  { key: "plumbing", label: "Plumbing", tools: ["pipe-length"] },
+  { key: "electrical", label: "Electrical", tools: ["wire-length"] }
 ];
 const CHB_SIZE_OPTIONS = ['4" CHB', '6" CHB', '8" CHB'];
 const SNAP_GRID_TOOL_TYPES = new Set(["area", "linear", "curve", "chb"]);
@@ -176,6 +185,7 @@ const state = {
   estimateV2TakeoffUndoStack: [],
   estimateV2TakeoffRedoStack: [],
   estimateV2PlanExpanded: false,
+  estimateV2ToolGroup: "setup",
   cloudSyncApplying: false,
   cloudSyncTimer: null,
   cloudSyncLoaded: false,
@@ -260,6 +270,7 @@ document.addEventListener("click", (event) => {
     "save-estimate-v2-template": saveEstimateV2Template,
     "clear-estimate-v2": clearEstimateV2Draft,
     "delete-estimate-v2-row": () => deleteEstimateV2Row(id),
+    "set-estimate-v2-tool-group": () => setEstimateV2TakeoffGroup(target.dataset.group),
     "set-estimate-v2-tool": () => setEstimateV2TakeoffTool(target.dataset.tool),
     "estimate-v2-plan-click": () => handleEstimateV2PlanClick(event),
     "finish-estimate-v2-takeoff": finishEstimateV2Takeoff,
@@ -1257,11 +1268,7 @@ function renderEstimateV2PlanToolbar(draft, activeTool) {
           <input data-estimate-v2-takeoff-input data-estimate-v2-current-name value="${escapeAttribute(draft.takeoffItemName || activeTool.defaultName)}" placeholder="Material or scope">
         </label>
       </div>
-      <div class="estimate-v2-tool-strip">
-        ${ESTIMATE_V2_TAKEOFF_TOOLS.map((tool) => `
-          <button class="secondary-btn compact-btn ${tool.key === activeTool.key ? "active-tool" : ""}" data-action="set-estimate-v2-tool" data-tool="${escapeAttribute(tool.key)}">${escapeHtml(tool.label)}</button>
-        `).join("")}
-      </div>
+      ${renderEstimateV2ToolGroups(draft, activeTool)}
       ${renderEstimateV2LayerControls(draft)}
       <div class="estimate-v2-plan-control-row">
         ${renderEstimateV2DrawingControls(draft, activeTool)}
@@ -1275,6 +1282,25 @@ function renderEstimateV2PlanToolbar(draft, activeTool) {
           <button class="ghost-btn" data-action="clear-estimate-v2-points">Clear Points</button>
         </div>
       </div>
+    </div>
+  `;
+}
+
+function renderEstimateV2ToolGroups(draft, activeTool) {
+  const activeGroup = estimateV2ActiveToolGroup(draft);
+  const group = estimateV2ToolGroup(activeGroup);
+  const memberTools = group.tools.map(estimateV2TakeoffTool).filter((tool) => !tool.hidden);
+  return `
+    <div class="estimate-v2-tool-groups" aria-label="Takeoff groups">
+      ${ESTIMATE_V2_TAKEOFF_GROUPS.map((toolGroup) => `
+        <button class="secondary-btn compact-btn estimate-v2-tool-group ${toolGroup.key === activeGroup ? "active-group" : ""}" data-action="set-estimate-v2-tool-group" data-group="${escapeAttribute(toolGroup.key)}">${escapeHtml(toolGroup.label)}</button>
+      `).join("")}
+    </div>
+    <div class="estimate-v2-tool-strip estimate-v2-tool-members" aria-label="${escapeAttribute(group.label)} tools">
+      <span class="estimate-v2-group-title">${escapeHtml(group.label)} Tools</span>
+      ${memberTools.map((tool) => `
+        <button class="secondary-btn compact-btn ${tool.key === activeTool.key ? "active-tool" : ""}" data-action="set-estimate-v2-tool" data-tool="${escapeAttribute(tool.key)}">${escapeHtml(tool.label)}</button>
+      `).join("")}
     </div>
   `;
 }
@@ -1838,8 +1864,27 @@ function estimateV2TakeoffTool(toolKey) {
   return ESTIMATE_V2_TAKEOFF_TOOLS.find((tool) => tool.key === toolKey) || ESTIMATE_V2_TAKEOFF_TOOLS[0];
 }
 
+function visibleEstimateV2TakeoffTools() {
+  return ESTIMATE_V2_TAKEOFF_TOOLS.filter((tool) => !tool.hidden);
+}
+
+function estimateV2ToolGroup(groupKey) {
+  return ESTIMATE_V2_TAKEOFF_GROUPS.find((group) => group.key === groupKey) || ESTIMATE_V2_TAKEOFF_GROUPS[0];
+}
+
+function estimateV2GroupForTool(toolKey, preferredGroupKey = "") {
+  const preferredGroup = estimateV2ToolGroup(preferredGroupKey);
+  if (preferredGroup.tools.includes(toolKey)) return preferredGroup.key;
+  const matchedGroup = ESTIMATE_V2_TAKEOFF_GROUPS.find((group) => group.tools.includes(toolKey));
+  return matchedGroup ? matchedGroup.key : ESTIMATE_V2_TAKEOFF_GROUPS[0].key;
+}
+
+function estimateV2ActiveToolGroup(draft) {
+  return estimateV2GroupForTool(draft.takeoffTool, state.estimateV2ToolGroup);
+}
+
 function estimateV2LayerTools() {
-  return ESTIMATE_V2_TAKEOFF_TOOLS.filter((tool) => tool.type !== "calibrate");
+  return visibleEstimateV2TakeoffTools().filter((tool) => tool.type !== "calibrate");
 }
 
 function defaultEstimateV2Layers() {
@@ -3263,16 +3308,39 @@ function updateEstimateV2Scale(scale) {
 
 function setEstimateV2TakeoffTool(toolKey) {
   const tool = estimateV2TakeoffTool(toolKey);
+  if (tool.hidden) return;
   const draft = collectEstimateV2DraftFromDom();
   draft.takeoffTool = tool.key;
   draft.takeoffItemName = tool.defaultName;
   if (tool.type === "calibrate") draft.takeoffCostPerUnit = 0;
+  state.estimateV2ToolGroup = estimateV2GroupForTool(tool.key, state.estimateV2ToolGroup);
   state.estimateV2ActivePoints = [];
   state.estimateV2RedoPoints = [];
   state.estimateV2EditingRowId = "";
   state.estimateV2DraggingPointIndex = null;
   clearEstimateV2TakeoffHistory();
   saveEstimateV2Draft(draft);
+  render();
+}
+
+function setEstimateV2TakeoffGroup(groupKey) {
+  const group = estimateV2ToolGroup(groupKey);
+  state.estimateV2ToolGroup = group.key;
+  const draft = collectEstimateV2DraftFromDom();
+  if (!group.tools.includes(draft.takeoffTool)) {
+    const nextTool = group.tools.map(estimateV2TakeoffTool).find((tool) => !tool.hidden);
+    if (nextTool) {
+      draft.takeoffTool = nextTool.key;
+      draft.takeoffItemName = nextTool.defaultName;
+      if (nextTool.type === "calibrate") draft.takeoffCostPerUnit = 0;
+      state.estimateV2ActivePoints = [];
+      state.estimateV2RedoPoints = [];
+      state.estimateV2EditingRowId = "";
+      state.estimateV2DraggingPointIndex = null;
+      clearEstimateV2TakeoffHistory();
+      saveEstimateV2Draft(draft);
+    }
+  }
   render();
 }
 
@@ -5023,6 +5091,8 @@ function defaultEstimateV2Draft() {
 
 function normalizeEstimateV2Draft(draft) {
   const source = draft && typeof draft === "object" ? draft : {};
+  const sourceTakeoffTool = estimateV2TakeoffTool(source.takeoffTool);
+  const activeTakeoffTool = sourceTakeoffTool.hidden ? ESTIMATE_V2_TAKEOFF_TOOLS[0] : sourceTakeoffTool;
   const chbWallHeight = Number(source.chbWallHeight);
   const chbWastePercent = Number(source.chbWastePercent);
   const concreteWastePercent = Number(source.concreteWastePercent);
@@ -5057,8 +5127,8 @@ function normalizeEstimateV2Draft(draft) {
     metersPerPixel: Math.max(0, Number(source.metersPerPixel) || 0),
     calibrationLength: Math.max(0, Number(source.calibrationLength) || 0),
     calibrationPoints: Array.isArray(source.calibrationPoints) ? source.calibrationPoints.map(normalizePoint).filter(Boolean).slice(0, 2) : [],
-    takeoffTool: estimateV2TakeoffTool(source.takeoffTool).key,
-    takeoffItemName: String(source.takeoffItemName || estimateV2TakeoffTool(source.takeoffTool).defaultName).trim(),
+    takeoffTool: activeTakeoffTool.key,
+    takeoffItemName: String(source.takeoffItemName || activeTakeoffTool.defaultName).trim(),
     takeoffCostPerUnit: Math.max(0, Number(source.takeoffCostPerUnit) || 0),
     orthoModeEnabled: Boolean(source.orthoModeEnabled),
     objectSnapEnabled: source.objectSnapEnabled !== false,
