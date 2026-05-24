@@ -87,6 +87,11 @@ const CONCRETE_MIX_OPTIONS = [
 ];
 const DEFAULT_CONCRETE_MIX_RATIO = "1:2:4";
 const FLOOR_SLAB_THICKNESS_OPTIONS = [0.1, 0.125, 0.15, 0.2];
+const TILE_TAKEOFF = {
+  defaultLength: 0.6,
+  defaultWidth: 0.6,
+  defaultWastePercent: 5
+};
 const CHB_TAKEOFF = {
   blocksPerSquareMeter: 12.5,
   defaultWastePercent: 5,
@@ -1405,6 +1410,32 @@ function renderEstimateV2TakeoffActiveInputs(draft, activeTool) {
       </div>
     `;
   }
+  if (activeTool.key === "tile-area") {
+    return `
+      <div class="estimate-v2-concrete-inputs">
+        <label class="estimate-v2-field">
+          <span>Tile Length (m)</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-tile-length type="number" min="0" step="0.001" value="${numberInputValue(draft.tileLength)}" placeholder="0.60">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Tile Width (m)</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-tile-width type="number" min="0" step="0.001" value="${numberInputValue(draft.tileWidth)}" placeholder="0.60">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Waste %</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-tile-waste type="number" min="0" step="0.01" value="${numberInputValue(draft.tileWastePercent)}" placeholder="5">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Price / tile</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-tile-price type="number" min="0" step="0.01" value="${numberInputValue(draft.tilePrice)}" placeholder="0.00">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Cost Per sq.m</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-current-cost data-estimate-v2-computed-current-cost type="number" min="0" step="0.01" value="${numberInputValue(estimateV2ComputedTakeoffCostPerUnit(draft, activeTool))}" placeholder="0.00" readonly>
+        </label>
+      </div>
+    `;
+  }
   if (activeTool.key === "floor-slab") {
     return `
       <div class="estimate-v2-concrete-inputs">
@@ -1731,6 +1762,8 @@ function renderEstimateV2TakeoffRow(row) {
       ? renderEstimateV2ConcreteDetails(normalized)
       : tool.key === "floor-slab"
         ? renderEstimateV2FloorSlabDetails(normalized)
+        : tool.key === "tile-area"
+          ? renderEstimateV2TileDetails(normalized)
     : "";
   const computedCost = estimateV2RowHasComputedMaterialCost(normalized)
     ? estimateV2ComputedRowCostPerUnit(normalized)
@@ -1785,6 +1818,15 @@ function renderEstimateV2FloorSlabDetails(row) {
     <small>Concrete: ${formatSwaNumber(row.concreteVolume)} cu.m${row.concreteWastePercent ? ` incl. ${formatSwaNumber(row.concreteWastePercent)}% waste` : ""} | Ratio ${escapeHtml(row.concreteMixRatio || DEFAULT_CONCRETE_MIX_RATIO)}</small>
     <small>Cement: ${formatInteger(mix.cementBags)} bags | Sand: ${formatSwaNumber(mix.sandVolume)} cu.m | Gravel: ${formatSwaNumber(mix.gravelVolume)} cu.m${materialCost ? ` | Materials ${formatCurrency(materialCost)}` : ""}</small>
     ${renderEstimateV2ConcretePriceDetails(row)}
+  `;
+}
+
+function renderEstimateV2TileDetails(row) {
+  const totalTileCost = estimateV2TileTotalCost(row);
+  return `
+    <small>${formatSwaNumber(row.quantity)} sq.m | ${formatSwaNumber(row.tileLength)} x ${formatSwaNumber(row.tileWidth)} m tile</small>
+    <small>Tiles: <span data-estimate-v2-tile-pieces-display>${formatInteger(row.tilePieces)}</span> pcs${row.tileWastePercent ? ` incl. ${formatSwaNumber(row.tileWastePercent)}% waste` : ""}${row.tilePrice ? ` | ${formatCurrency(row.tilePrice)}/tile` : ""}</small>
+    ${totalTileCost ? `<small>Tile total: <span data-estimate-v2-tile-total-display>${formatCurrency(totalTileCost)}</span></small>` : ""}
   `;
 }
 
@@ -1997,22 +2039,30 @@ function estimateV2TakeoffRowTotal(row) {
 
 function estimateV2RowHasComputedMaterialCost(row) {
   const tool = estimateV2TakeoffTool(row && row.tool);
-  return tool.type === "concrete-count" || tool.key === "floor-slab";
+  return tool.type === "concrete-count" || tool.key === "floor-slab" || tool.key === "tile-area";
 }
 
 function estimateV2ComputedRowCostPerUnit(row) {
   if (!estimateV2RowHasComputedMaterialCost(row)) return Math.max(0, Number(row && row.costPerUnit) || 0);
+  const tool = estimateV2TakeoffTool(row && row.tool);
+  if (tool.key === "tile-area") {
+    const quantity = Math.max(0, Number(row && row.quantity) || 0);
+    return quantity > 0 ? estimateV2TileTotalCost(row) / quantity : 0;
+  }
   const quantity = Math.max(0, Number(row && row.quantity) || 0);
   const volume = Math.max(0, Number(row && row.concreteVolume) || quantity);
   const mix = concreteMixBreakdown(volume, row && row.concreteMixRatio);
   const materialCost = concreteMaterialCost(mix, row);
-  const tool = estimateV2TakeoffTool(row && row.tool);
   const divisor = tool.key === "floor-slab" ? quantity : volume;
   return divisor > 0 ? materialCost / divisor : 0;
 }
 
 function estimateV2ComputedTakeoffCostPerUnit(draft, tool) {
   const activeTool = tool || estimateV2TakeoffTool(draft && draft.takeoffTool);
+  if (activeTool.key === "tile-area") {
+    const referenceRow = estimateV2TileTakeoffDetails(1, draft);
+    return estimateV2TileTotalCost(referenceRow);
+  }
   if (activeTool.type !== "concrete-count" && activeTool.key !== "floor-slab") {
     return Math.max(0, Number(draft && draft.takeoffCostPerUnit) || 0);
   }
@@ -2023,6 +2073,32 @@ function estimateV2ComputedTakeoffCostPerUnit(draft, tool) {
   const mix = concreteMixBreakdown(referenceVolume, draft && draft.concreteMixRatio);
   const materialCost = concreteMaterialCost(mix, draft);
   return activeTool.key === "floor-slab" ? materialCost : materialCost / Math.max(wasteFactor, 1);
+}
+
+function estimateV2TileTakeoffDetails(area, source) {
+  const tileArea = Math.max(0, Number(area) || 0);
+  const tileLength = Math.max(0, Number(source && source.tileLength) || TILE_TAKEOFF.defaultLength);
+  const tileWidth = Math.max(0, Number(source && source.tileWidth) || TILE_TAKEOFF.defaultWidth);
+  const tileWastePercent = Math.max(0, Number(source && source.tileWastePercent) || 0);
+  const tilePrice = Math.max(0, Number(source && source.tilePrice) || 0);
+  return {
+    tileLength,
+    tileWidth,
+    tileWastePercent,
+    tilePrice,
+    tileArea,
+    tilePieces: estimateV2TilePieces(tileArea, tileLength, tileWidth, tileWastePercent)
+  };
+}
+
+function estimateV2TilePieces(area, tileLength, tileWidth, wastePercent) {
+  const tileArea = Math.max(0, Number(tileLength) || 0) * Math.max(0, Number(tileWidth) || 0);
+  if (!tileArea) return 0;
+  return Math.ceil(Math.max(0, Number(area) || 0) / tileArea * (1 + (Math.max(0, Number(wastePercent) || 0) / 100)));
+}
+
+function estimateV2TileTotalCost(source) {
+  return (Number(source && source.tilePieces) || 0) * (Number(source && source.tilePrice) || 0);
 }
 
 function estimateV2ZoomValue(draft) {
@@ -3863,6 +3939,13 @@ function finishEstimateV2Takeoff() {
         quantity,
         ...takeoffDetails
       });
+    } else if (tool.key === "tile-area") {
+      Object.assign(takeoffDetails, estimateV2TileTakeoffDetails(quantity, draft));
+      costPerUnit = estimateV2ComputedRowCostPerUnit({
+        tool: tool.key,
+        quantity,
+        ...takeoffDetails
+      });
     } else {
       costPerUnit = draft.takeoffCostPerUnit;
     }
@@ -4135,6 +4218,10 @@ async function editEstimateV2Takeoff(rowId) {
   draft.gravelPrice = row.gravelPrice || draft.gravelPrice;
   if (row.concreteWastePercent || row.concreteWastePercent === 0) draft.concreteWastePercent = row.concreteWastePercent;
   if (row.floorSlabThickness) draft.floorSlabThickness = row.floorSlabThickness;
+  if (row.tileLength) draft.tileLength = row.tileLength;
+  if (row.tileWidth) draft.tileWidth = row.tileWidth;
+  if (row.tileWastePercent || row.tileWastePercent === 0) draft.tileWastePercent = row.tileWastePercent;
+  if (row.tilePrice || row.tilePrice === 0) draft.tilePrice = row.tilePrice;
   if (row.chbWallHeight) draft.chbWallHeight = row.chbWallHeight;
   if (row.chbWastePercent || row.chbWastePercent === 0) draft.chbWastePercent = row.chbWastePercent;
   if (row.chbBlocksPerSquareMeter) draft.chbBlocksPerSquareMeter = row.chbBlocksPerSquareMeter;
@@ -4206,12 +4293,16 @@ function updateEstimateV2TakeoffTotals() {
     const blocksNode = rowNode.querySelector("[data-estimate-v2-chb-blocks-display]");
     const wasteNode = rowNode.querySelector("[data-estimate-v2-chb-waste-display]");
     const wallAreaNode = rowNode.querySelector("[data-estimate-v2-chb-wall-area-display]");
+    const tilePiecesNode = rowNode.querySelector("[data-estimate-v2-tile-pieces-display]");
+    const tileTotalNode = rowNode.querySelector("[data-estimate-v2-tile-total-display]");
     if (row && estimateV2TakeoffTool(row.tool).type === "chb" && quantityInput) quantityInput.value = numberInputValue(row.quantity);
     if (row && costInput && estimateV2RowHasComputedMaterialCost(row)) costInput.value = numberInputValue(row.costPerUnit);
     if (row && heightNode) heightNode.textContent = formatSwaNumber(row.chbWallHeight);
     if (row && blocksNode) blocksNode.textContent = formatSwaNumber(row.chbBlocksPerSquareMeter);
     if (row && wasteNode) wasteNode.textContent = formatSwaNumber(row.chbWastePercent);
     if (row && wallAreaNode) wallAreaNode.textContent = formatSwaNumber(row.wallArea);
+    if (row && tilePiecesNode) tilePiecesNode.textContent = formatInteger(row.tilePieces);
+    if (row && tileTotalNode) tileTotalNode.textContent = formatCurrency(estimateV2TileTotalCost(row));
     if (row && totalNode) totalNode.textContent = formatCurrency(estimateV2TakeoffRowTotal(row));
   });
   document.querySelectorAll("[data-estimate-v2-takeoff-total]").forEach((node) => {
@@ -4402,6 +4493,10 @@ function collectEstimateV2DraftFromDom() {
   const sandPriceInput = document.querySelector("[data-estimate-v2-sand-price]");
   const gravelPriceInput = document.querySelector("[data-estimate-v2-gravel-price]");
   const floorSlabThicknessInput = document.querySelector("[data-estimate-v2-floor-slab-thickness]");
+  const tileLengthInput = document.querySelector("[data-estimate-v2-tile-length]");
+  const tileWidthInput = document.querySelector("[data-estimate-v2-tile-width]");
+  const tileWasteInput = document.querySelector("[data-estimate-v2-tile-waste]");
+  const tilePriceInput = document.querySelector("[data-estimate-v2-tile-price]");
   const orthoModeInput = document.querySelector("[data-estimate-v2-ortho]");
   const objectSnapInput = document.querySelector("[data-estimate-v2-object-snap]");
   const snapGridInput = document.querySelector("[data-estimate-v2-snap-grid]");
@@ -4440,6 +4535,10 @@ function collectEstimateV2DraftFromDom() {
     sandPrice: sandPriceInput ? sandPriceInput.value : current.sandPrice,
     gravelPrice: gravelPriceInput ? gravelPriceInput.value : current.gravelPrice,
     floorSlabThickness: floorSlabThicknessInput ? floorSlabThicknessInput.value : current.floorSlabThickness,
+    tileLength: tileLengthInput ? tileLengthInput.value : current.tileLength,
+    tileWidth: tileWidthInput ? tileWidthInput.value : current.tileWidth,
+    tileWastePercent: tileWasteInput ? tileWasteInput.value : current.tileWastePercent,
+    tilePrice: tilePriceInput ? tilePriceInput.value : current.tilePrice,
     orthoModeEnabled: orthoModeInput ? orthoModeInput.checked : current.orthoModeEnabled,
     objectSnapEnabled: objectSnapInput ? objectSnapInput.checked : current.objectSnapEnabled,
     snapGridEnabled: snapGridInput ? snapGridInput.checked : current.snapGridEnabled,
@@ -4493,6 +4592,9 @@ function collectEstimateV2TakeoffRowsFromDom(fallbackRows = [], activeSettings =
         concreteVolumeBase,
         concreteVolume: concreteVolumeBase * (1 + concreteWastePercent / 100)
       });
+    }
+    if (tool.key === "tile-area") {
+      Object.assign(takeoffDetails, estimateV2TileTakeoffDetails(quantity, previous));
     }
     if (tool.type === "concrete-count") {
       Object.assign(takeoffDetails, {
@@ -5264,6 +5366,10 @@ function defaultEstimateV2Draft() {
     sandPrice: 0,
     gravelPrice: 0,
     floorSlabThickness: FLOOR_SLAB_THICKNESS_OPTIONS[0],
+    tileLength: TILE_TAKEOFF.defaultLength,
+    tileWidth: TILE_TAKEOFF.defaultWidth,
+    tileWastePercent: TILE_TAKEOFF.defaultWastePercent,
+    tilePrice: 0,
     planFileName: "",
     takeoffPage: 1,
     takeoffPageCount: 0,
@@ -5305,6 +5411,7 @@ function normalizeEstimateV2Draft(draft) {
   const chbWastePercent = Number(source.chbWastePercent);
   const concreteWastePercent = Number(source.concreteWastePercent);
   const floorSlabThickness = Number(source.floorSlabThickness);
+  const tileWastePercent = Number(source.tileWastePercent);
   return {
     selectedProjectId: String(source.selectedProjectId || "").trim(),
     planType: PLAN_TYPES.includes(source.planType) ? source.planType : PLAN_TYPES[0],
@@ -5332,6 +5439,10 @@ function normalizeEstimateV2Draft(draft) {
     sandPrice: Math.max(0, Number(source.sandPrice) || 0),
     gravelPrice: Math.max(0, Number(source.gravelPrice) || 0),
     floorSlabThickness: FLOOR_SLAB_THICKNESS_OPTIONS.includes(floorSlabThickness) ? floorSlabThickness : FLOOR_SLAB_THICKNESS_OPTIONS[0],
+    tileLength: Math.max(0, Number(source.tileLength) || TILE_TAKEOFF.defaultLength),
+    tileWidth: Math.max(0, Number(source.tileWidth) || TILE_TAKEOFF.defaultWidth),
+    tileWastePercent: Number.isFinite(tileWastePercent) ? Math.max(0, tileWastePercent) : TILE_TAKEOFF.defaultWastePercent,
+    tilePrice: Math.max(0, Number(source.tilePrice) || 0),
     planFileName: String(source.planFileName || source.fileName || "").trim(),
     takeoffPage: Math.max(1, Number(source.takeoffPage) || 1),
     takeoffPageCount: Math.max(0, Number(source.takeoffPageCount) || 0),
@@ -5396,12 +5507,18 @@ function normalizeEstimateV2TakeoffRow(row) {
   const chbWallHeight = Math.max(0, Number(row && row.chbWallHeight) || 0);
   const wallLength = Math.max(0, Number(row && row.wallLength) || 0);
   const concreteVolume = Math.max(0, Number(row && row.concreteVolume) || 0);
+  const quantity = Math.max(0, Number(row && row.quantity) || 0);
+  const tileLength = Math.max(0, Number(row && row.tileLength) || TILE_TAKEOFF.defaultLength);
+  const tileWidth = Math.max(0, Number(row && row.tileWidth) || TILE_TAKEOFF.defaultWidth);
+  const tileWastePercent = Math.max(0, Number(row && row.tileWastePercent) || 0);
+  const tileArea = Math.max(0, Number(row && row.tileArea) || (tool.key === "tile-area" ? quantity : 0));
+  const tilePieces = Math.max(0, Number(row && row.tilePieces) || estimateV2TilePieces(tileArea, tileLength, tileWidth, tileWastePercent));
   return {
     id: row && row.id || cryptoId(),
     projectId: String(row && row.projectId || "").trim(),
     description: String(row && row.description || tool.defaultName).trim(),
     tool: tool.key,
-    quantity: Math.max(0, Number(row && row.quantity) || 0),
+    quantity,
     unit: String(row && row.unit || tool.unit).trim(),
     costPerUnit: Math.max(0, Number(row && row.costPerUnit) || 0),
     points: Array.isArray(row && row.points) ? row.points.map(normalizePoint).filter(Boolean).slice(0, 80) : [],
@@ -5424,6 +5541,12 @@ function normalizeEstimateV2TakeoffRow(row) {
     gravelPrice: Math.max(0, Number(row && row.gravelPrice) || 0),
     concreteWastePercent: Math.max(0, Number(row && row.concreteWastePercent) || 0),
     floorSlabThickness: FLOOR_SLAB_THICKNESS_OPTIONS.includes(Number(row && row.floorSlabThickness)) ? Number(row && row.floorSlabThickness) : FLOOR_SLAB_THICKNESS_OPTIONS[0],
+    tileLength,
+    tileWidth,
+    tileWastePercent,
+    tilePrice: Math.max(0, Number(row && row.tilePrice) || 0),
+    tileArea,
+    tilePieces,
     columnWidth: Math.max(0, Number(row && row.columnWidth) || 0),
     columnDepth: Math.max(0, Number(row && row.columnDepth) || 0),
     columnHeight: Math.max(0, Number(row && row.columnHeight) || 0),
