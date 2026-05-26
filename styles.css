@@ -1426,6 +1426,7 @@ tfoot td {
 }
 
 .estimate-v2-metric {
+  min-width: 0;
   min-height: 96px;
   display: grid;
   align-content: center;
@@ -1437,9 +1438,13 @@ tfoot td {
 }
 
 .estimate-v2-metric strong {
+  min-width: 0;
+  max-width: 100%;
   color: var(--cyan);
-  font-size: 28px;
-  line-height: 1;
+  font-size: clamp(18px, 2vw, 28px);
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .estimate-v2-file-card {
@@ -1805,6 +1810,17 @@ tfoot td {
 
 .estimate-v2-takeoff-table tfoot td {
   font-weight: 900;
+}
+
+.estimate-v2-takeoff-table [data-estimate-v2-row-total],
+.estimate-v2-takeoff-table [data-estimate-v2-takeoff-total] {
+  max-width: 170px;
+  color: var(--cyan);
+  font-weight: 900;
+  line-height: 1.2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .empty-cell {
