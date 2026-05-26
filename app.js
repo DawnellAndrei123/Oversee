@@ -1258,7 +1258,7 @@ function renderEstimateV2View() {
       ${renderEstimateV2Metric("Concrete", `${formatSwaNumber(totalConcrete)} cu.m`)}
       ${renderEstimateV2Metric("Cement", `${formatInteger(totalConcreteMix.cementBags)} bags`)}
       ${renderEstimateV2Metric("Count", formatInteger(totalCount))}
-      ${renderEstimateV2Metric("Total Cost", formatCurrency(totalCost))}
+      ${renderEstimateV2Metric("Total Cost", formatEstimateV2TotalCost(totalCost))}
     </section>
     ${renderEstimateV2TakeoffWorkspace(draft)}
     ${renderEstimateV2TakeoffTable(rows)}
@@ -1754,6 +1754,7 @@ function renderEstimateV2ActiveShape(tool, points) {
 
 function renderEstimateV2TakeoffTable(rows) {
   const isEditing = Boolean(state.estimateV2EditingRowId);
+  const estimateTotal = estimateV2TakeoffTotal(rows);
   return `
     <div class="table-wrap estimate-v2-table-wrap">
       <table class="estimate-v2-table estimate-v2-takeoff-table">
@@ -1774,7 +1775,7 @@ function renderEstimateV2TakeoffTable(rows) {
         <tfoot>
           <tr>
             <td colspan="5">Total Estimate</td>
-            <td data-estimate-v2-takeoff-total>${formatCurrency(estimateV2TakeoffTotal(rows))}</td>
+            <td data-estimate-v2-takeoff-total title="${escapeAttribute(formatCurrency(estimateTotal))}">${formatEstimateV2TotalCost(estimateTotal)}</td>
             <td>${isEditing ? `<button class="ghost-btn compact-btn" data-action="cancel-estimate-v2-edit">Cancel Edit</button>` : ""}</td>
           </tr>
         </tfoot>
@@ -1800,6 +1801,7 @@ function renderEstimateV2TakeoffRow(row) {
   const computedCost = estimateV2RowHasComputedMaterialCost(normalized)
     ? estimateV2ComputedRowCostPerUnit(normalized)
     : normalized.costPerUnit;
+  const rowTotal = estimateV2TakeoffRowTotal({ ...normalized, costPerUnit: computedCost });
   return `
     <tr data-estimate-v2-takeoff-row="${escapeAttribute(normalized.id)}" class="${state.estimateV2EditingRowId === normalized.id ? "editing-row" : ""}">
       <td><input class="estimate-input description" data-estimate-v2-takeoff-input data-field="description" value="${escapeAttribute(normalized.description)}" placeholder="Item"></td>
@@ -1807,7 +1809,7 @@ function renderEstimateV2TakeoffRow(row) {
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0" ${tool.type === "chb" ? "readonly" : ""}></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="unit" value="${escapeAttribute(normalized.unit)}" placeholder="unit"></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(computedCost)}" placeholder="0.00" ${estimateV2RowHasComputedMaterialCost(normalized) ? "readonly" : ""}></td>
-      <td data-estimate-v2-row-total>${formatCurrency(estimateV2TakeoffRowTotal({ ...normalized, costPerUnit: computedCost }))}</td>
+      <td data-estimate-v2-row-total title="${escapeAttribute(formatCurrency(rowTotal))}">${formatEstimateV2TotalCost(rowTotal)}</td>
       <td>
         <button class="secondary-btn compact-btn" data-action="edit-estimate-v2-takeoff" data-id="${escapeAttribute(normalized.id)}">Edit Shape</button>
         <button class="ghost-btn danger compact-btn" data-action="delete-estimate-v2-takeoff" data-id="${escapeAttribute(normalized.id)}">Delete</button>
@@ -4354,10 +4356,16 @@ function updateEstimateV2TakeoffTotals() {
     if (row && wallAreaNode) wallAreaNode.textContent = formatSwaNumber(row.wallArea);
     if (row && tilePiecesNode) tilePiecesNode.textContent = formatInteger(row.tilePieces);
     if (row && tileTotalNode) tileTotalNode.textContent = formatCurrency(estimateV2TileTotalCost(row));
-    if (row && totalNode) totalNode.textContent = formatCurrency(estimateV2TakeoffRowTotal(row));
+    if (row && totalNode) {
+      const rowTotal = estimateV2TakeoffRowTotal(row);
+      totalNode.textContent = formatEstimateV2TotalCost(rowTotal);
+      totalNode.title = formatCurrency(rowTotal);
+    }
   });
   document.querySelectorAll("[data-estimate-v2-takeoff-total]").forEach((node) => {
-    node.textContent = formatCurrency(estimateV2TakeoffTotal(rows));
+    const total = estimateV2TakeoffTotal(rows);
+    node.textContent = formatEstimateV2TotalCost(total);
+    node.title = formatCurrency(total);
   });
 }
 
@@ -6197,6 +6205,24 @@ function safeDivide(value, divisor) {
 
 function formatCurrency(value) {
   return new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(Number(value) || 0);
+}
+
+function formatEstimateV2TotalCost(value) {
+  const amount = Number(value) || 0;
+  const absoluteAmount = Math.abs(amount);
+  if (absoluteAmount < 1000) return formatCurrency(amount);
+  const units = [
+    { value: 1000000000, suffix: "B" },
+    { value: 1000000, suffix: "M" },
+    { value: 1000, suffix: "k" }
+  ];
+  const unit = units.find((item) => absoluteAmount >= item.value) || units[units.length - 1];
+  const scaledAmount = amount / unit.value;
+  const decimals = Math.abs(scaledAmount) >= 10 ? 1 : 2;
+  const compactNumber = new Intl.NumberFormat("en-PH", {
+    maximumFractionDigits: decimals
+  }).format(scaledAmount);
+  return `₱${compactNumber}${unit.suffix}`;
 }
 
 function formatCurrencyCompact(value) {
