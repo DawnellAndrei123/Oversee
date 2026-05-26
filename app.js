@@ -63,6 +63,23 @@ const ESTIMATE_V2_TAKEOFF_GROUPS = [
 const CHB_SIZE_OPTIONS = ['4" CHB', '6" CHB', '8" CHB'];
 const REBAR_DIAMETER_OPTIONS = [10, 12, 16, 20, 25, 28, 32, 36];
 const REBAR_LENGTH_OPTIONS = [6, 7.5, 9, 10.5, 12];
+const REBAR_UNIT_WEIGHTS = {
+  10: 0.617,
+  12: 0.888,
+  16: 1.579,
+  20: 2.466,
+  25: 3.853,
+  28: 4.834,
+  32: 6.313,
+  36: 7.99
+};
+const STEEL_COLUMN_DEFAULTS = {
+  longitudinalBarsPerColumn: 4,
+  tieSpacing: 0.2,
+  tieHookAllowance: 0.2,
+  longitudinalWastePercent: 5,
+  tieWastePercent: 10
+};
 const SNAP_GRID_TOOL_TYPES = new Set(["area", "linear", "curve", "chb"]);
 const ORTHO_TOOL_TYPES = new Set(["area", "linear", "chb"]);
 const OBJECT_SNAP_TOOL_TYPES = new Set(["area", "linear", "curve", "chb"]);
@@ -1421,6 +1438,20 @@ function renderEstimateV2TakeoffActiveInputs(draft, activeTool) {
   if (estimateV2IsSteelworkTool(activeTool)) {
     return `
       <div class="estimate-v2-concrete-inputs">
+        ${activeTool.key === "steel-column" ? `
+          <label class="estimate-v2-field">
+            <span>Column Width (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-column-width type="number" min="0" step="0.01" value="${numberInputValue(draft.columnWidth)}" placeholder="0.30">
+          </label>
+          <label class="estimate-v2-field">
+            <span>Column Length (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-column-depth type="number" min="0" step="0.01" value="${numberInputValue(draft.columnDepth)}" placeholder="0.30">
+          </label>
+          <label class="estimate-v2-field">
+            <span>Column Height (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-column-height type="number" min="0" step="0.01" value="${numberInputValue(draft.columnHeight)}" placeholder="3.00">
+          </label>
+        ` : ""}
         <label class="estimate-v2-field">
           <span>Rebar Diameter</span>
           <select data-estimate-v2-takeoff-input data-estimate-v2-rebar-diameter>
@@ -1806,7 +1837,7 @@ function renderEstimateV2TakeoffRow(row) {
     <tr data-estimate-v2-takeoff-row="${escapeAttribute(normalized.id)}" class="${state.estimateV2EditingRowId === normalized.id ? "editing-row" : ""}">
       <td><input class="estimate-input description" data-estimate-v2-takeoff-input data-field="description" value="${escapeAttribute(normalized.description)}" placeholder="Item"></td>
       <td><strong>${escapeHtml(tool.label)}</strong>${typeDetails}</td>
-      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0" ${tool.type === "chb" ? "readonly" : ""}></td>
+      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0" ${tool.type === "chb" || tool.key === "steel-column" ? "readonly" : ""}></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="unit" value="${escapeAttribute(normalized.unit)}" placeholder="unit"></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(computedCost)}" placeholder="0.00" ${estimateV2RowHasComputedMaterialCost(normalized) ? "readonly" : ""}></td>
       <td data-estimate-v2-row-total title="${escapeAttribute(formatCurrency(rowTotal))}">${formatEstimateV2TotalCost(rowTotal)}</td>
@@ -1865,6 +1896,19 @@ function renderEstimateV2TileDetails(row) {
 }
 
 function renderEstimateV2SteelworkDetails(row) {
+  if (row.tool === "steel-column") {
+    const stockOptions = estimateV2SteelColumnStockOptionsFromRow(row);
+    const stockOptionsText = stockOptions
+      .map((option) => `${formatSwaNumber(option.length)}m=${formatInteger(option.totalStockBars)} pcs`)
+      .join(" | ");
+    return `
+      <small>${formatInteger(row.takeoffCount)} column${row.takeoffCount === 1 ? "" : "s"} | ${formatSwaNumber(row.columnWidth)} x ${formatSwaNumber(row.columnDepth)} x ${formatSwaNumber(row.columnHeight)} m</small>
+      <small>Main bars: ${formatInteger(row.longitudinalStockBars)} pcs @ ${formatSwaNumber(row.rebarLength)} m | Ties: ${formatInteger(row.tieStockBars)} pcs | Total: ${formatInteger(row.totalStockBars)} pcs</small>
+      ${stockOptionsText ? `<small>Stock options: ${escapeHtml(stockOptionsText)}</small>` : ""}
+      <small>Total length: ${formatSwaNumber(row.totalRebarLength)} m | Weight: ${formatSwaNumber(row.totalRebarWeightKg)} kg | ${formatSwaNumber(row.rebarDiameter)} mm</small>
+      <small>Assumes ${formatInteger(row.longitudinalBarsPerColumn)} vertical bars/column, ${formatSwaNumber(row.tieSpacing)} m tie spacing, ${formatSwaNumber(row.tieHookAllowance)} m hook allowance/tie.</small>
+    `;
+  }
   return `
     <small>Rebar: ${formatSwaNumber(row.rebarDiameter)} mm dia. x ${formatSwaNumber(row.rebarLength)} m length</small>
   `;
@@ -2118,6 +2162,97 @@ function estimateV2ComputedTakeoffCostPerUnit(draft, tool) {
   const mix = concreteMixBreakdown(referenceVolume, draft && draft.concreteMixRatio);
   const materialCost = concreteMaterialCost(mix, draft);
   return activeTool.key === "floor-slab" ? materialCost : materialCost / Math.max(wasteFactor, 1);
+}
+
+function rebarUnitWeight(diameter) {
+  const normalizedDiameter = Number(diameter) || 0;
+  return REBAR_UNIT_WEIGHTS[normalizedDiameter] || ((normalizedDiameter * normalizedDiameter) / 162);
+}
+
+function estimateV2SteelColumnStockOptions(longitudinalLengthWithWaste, tieLengthWithWaste) {
+  const mainLength = Math.max(0, Number(longitudinalLengthWithWaste) || 0);
+  const tieLength = Math.max(0, Number(tieLengthWithWaste) || 0);
+  return REBAR_LENGTH_OPTIONS.map((length) => {
+    const stockLength = Math.max(0, Number(length) || 0);
+    const longitudinalStockBars = stockLength > 0 ? Math.ceil(mainLength / stockLength) : 0;
+    const tieStockBars = stockLength > 0 ? Math.ceil(tieLength / stockLength) : 0;
+    return {
+      length: stockLength,
+      longitudinalStockBars,
+      tieStockBars,
+      totalStockBars: longitudinalStockBars + tieStockBars
+    };
+  });
+}
+
+function estimateV2SteelColumnStockOptionsFromRow(row) {
+  if (Array.isArray(row && row.stockLengthOptions) && row.stockLengthOptions.length) {
+    return row.stockLengthOptions.map((option) => ({
+      length: Math.max(0, Number(option && option.length) || 0),
+      longitudinalStockBars: Math.max(0, Number(option && option.longitudinalStockBars) || 0),
+      tieStockBars: Math.max(0, Number(option && option.tieStockBars) || 0),
+      totalStockBars: Math.max(0, Number(option && option.totalStockBars) || 0)
+    })).filter((option) => option.length);
+  }
+  const longitudinalLengthWithWaste = Math.max(0, Number(row && row.longitudinalTotalLength) || 0)
+    * (1 + Math.max(0, Number(row && row.longitudinalWastePercent) || 0) / 100);
+  const tieLengthWithWaste = Math.max(0, Number(row && row.tieTotalLength) || 0)
+    * (1 + Math.max(0, Number(row && row.tieWastePercent) || 0) / 100);
+  return estimateV2SteelColumnStockOptions(longitudinalLengthWithWaste, tieLengthWithWaste);
+}
+
+function estimateV2SteelColumnTakeoff(source, columnCount, options = {}) {
+  const takeoffCount = Math.max(0, Number(columnCount) || 0);
+  const columnWidth = Math.max(0, Number(source && source.columnWidth) || 0);
+  const columnDepth = Math.max(0, Number(source && source.columnDepth) || 0);
+  const columnHeight = Math.max(0, Number(source && source.columnHeight) || 0);
+  if (!columnWidth || !columnDepth || !columnHeight) {
+    if (!options.silent) toast("Enter column width, length, and height.");
+    return null;
+  }
+  const rebarDiameter = REBAR_DIAMETER_OPTIONS.includes(Number(source && source.rebarDiameter)) ? Number(source.rebarDiameter) : REBAR_DIAMETER_OPTIONS[0];
+  const rebarLength = REBAR_LENGTH_OPTIONS.includes(Number(source && source.rebarLength)) ? Number(source.rebarLength) : REBAR_LENGTH_OPTIONS[0];
+  const longitudinalBarsPerColumn = STEEL_COLUMN_DEFAULTS.longitudinalBarsPerColumn;
+  const tieSpacing = STEEL_COLUMN_DEFAULTS.tieSpacing;
+  const tieHookAllowance = STEEL_COLUMN_DEFAULTS.tieHookAllowance;
+  const longitudinalLengthPerBar = columnHeight;
+  const longitudinalTotalLength = longitudinalBarsPerColumn * longitudinalLengthPerBar * takeoffCount;
+  const longitudinalLengthWithWaste = longitudinalTotalLength * (1 + STEEL_COLUMN_DEFAULTS.longitudinalWastePercent / 100);
+  const tieLengthEach = (2 * (columnWidth + columnDepth)) + tieHookAllowance;
+  const tiesPerColumn = tieSpacing > 0 ? Math.ceil(columnHeight / tieSpacing) + 1 : 0;
+  const tieTotalLength = tiesPerColumn * tieLengthEach * takeoffCount;
+  const tieLengthWithWaste = tieTotalLength * (1 + STEEL_COLUMN_DEFAULTS.tieWastePercent / 100);
+  const stockLengthOptions = estimateV2SteelColumnStockOptions(longitudinalLengthWithWaste, tieLengthWithWaste);
+  const selectedStockOption = stockLengthOptions.find((option) => option.length === rebarLength) || stockLengthOptions[0] || {};
+  const longitudinalStockBars = Math.max(0, Number(selectedStockOption.longitudinalStockBars) || 0);
+  const tieStockBars = Math.max(0, Number(selectedStockOption.tieStockBars) || 0);
+  const totalRebarLength = longitudinalLengthWithWaste + tieLengthWithWaste;
+  const totalStockBars = Math.max(0, Number(selectedStockOption.totalStockBars) || 0);
+  const totalRebarWeightKg = totalRebarLength * rebarUnitWeight(rebarDiameter);
+  return {
+    takeoffCount,
+    columnWidth,
+    columnDepth,
+    columnHeight,
+    rebarDiameter,
+    rebarLength,
+    longitudinalBarsPerColumn,
+    longitudinalLengthPerBar,
+    longitudinalTotalLength,
+    longitudinalWastePercent: STEEL_COLUMN_DEFAULTS.longitudinalWastePercent,
+    longitudinalStockBars,
+    tieSpacing,
+    tieHookAllowance,
+    tiesPerColumn,
+    tieLengthEach,
+    tieTotalLength,
+    tieWastePercent: STEEL_COLUMN_DEFAULTS.tieWastePercent,
+    tieStockBars,
+    totalRebarLength,
+    totalRebarWeightKg,
+    totalStockBars,
+    stockLengthOptions
+  };
 }
 
 function estimateV2TileTakeoffDetails(area, source) {
@@ -4047,9 +4182,17 @@ function finishEstimateV2Takeoff() {
       ...takeoffDetails
     });
   } else if (tool.type === "count") {
-    quantity = points.length;
-    if (estimateV2IsSteelworkTool(tool)) {
+    const pointCount = points.length;
+    quantity = pointCount;
+    if (tool.key === "steel-column") {
+      const steelColumn = estimateV2SteelColumnTakeoff(draft, pointCount);
+      if (!steelColumn) return;
+      quantity = steelColumn.totalStockBars;
+      unit = "pcs";
+      Object.assign(takeoffDetails, steelColumn);
+    } else if (estimateV2IsSteelworkTool(tool)) {
       Object.assign(takeoffDetails, {
+        takeoffCount: pointCount,
         rebarDiameter: draft.rebarDiameter,
         rebarLength: draft.rebarLength
       });
@@ -4275,6 +4418,11 @@ async function editEstimateV2Takeoff(rowId) {
   if (row.tilePrice || row.tilePrice === 0) draft.tilePrice = row.tilePrice;
   if (row.rebarDiameter) draft.rebarDiameter = row.rebarDiameter;
   if (row.rebarLength) draft.rebarLength = row.rebarLength;
+  if (row.tool === "steel-column") {
+    draft.columnWidth = row.columnWidth || draft.columnWidth;
+    draft.columnDepth = row.columnDepth || draft.columnDepth;
+    draft.columnHeight = row.columnHeight || draft.columnHeight;
+  }
   if (row.chbWallHeight) draft.chbWallHeight = row.chbWallHeight;
   if (row.chbWastePercent || row.chbWastePercent === 0) draft.chbWastePercent = row.chbWastePercent;
   if (row.chbBlocksPerSquareMeter) draft.chbBlocksPerSquareMeter = row.chbBlocksPerSquareMeter;
@@ -4658,6 +4806,14 @@ function collectEstimateV2TakeoffRowsFromDom(fallbackRows = [], activeSettings =
     }
     if (tool.key === "tile-area") {
       Object.assign(takeoffDetails, estimateV2TileTakeoffDetails(quantity, previous));
+    }
+    if (tool.key === "steel-column") {
+      const previousPoints = Array.isArray(previous.points) ? previous.points : [];
+      const steelColumn = estimateV2SteelColumnTakeoff(previous, previous.takeoffCount || previousPoints.length || 0, { silent: true });
+      if (steelColumn) {
+        quantity = steelColumn.totalStockBars;
+        Object.assign(takeoffDetails, steelColumn);
+      }
     }
     if (tool.type === "concrete-count") {
       Object.assign(takeoffDetails, {
@@ -5574,12 +5730,21 @@ function normalizeEstimateV2TakeoffRow(row) {
   const chbWallHeight = Math.max(0, Number(row && row.chbWallHeight) || 0);
   const wallLength = Math.max(0, Number(row && row.wallLength) || 0);
   const concreteVolume = Math.max(0, Number(row && row.concreteVolume) || 0);
-  const quantity = Math.max(0, Number(row && row.quantity) || 0);
+  const steelTotalStockBars = Math.max(0, Number(row && row.totalStockBars) || 0);
+  const quantity = Math.max(0, Number(row && row.quantity) || (tool.key === "steel-column" ? steelTotalStockBars : 0));
   const tileLength = Math.max(0, Number(row && row.tileLength) || TILE_TAKEOFF.defaultLength);
   const tileWidth = Math.max(0, Number(row && row.tileWidth) || TILE_TAKEOFF.defaultWidth);
   const tileWastePercent = Math.max(0, Number(row && row.tileWastePercent) || 0);
   const tileArea = Math.max(0, Number(row && row.tileArea) || (tool.key === "tile-area" ? quantity : 0));
   const tilePieces = Math.max(0, Number(row && row.tilePieces) || estimateV2TilePieces(tileArea, tileLength, tileWidth, tileWastePercent));
+  const stockLengthOptions = Array.isArray(row && row.stockLengthOptions)
+    ? row.stockLengthOptions.map((option) => ({
+      length: Math.max(0, Number(option && option.length) || 0),
+      longitudinalStockBars: Math.max(0, Number(option && option.longitudinalStockBars) || 0),
+      tieStockBars: Math.max(0, Number(option && option.tieStockBars) || 0),
+      totalStockBars: Math.max(0, Number(option && option.totalStockBars) || 0)
+    })).filter((option) => option.length)
+    : [];
   return {
     id: row && row.id || cryptoId(),
     projectId: String(row && row.projectId || "").trim(),
@@ -5616,6 +5781,22 @@ function normalizeEstimateV2TakeoffRow(row) {
     tilePieces,
     rebarDiameter: REBAR_DIAMETER_OPTIONS.includes(Number(row && row.rebarDiameter)) ? Number(row && row.rebarDiameter) : REBAR_DIAMETER_OPTIONS[0],
     rebarLength: REBAR_LENGTH_OPTIONS.includes(Number(row && row.rebarLength)) ? Number(row && row.rebarLength) : REBAR_LENGTH_OPTIONS[0],
+    longitudinalBarsPerColumn: Math.max(0, Number(row && row.longitudinalBarsPerColumn) || STEEL_COLUMN_DEFAULTS.longitudinalBarsPerColumn),
+    longitudinalLengthPerBar: Math.max(0, Number(row && row.longitudinalLengthPerBar) || 0),
+    longitudinalTotalLength: Math.max(0, Number(row && row.longitudinalTotalLength) || 0),
+    longitudinalWastePercent: Math.max(0, Number(row && row.longitudinalWastePercent) || STEEL_COLUMN_DEFAULTS.longitudinalWastePercent),
+    longitudinalStockBars: Math.max(0, Number(row && row.longitudinalStockBars) || 0),
+    tieSpacing: Math.max(0, Number(row && row.tieSpacing) || STEEL_COLUMN_DEFAULTS.tieSpacing),
+    tieHookAllowance: Math.max(0, Number(row && row.tieHookAllowance) || STEEL_COLUMN_DEFAULTS.tieHookAllowance),
+    tiesPerColumn: Math.max(0, Number(row && row.tiesPerColumn) || 0),
+    tieLengthEach: Math.max(0, Number(row && row.tieLengthEach) || 0),
+    tieTotalLength: Math.max(0, Number(row && row.tieTotalLength) || 0),
+    tieWastePercent: Math.max(0, Number(row && row.tieWastePercent) || STEEL_COLUMN_DEFAULTS.tieWastePercent),
+    tieStockBars: Math.max(0, Number(row && row.tieStockBars) || 0),
+    totalRebarLength: Math.max(0, Number(row && row.totalRebarLength) || 0),
+    totalRebarWeightKg: Math.max(0, Number(row && row.totalRebarWeightKg) || 0),
+    totalStockBars: steelTotalStockBars,
+    stockLengthOptions,
     columnWidth: Math.max(0, Number(row && row.columnWidth) || 0),
     columnDepth: Math.max(0, Number(row && row.columnDepth) || 0),
     columnHeight: Math.max(0, Number(row && row.columnHeight) || 0),
