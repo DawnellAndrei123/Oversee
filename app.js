@@ -40,6 +40,11 @@ const ESTIMATE_V2_TAKEOFF_TOOLS = [
   { key: "chb-wall", label: "CHB Wall", type: "chb", unit: "pcs", defaultName: "Concrete Hollow Block", color: "#14b8a6" },
   { key: "column-concrete", label: "Column", type: "concrete-count", unit: "cu.m", defaultName: "Column Concrete", color: "#06b6d4" },
   { key: "footing-concrete", label: "Footing", type: "concrete-count", unit: "cu.m", defaultName: "Column Footing Concrete", color: "#8b5cf6" },
+  { key: "steel-column", label: "Column", type: "count", unit: "pcs", defaultName: "Column Rebar", color: "#60a5fa", steelwork: true },
+  { key: "steel-footing", label: "Footing", type: "count", unit: "pcs", defaultName: "Footing Rebar", color: "#818cf8", steelwork: true },
+  { key: "steel-beam", label: "Beam", type: "count", unit: "pcs", defaultName: "Beam Rebar", color: "#c084fc", steelwork: true },
+  { key: "steel-wall", label: "Wall", type: "count", unit: "pcs", defaultName: "Wall Rebar", color: "#f472b6", steelwork: true },
+  { key: "steel-slab", label: "Slab", type: "count", unit: "pcs", defaultName: "Slab Rebar", color: "#fb7185", steelwork: true },
   { key: "pipe-length", label: "Pipe Length", type: "linear", unit: "lm", defaultName: "Pipe Line", color: "#38bdf8" },
   { key: "wire-length", label: "Wire Length", type: "linear", unit: "lm", defaultName: "Electrical Wiring", color: "#a78bfa" },
   { key: "curve-line", label: "Curve Line", type: "curve", unit: "lm", defaultName: "Curved Line", color: "#ec4899" },
@@ -48,13 +53,16 @@ const ESTIMATE_V2_TAKEOFF_TOOLS = [
 ];
 const ESTIMATE_V2_TAKEOFF_GROUPS = [
   { key: "setup", label: "Setup", tools: ["calibrate"] },
-  { key: "architectural", label: "Architectural", tools: ["door-count", "window-count", "curve-line", "tile-area"] },
+  { key: "architectural", label: "Architectural", tools: ["door-count", "window-count", "curve-line"] },
   { key: "structural", label: "Structural", tools: ["column-concrete", "footing-concrete", "floor-slab"] },
+  { key: "steelworks", label: "Steelworks", tools: ["steel-column", "steel-footing", "steel-beam", "steel-wall", "steel-slab"] },
   { key: "masonry", label: "Masonry", tools: ["tile-area", "chb-wall"] },
   { key: "plumbing", label: "Plumbing", tools: ["pipe-length"] },
   { key: "electrical", label: "Electrical", tools: ["wire-length"] }
 ];
 const CHB_SIZE_OPTIONS = ['4" CHB', '6" CHB', '8" CHB'];
+const REBAR_DIAMETER_OPTIONS = [10, 12, 16, 20, 25, 28, 32, 36];
+const REBAR_LENGTH_OPTIONS = [6, 7.5, 9, 10.5, 12];
 const SNAP_GRID_TOOL_TYPES = new Set(["area", "linear", "curve", "chb"]);
 const ORTHO_TOOL_TYPES = new Set(["area", "linear", "chb"]);
 const OBJECT_SNAP_TOOL_TYPES = new Set(["area", "linear", "curve", "chb"]);
@@ -1410,6 +1418,28 @@ function renderEstimateV2TakeoffActiveInputs(draft, activeTool) {
       </div>
     `;
   }
+  if (estimateV2IsSteelworkTool(activeTool)) {
+    return `
+      <div class="estimate-v2-concrete-inputs">
+        <label class="estimate-v2-field">
+          <span>Rebar Diameter</span>
+          <select data-estimate-v2-takeoff-input data-estimate-v2-rebar-diameter>
+            ${REBAR_DIAMETER_OPTIONS.map((diameter) => `<option value="${escapeAttribute(diameter)}" ${Number(draft.rebarDiameter) === diameter ? "selected" : ""}>${formatSwaNumber(diameter)} mm</option>`).join("")}
+          </select>
+        </label>
+        <label class="estimate-v2-field">
+          <span>Rebar Length</span>
+          <select data-estimate-v2-takeoff-input data-estimate-v2-rebar-length>
+            ${REBAR_LENGTH_OPTIONS.map((length) => `<option value="${escapeAttribute(length)}" ${Number(draft.rebarLength) === length ? "selected" : ""}>${formatSwaNumber(length)} m</option>`).join("")}
+          </select>
+        </label>
+        <label class="estimate-v2-field">
+          <span>Cost Per pc</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-current-cost type="number" min="0" step="0.01" value="${numberInputValue(draft.takeoffCostPerUnit)}" placeholder="0.00">
+        </label>
+      </div>
+    `;
+  }
   if (activeTool.key === "tile-area") {
     return `
       <div class="estimate-v2-concrete-inputs">
@@ -1764,6 +1794,8 @@ function renderEstimateV2TakeoffRow(row) {
         ? renderEstimateV2FloorSlabDetails(normalized)
         : tool.key === "tile-area"
           ? renderEstimateV2TileDetails(normalized)
+          : estimateV2IsSteelworkTool(tool)
+            ? renderEstimateV2SteelworkDetails(normalized)
     : "";
   const computedCost = estimateV2RowHasComputedMaterialCost(normalized)
     ? estimateV2ComputedRowCostPerUnit(normalized)
@@ -1827,6 +1859,12 @@ function renderEstimateV2TileDetails(row) {
     <small>${formatSwaNumber(row.quantity)} sq.m | ${formatSwaNumber(row.tileLength)} x ${formatSwaNumber(row.tileWidth)} m tile</small>
     <small>Tiles: <span data-estimate-v2-tile-pieces-display>${formatInteger(row.tilePieces)}</span> pcs${row.tileWastePercent ? ` incl. ${formatSwaNumber(row.tileWastePercent)}% waste` : ""}${row.tilePrice ? ` | ${formatCurrency(row.tilePrice)}/tile` : ""}</small>
     ${totalTileCost ? `<small>Tile total: <span data-estimate-v2-tile-total-display>${formatCurrency(totalTileCost)}</span></small>` : ""}
+  `;
+}
+
+function renderEstimateV2SteelworkDetails(row) {
+  return `
+    <small>Rebar: ${formatSwaNumber(row.rebarDiameter)} mm dia. x ${formatSwaNumber(row.rebarLength)} m length</small>
   `;
 }
 
@@ -1970,6 +2008,11 @@ function formatEstimateV2Quantity(material) {
 
 function estimateV2TakeoffTool(toolKey) {
   return ESTIMATE_V2_TAKEOFF_TOOLS.find((tool) => tool.key === toolKey) || ESTIMATE_V2_TAKEOFF_TOOLS[0];
+}
+
+function estimateV2IsSteelworkTool(toolOrKey) {
+  const tool = typeof toolOrKey === "string" ? estimateV2TakeoffTool(toolOrKey) : toolOrKey;
+  return Boolean(tool && tool.steelwork);
 }
 
 function visibleEstimateV2TakeoffTools() {
@@ -4003,6 +4046,12 @@ function finishEstimateV2Takeoff() {
     });
   } else if (tool.type === "count") {
     quantity = points.length;
+    if (estimateV2IsSteelworkTool(tool)) {
+      Object.assign(takeoffDetails, {
+        rebarDiameter: draft.rebarDiameter,
+        rebarLength: draft.rebarLength
+      });
+    }
     costPerUnit = draft.takeoffCostPerUnit;
   }
   const editingRowId = state.estimateV2EditingRowId;
@@ -4222,6 +4271,8 @@ async function editEstimateV2Takeoff(rowId) {
   if (row.tileWidth) draft.tileWidth = row.tileWidth;
   if (row.tileWastePercent || row.tileWastePercent === 0) draft.tileWastePercent = row.tileWastePercent;
   if (row.tilePrice || row.tilePrice === 0) draft.tilePrice = row.tilePrice;
+  if (row.rebarDiameter) draft.rebarDiameter = row.rebarDiameter;
+  if (row.rebarLength) draft.rebarLength = row.rebarLength;
   if (row.chbWallHeight) draft.chbWallHeight = row.chbWallHeight;
   if (row.chbWastePercent || row.chbWastePercent === 0) draft.chbWastePercent = row.chbWastePercent;
   if (row.chbBlocksPerSquareMeter) draft.chbBlocksPerSquareMeter = row.chbBlocksPerSquareMeter;
@@ -4497,6 +4548,8 @@ function collectEstimateV2DraftFromDom() {
   const tileWidthInput = document.querySelector("[data-estimate-v2-tile-width]");
   const tileWasteInput = document.querySelector("[data-estimate-v2-tile-waste]");
   const tilePriceInput = document.querySelector("[data-estimate-v2-tile-price]");
+  const rebarDiameterInput = document.querySelector("[data-estimate-v2-rebar-diameter]");
+  const rebarLengthInput = document.querySelector("[data-estimate-v2-rebar-length]");
   const orthoModeInput = document.querySelector("[data-estimate-v2-ortho]");
   const objectSnapInput = document.querySelector("[data-estimate-v2-object-snap]");
   const snapGridInput = document.querySelector("[data-estimate-v2-snap-grid]");
@@ -4539,6 +4592,8 @@ function collectEstimateV2DraftFromDom() {
     tileWidth: tileWidthInput ? tileWidthInput.value : current.tileWidth,
     tileWastePercent: tileWasteInput ? tileWasteInput.value : current.tileWastePercent,
     tilePrice: tilePriceInput ? tilePriceInput.value : current.tilePrice,
+    rebarDiameter: rebarDiameterInput ? rebarDiameterInput.value : current.rebarDiameter,
+    rebarLength: rebarLengthInput ? rebarLengthInput.value : current.rebarLength,
     orthoModeEnabled: orthoModeInput ? orthoModeInput.checked : current.orthoModeEnabled,
     objectSnapEnabled: objectSnapInput ? objectSnapInput.checked : current.objectSnapEnabled,
     snapGridEnabled: snapGridInput ? snapGridInput.checked : current.snapGridEnabled,
@@ -5370,6 +5425,8 @@ function defaultEstimateV2Draft() {
     tileWidth: TILE_TAKEOFF.defaultWidth,
     tileWastePercent: TILE_TAKEOFF.defaultWastePercent,
     tilePrice: 0,
+    rebarDiameter: REBAR_DIAMETER_OPTIONS[0],
+    rebarLength: REBAR_LENGTH_OPTIONS[0],
     planFileName: "",
     takeoffPage: 1,
     takeoffPageCount: 0,
@@ -5443,6 +5500,8 @@ function normalizeEstimateV2Draft(draft) {
     tileWidth: Math.max(0, Number(source.tileWidth) || TILE_TAKEOFF.defaultWidth),
     tileWastePercent: Number.isFinite(tileWastePercent) ? Math.max(0, tileWastePercent) : TILE_TAKEOFF.defaultWastePercent,
     tilePrice: Math.max(0, Number(source.tilePrice) || 0),
+    rebarDiameter: REBAR_DIAMETER_OPTIONS.includes(Number(source.rebarDiameter)) ? Number(source.rebarDiameter) : REBAR_DIAMETER_OPTIONS[0],
+    rebarLength: REBAR_LENGTH_OPTIONS.includes(Number(source.rebarLength)) ? Number(source.rebarLength) : REBAR_LENGTH_OPTIONS[0],
     planFileName: String(source.planFileName || source.fileName || "").trim(),
     takeoffPage: Math.max(1, Number(source.takeoffPage) || 1),
     takeoffPageCount: Math.max(0, Number(source.takeoffPageCount) || 0),
@@ -5547,6 +5606,8 @@ function normalizeEstimateV2TakeoffRow(row) {
     tilePrice: Math.max(0, Number(row && row.tilePrice) || 0),
     tileArea,
     tilePieces,
+    rebarDiameter: REBAR_DIAMETER_OPTIONS.includes(Number(row && row.rebarDiameter)) ? Number(row && row.rebarDiameter) : REBAR_DIAMETER_OPTIONS[0],
+    rebarLength: REBAR_LENGTH_OPTIONS.includes(Number(row && row.rebarLength)) ? Number(row && row.rebarLength) : REBAR_LENGTH_OPTIONS[0],
     columnWidth: Math.max(0, Number(row && row.columnWidth) || 0),
     columnDepth: Math.max(0, Number(row && row.columnDepth) || 0),
     columnHeight: Math.max(0, Number(row && row.columnHeight) || 0),
