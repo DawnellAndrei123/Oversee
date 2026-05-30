@@ -102,9 +102,8 @@ const STEEL_BEAM_DEFAULTS = {
   crankAllowancePerBar: 0
 };
 const STEEL_WALL_VERTICAL_MODE_OPTIONS = [
-  { key: "full-height", label: "Full Wall Height" },
-  { key: "dowel", label: "Dowel" },
-  { key: "market-length", label: "Full Market Rebar Length" }
+  { key: "full-height", label: "Full Wall Height / Rebar Length" },
+  { key: "dowel", label: "Dowel" }
 ];
 const STEEL_WALL_DEFAULTS = {
   height: 3,
@@ -1571,7 +1570,7 @@ function renderEstimateV2TakeoffActiveInputs(draft, activeTool) {
           </label>
           <label class="estimate-v2-field">
             <span>Dowel Length (m)</span>
-            <input data-estimate-v2-takeoff-input data-estimate-v2-steel-wall-dowel-length type="number" min="0" step="0.01" value="${numberInputValue(draft.steelWallDowelLength)}" placeholder="0.60">
+            <input data-estimate-v2-takeoff-input data-estimate-v2-steel-wall-dowel-length type="number" min="0" step="0.01" value="${numberInputValue(draft.steelWallDowelLength)}" placeholder="0.60" ${draft.steelWallVerticalMode === "dowel" ? "" : "disabled"}>
           </label>
         ` : ""}
         <label class="estimate-v2-field">
@@ -2684,6 +2683,7 @@ function estimateV2SteelBeamTakeoff(source, beamLengthInput, options = {}) {
 }
 
 function steelWallVerticalModeOption(modeKey) {
+  if (modeKey === "market-length") return STEEL_WALL_VERTICAL_MODE_OPTIONS[0];
   return STEEL_WALL_VERTICAL_MODE_OPTIONS.find((option) => option.key === modeKey) || STEEL_WALL_VERTICAL_MODE_OPTIONS[0];
 }
 
@@ -2727,9 +2727,7 @@ function estimateV2SteelWallTakeoff(source, wallLengthInput, options = {}) {
   const steelWallHorizontalBarCount = steelWallHorizontalSpacing > 0 ? Math.ceil(steelWallHeight / steelWallHorizontalSpacing) + 1 : 0;
   const steelWallVerticalBarLength = steelWallVerticalMode.key === "dowel"
     ? steelWallDowelLength
-    : steelWallVerticalMode.key === "market-length"
-      ? rebarLength
-      : steelWallHeight + steelWallAllowancePerBar;
+    : steelWallHeight + steelWallAllowancePerBar;
   const steelWallHorizontalBarLength = wallLength + steelWallAllowancePerBar;
   const steelWallVerticalTotalLength = steelWallVerticalBarCount * steelWallVerticalBarLength;
   const steelWallHorizontalTotalLength = steelWallHorizontalBarCount * steelWallHorizontalBarLength;
