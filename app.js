@@ -42,7 +42,7 @@ const ESTIMATE_V2_TAKEOFF_TOOLS = [
   { key: "footing-concrete", label: "Footing", type: "concrete-count", unit: "cu.m", defaultName: "Column Footing Concrete", color: "#8b5cf6" },
   { key: "steel-column", label: "Column", type: "count", unit: "pcs", defaultName: "Column Rebar", color: "#60a5fa", steelwork: true },
   { key: "steel-footing", label: "Footing", type: "count", unit: "pcs", defaultName: "Footing Rebar", color: "#818cf8", steelwork: true },
-  { key: "steel-beam", label: "Beam", type: "count", unit: "pcs", defaultName: "Beam Rebar", color: "#c084fc", steelwork: true },
+  { key: "steel-beam", label: "Beam", type: "linear", unit: "pcs", defaultName: "Beam Rebar", color: "#c084fc", steelwork: true },
   { key: "steel-wall", label: "Wall", type: "count", unit: "pcs", defaultName: "Wall Rebar", color: "#f472b6", steelwork: true },
   { key: "steel-slab", label: "Slab", type: "area", unit: "pcs", defaultName: "Slab Rebar", color: "#fb7185", steelwork: true },
   { key: "pipe-length", label: "Pipe Length", type: "linear", unit: "lm", defaultName: "Pipe Line", color: "#38bdf8" },
@@ -92,6 +92,14 @@ const STEEL_SLAB_LEVEL_OPTIONS = [
 const STEEL_SLAB_DEFAULTS = {
   rebarSpacing: 0.2,
   allowancePerBar: 0
+};
+const STEEL_BEAM_DEFAULTS = {
+  width: 0.2,
+  depth: 0.4,
+  mainBars: 4,
+  stirrupSpacing: 0.2,
+  crankBars: 2,
+  crankAllowancePerBar: 0
 };
 const SNAP_GRID_TOOL_TYPES = new Set(["area", "linear", "curve", "chb"]);
 const ORTHO_TOOL_TYPES = new Set(["area", "linear", "chb"]);
@@ -1503,6 +1511,32 @@ function renderEstimateV2TakeoffActiveInputs(draft, activeTool) {
             <input data-estimate-v2-takeoff-input data-estimate-v2-steel-slab-spacing type="number" min="0" step="0.01" value="${numberInputValue(draft.steelSlabRebarSpacing)}" placeholder="0.20">
           </label>
         ` : ""}
+        ${activeTool.key === "steel-beam" ? `
+          <label class="estimate-v2-field">
+            <span>Beam Width (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-beam-width type="number" min="0" step="0.01" value="${numberInputValue(draft.beamWidth)}" placeholder="0.20">
+          </label>
+          <label class="estimate-v2-field">
+            <span>Beam Depth (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-beam-depth type="number" min="0" step="0.01" value="${numberInputValue(draft.beamDepth)}" placeholder="0.40">
+          </label>
+          <label class="estimate-v2-field">
+            <span>Main Bars</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-beam-main-bars type="number" min="1" step="1" value="${numberInputValue(draft.beamMainBars)}" placeholder="4">
+          </label>
+          <label class="estimate-v2-field">
+            <span>Stirrup Spacing (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-beam-stirrup-spacing type="number" min="0" step="0.01" value="${numberInputValue(draft.beamStirrupSpacing)}" placeholder="0.20">
+          </label>
+          <label class="estimate-v2-field">
+            <span>Crank Bars</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-beam-crank-bars type="number" min="0" step="1" value="${numberInputValue(draft.beamCrankBars)}" placeholder="2">
+          </label>
+          <label class="estimate-v2-field">
+            <span>Crank Allowance / Bar (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-beam-crank-allowance type="number" min="0" step="0.01" value="${numberInputValue(draft.beamCrankAllowancePerBar)}" placeholder="0.00">
+          </label>
+        ` : ""}
         <label class="estimate-v2-field">
           <span>Rebar Diameter</span>
           <select data-estimate-v2-takeoff-input data-estimate-v2-rebar-diameter>
@@ -1888,7 +1922,7 @@ function renderEstimateV2TakeoffRow(row) {
     <tr data-estimate-v2-takeoff-row="${escapeAttribute(normalized.id)}" class="${state.estimateV2EditingRowId === normalized.id ? "editing-row" : ""}">
       <td><input class="estimate-input description" data-estimate-v2-takeoff-input data-field="description" value="${escapeAttribute(normalized.description)}" placeholder="Item"></td>
       <td><strong>${escapeHtml(tool.label)}</strong>${typeDetails}</td>
-      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0" ${tool.type === "chb" || tool.key === "steel-column" || tool.key === "steel-footing" || tool.key === "steel-slab" ? "readonly" : ""}></td>
+      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0" ${tool.type === "chb" || tool.key === "steel-column" || tool.key === "steel-footing" || tool.key === "steel-slab" || tool.key === "steel-beam" ? "readonly" : ""}></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="unit" value="${escapeAttribute(normalized.unit)}" placeholder="unit"></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(computedCost)}" placeholder="0.00" ${estimateV2RowHasComputedMaterialCost(normalized) ? "readonly" : ""}></td>
       <td data-estimate-v2-row-total title="${escapeAttribute(formatCurrency(rowTotal))}">${formatEstimateV2TotalCost(rowTotal)}</td>
@@ -1989,6 +2023,21 @@ function renderEstimateV2SteelworkDetails(row) {
       <small>Total bars: ${formatInteger(row.slabTotalBars)} pcs | Total length: ${formatSwaNumber(row.totalRebarLength)} m | Selected stock: ${formatInteger(row.totalStockBars)} pcs @ ${formatSwaNumber(row.rebarLength)} m</small>
       ${stockOptionsText ? `<small>Total stock options: ${escapeHtml(stockOptionsText)}</small>` : ""}
       <small>Spacing: ${formatSwaNumber(row.steelSlabRebarSpacing)} m both ways | Weight estimate: ${formatSwaNumber(row.totalRebarWeightKg)} kg | ${formatSwaNumber(row.rebarDiameter)} mm</small>
+    `;
+  }
+  if (row.tool === "steel-beam") {
+    const stockOptions = estimateV2SteelBeamStockOptionsFromRow(row);
+    const stockOptionsText = stockOptions
+      .map((option) => `${formatSwaNumber(option.length)}m=${formatInteger(option.totalStockBars)} pcs`)
+      .join(" | ");
+    return `
+      <small>Beam length: ${formatSwaNumber(row.beamLength)} m | Section ${formatSwaNumber(row.beamWidth)} x ${formatSwaNumber(row.beamDepth)} m</small>
+      <small>Main bars: ${formatInteger(row.beamMainBars)} pcs x ${formatSwaNumber(row.beamLength)} m = ${formatSwaNumber(row.beamMainTotalLength)} m</small>
+      <small>Stirrups: ${formatInteger(row.beamStirrupCount)} pcs x ${formatSwaNumber(row.beamStirrupLengthEach)} m = ${formatSwaNumber(row.beamStirrupTotalLength)} m @ ${formatSwaNumber(row.beamStirrupSpacing)} m spacing</small>
+      <small>Crank bars: ${formatInteger(row.beamCrankBars)} pcs x ${formatSwaNumber(row.beamCrankLengthEach)} m = ${formatSwaNumber(row.beamCrankTotalLength)} m</small>
+      <small>Total length: ${formatSwaNumber(row.totalRebarLength)} m | Selected stock: ${formatInteger(row.totalStockBars)} pcs @ ${formatSwaNumber(row.rebarLength)} m</small>
+      ${stockOptionsText ? `<small>Total stock options: ${escapeHtml(stockOptionsText)}</small>` : ""}
+      <small>Weight estimate: ${formatSwaNumber(row.totalRebarWeightKg)} kg | ${formatSwaNumber(row.rebarDiameter)} mm</small>
     `;
   }
   return `
@@ -2499,6 +2548,83 @@ function estimateV2SteelSlabTakeoff(source, points, slabAreaInput, options = {})
     slabXTotalLength,
     slabYTotalLength,
     slabTotalBars,
+    totalRebarLength,
+    totalRebarWeightKg,
+    totalStockBars,
+    stockLengthOptions
+  };
+}
+
+function estimateV2SteelBeamStockOptions(totalLength) {
+  const beamRebarLength = Math.max(0, Number(totalLength) || 0);
+  return REBAR_LENGTH_OPTIONS.map((length) => {
+    const stockLength = Math.max(0, Number(length) || 0);
+    const totalStockBars = stockLength > 0 ? Math.ceil(beamRebarLength / stockLength) : 0;
+    return {
+      length: stockLength,
+      totalStockBars
+    };
+  });
+}
+
+function estimateV2SteelBeamStockOptionsFromRow(row) {
+  if (Array.isArray(row && row.stockLengthOptions) && row.stockLengthOptions.length) {
+    return row.stockLengthOptions.map((option) => ({
+      length: Math.max(0, Number(option && option.length) || 0),
+      totalStockBars: Math.max(0, Number(option && option.totalStockBars) || 0)
+    })).filter((option) => option.length);
+  }
+  return estimateV2SteelBeamStockOptions(row && row.totalRebarLength);
+}
+
+function estimateV2SteelBeamTakeoff(source, beamLengthInput, options = {}) {
+  const beamLength = Math.max(0, Number(beamLengthInput) || Number(source && source.beamLength) || 0);
+  if (!beamLength) {
+    if (!options.silent) toast("Draw the beam length first.");
+    return null;
+  }
+  const beamWidth = Math.max(0, Number(source && source.beamWidth) || STEEL_BEAM_DEFAULTS.width);
+  const beamDepth = Math.max(0, Number(source && source.beamDepth) || STEEL_BEAM_DEFAULTS.depth);
+  if (!beamWidth || !beamDepth) {
+    if (!options.silent) toast("Enter beam width and depth.");
+    return null;
+  }
+  const rebarDiameter = REBAR_DIAMETER_OPTIONS.includes(Number(source && source.rebarDiameter)) ? Number(source.rebarDiameter) : REBAR_DIAMETER_OPTIONS[0];
+  const rebarLength = REBAR_LENGTH_OPTIONS.includes(Number(source && source.rebarLength)) ? Number(source.rebarLength) : REBAR_LENGTH_OPTIONS[0];
+  const beamMainBars = Math.max(1, Math.ceil(Number(source && source.beamMainBars) || STEEL_BEAM_DEFAULTS.mainBars));
+  const beamStirrupSpacing = Math.max(0, Number(source && source.beamStirrupSpacing) || STEEL_BEAM_DEFAULTS.stirrupSpacing);
+  const sourceBeamCrankBars = Number(source && source.beamCrankBars);
+  const beamCrankBars = Number.isFinite(sourceBeamCrankBars)
+    ? Math.max(0, Math.ceil(sourceBeamCrankBars))
+    : STEEL_BEAM_DEFAULTS.crankBars;
+  const beamCrankAllowancePerBar = Math.max(0, Number(source && source.beamCrankAllowancePerBar) || STEEL_BEAM_DEFAULTS.crankAllowancePerBar);
+  const beamMainTotalLength = beamMainBars * beamLength;
+  const beamStirrupCount = beamStirrupSpacing > 0 ? Math.ceil(beamLength / beamStirrupSpacing) + 1 : 0;
+  const beamStirrupLengthEach = 2 * (beamWidth + beamDepth);
+  const beamStirrupTotalLength = beamStirrupCount * beamStirrupLengthEach;
+  const beamCrankLengthEach = beamLength + beamCrankAllowancePerBar;
+  const beamCrankTotalLength = beamCrankBars * beamCrankLengthEach;
+  const totalRebarLength = beamMainTotalLength + beamStirrupTotalLength + beamCrankTotalLength;
+  const stockLengthOptions = estimateV2SteelBeamStockOptions(totalRebarLength);
+  const selectedStockOption = stockLengthOptions.find((option) => option.length === rebarLength) || stockLengthOptions[0] || {};
+  const totalStockBars = Math.max(0, Number(selectedStockOption.totalStockBars) || 0);
+  const totalRebarWeightKg = totalRebarLength * rebarUnitWeight(rebarDiameter);
+  return {
+    beamLength,
+    beamWidth,
+    beamDepth,
+    rebarDiameter,
+    rebarLength,
+    beamMainBars,
+    beamMainTotalLength,
+    beamStirrupSpacing,
+    beamStirrupCount,
+    beamStirrupLengthEach,
+    beamStirrupTotalLength,
+    beamCrankBars,
+    beamCrankAllowancePerBar,
+    beamCrankLengthEach,
+    beamCrankTotalLength,
     totalRebarLength,
     totalRebarWeightKg,
     totalStockBars,
@@ -4409,6 +4535,13 @@ function finishEstimateV2Takeoff() {
       return;
     }
     quantity = estimateV2PolylinePixels(points) * draft.metersPerPixel;
+    if (tool.key === "steel-beam") {
+      const steelBeam = estimateV2SteelBeamTakeoff(draft, quantity);
+      if (!steelBeam) return;
+      quantity = steelBeam.totalStockBars;
+      unit = "pcs";
+      Object.assign(takeoffDetails, steelBeam);
+    }
     costPerUnit = draft.takeoffCostPerUnit;
   } else if (tool.type === "curve") {
     if (points.length < 2) {
@@ -4715,6 +4848,14 @@ async function editEstimateV2Takeoff(rowId) {
     draft.steelSlabLevel = row.steelSlabLevel || draft.steelSlabLevel;
     draft.steelSlabRebarSpacing = row.steelSlabRebarSpacing || draft.steelSlabRebarSpacing;
   }
+  if (row.tool === "steel-beam") {
+    draft.beamWidth = row.beamWidth || draft.beamWidth;
+    draft.beamDepth = row.beamDepth || draft.beamDepth;
+    draft.beamMainBars = row.beamMainBars || draft.beamMainBars;
+    draft.beamStirrupSpacing = row.beamStirrupSpacing || draft.beamStirrupSpacing;
+    draft.beamCrankBars = row.beamCrankBars || draft.beamCrankBars;
+    draft.beamCrankAllowancePerBar = row.beamCrankAllowancePerBar || draft.beamCrankAllowancePerBar;
+  }
   if (row.chbWallHeight) draft.chbWallHeight = row.chbWallHeight;
   if (row.chbWastePercent || row.chbWastePercent === 0) draft.chbWastePercent = row.chbWastePercent;
   if (row.chbBlocksPerSquareMeter) draft.chbBlocksPerSquareMeter = row.chbBlocksPerSquareMeter;
@@ -5003,6 +5144,12 @@ function collectEstimateV2DraftFromDom() {
   const lapAllowanceInput = document.querySelector("[data-estimate-v2-lap-allowance]");
   const steelSlabLevelInput = document.querySelector("[data-estimate-v2-steel-slab-level]");
   const steelSlabSpacingInput = document.querySelector("[data-estimate-v2-steel-slab-spacing]");
+  const beamWidthInput = document.querySelector("[data-estimate-v2-beam-width]");
+  const beamDepthInput = document.querySelector("[data-estimate-v2-beam-depth]");
+  const beamMainBarsInput = document.querySelector("[data-estimate-v2-beam-main-bars]");
+  const beamStirrupSpacingInput = document.querySelector("[data-estimate-v2-beam-stirrup-spacing]");
+  const beamCrankBarsInput = document.querySelector("[data-estimate-v2-beam-crank-bars]");
+  const beamCrankAllowanceInput = document.querySelector("[data-estimate-v2-beam-crank-allowance]");
   const orthoModeInput = document.querySelector("[data-estimate-v2-ortho]");
   const objectSnapInput = document.querySelector("[data-estimate-v2-object-snap]");
   const snapGridInput = document.querySelector("[data-estimate-v2-snap-grid]");
@@ -5052,6 +5199,12 @@ function collectEstimateV2DraftFromDom() {
     lapAllowancePerBar: lapAllowanceInput ? lapAllowanceInput.value : current.lapAllowancePerBar,
     steelSlabLevel: steelSlabLevelInput ? steelSlabLevelInput.value : current.steelSlabLevel,
     steelSlabRebarSpacing: steelSlabSpacingInput ? steelSlabSpacingInput.value : current.steelSlabRebarSpacing,
+    beamWidth: beamWidthInput ? beamWidthInput.value : current.beamWidth,
+    beamDepth: beamDepthInput ? beamDepthInput.value : current.beamDepth,
+    beamMainBars: beamMainBarsInput ? beamMainBarsInput.value : current.beamMainBars,
+    beamStirrupSpacing: beamStirrupSpacingInput ? beamStirrupSpacingInput.value : current.beamStirrupSpacing,
+    beamCrankBars: beamCrankBarsInput ? beamCrankBarsInput.value : current.beamCrankBars,
+    beamCrankAllowancePerBar: beamCrankAllowanceInput ? beamCrankAllowanceInput.value : current.beamCrankAllowancePerBar,
     orthoModeEnabled: orthoModeInput ? orthoModeInput.checked : current.orthoModeEnabled,
     objectSnapEnabled: objectSnapInput ? objectSnapInput.checked : current.objectSnapEnabled,
     snapGridEnabled: snapGridInput ? snapGridInput.checked : current.snapGridEnabled,
@@ -5131,6 +5284,15 @@ function collectEstimateV2TakeoffRowsFromDom(fallbackRows = [], activeSettings =
       if (steelSlab) {
         quantity = steelSlab.totalStockBars;
         Object.assign(takeoffDetails, steelSlab);
+      }
+    }
+    if (tool.key === "steel-beam") {
+      const previousPoints = Array.isArray(previous.points) ? previous.points : [];
+      const previousBeamLength = previous.beamLength || (previous.metersPerPixel ? estimateV2PolylinePixels(previousPoints) * previous.metersPerPixel : 0);
+      const steelBeam = estimateV2SteelBeamTakeoff(previous, previousBeamLength, { silent: true });
+      if (steelBeam) {
+        quantity = steelBeam.totalStockBars;
+        Object.assign(takeoffDetails, steelBeam);
       }
     }
     if (tool.type === "concrete-count") {
@@ -5914,6 +6076,12 @@ function defaultEstimateV2Draft() {
     lapAllowancePerBar: STEEL_COLUMN_DEFAULTS.lapAllowancePerBar,
     steelSlabLevel: STEEL_SLAB_LEVEL_OPTIONS[0].key,
     steelSlabRebarSpacing: STEEL_SLAB_DEFAULTS.rebarSpacing,
+    beamWidth: STEEL_BEAM_DEFAULTS.width,
+    beamDepth: STEEL_BEAM_DEFAULTS.depth,
+    beamMainBars: STEEL_BEAM_DEFAULTS.mainBars,
+    beamStirrupSpacing: STEEL_BEAM_DEFAULTS.stirrupSpacing,
+    beamCrankBars: STEEL_BEAM_DEFAULTS.crankBars,
+    beamCrankAllowancePerBar: STEEL_BEAM_DEFAULTS.crankAllowancePerBar,
     planFileName: "",
     takeoffPage: 1,
     takeoffPageCount: 0,
@@ -5956,6 +6124,7 @@ function normalizeEstimateV2Draft(draft) {
   const concreteWastePercent = Number(source.concreteWastePercent);
   const floorSlabThickness = Number(source.floorSlabThickness);
   const tileWastePercent = Number(source.tileWastePercent);
+  const beamCrankBars = Number(source.beamCrankBars);
   return {
     selectedProjectId: String(source.selectedProjectId || "").trim(),
     planType: PLAN_TYPES.includes(source.planType) ? source.planType : PLAN_TYPES[0],
@@ -5994,6 +6163,12 @@ function normalizeEstimateV2Draft(draft) {
     lapAllowancePerBar: Math.max(0, Number(source.lapAllowancePerBar) || STEEL_COLUMN_DEFAULTS.lapAllowancePerBar),
     steelSlabLevel: steelSlabLevelOption(source.steelSlabLevel).key,
     steelSlabRebarSpacing: Math.max(0, Number(source.steelSlabRebarSpacing) || STEEL_SLAB_DEFAULTS.rebarSpacing),
+    beamWidth: Math.max(0, Number(source.beamWidth) || STEEL_BEAM_DEFAULTS.width),
+    beamDepth: Math.max(0, Number(source.beamDepth) || STEEL_BEAM_DEFAULTS.depth),
+    beamMainBars: Math.max(1, Math.ceil(Number(source.beamMainBars) || STEEL_BEAM_DEFAULTS.mainBars)),
+    beamStirrupSpacing: Math.max(0, Number(source.beamStirrupSpacing) || STEEL_BEAM_DEFAULTS.stirrupSpacing),
+    beamCrankBars: Number.isFinite(beamCrankBars) ? Math.max(0, Math.ceil(beamCrankBars)) : STEEL_BEAM_DEFAULTS.crankBars,
+    beamCrankAllowancePerBar: Math.max(0, Number(source.beamCrankAllowancePerBar) || STEEL_BEAM_DEFAULTS.crankAllowancePerBar),
     planFileName: String(source.planFileName || source.fileName || "").trim(),
     takeoffPage: Math.max(1, Number(source.takeoffPage) || 1),
     takeoffPageCount: Math.max(0, Number(source.takeoffPageCount) || 0),
@@ -6064,7 +6239,7 @@ function normalizeEstimateV2TakeoffRow(row) {
   const steelTotalStockBars = Math.max(0, Number(row && row.totalStockBars) || (
     rowLongitudinalStockBars + rowTieStockBars + rowLapStockBars
   ) || 0);
-  const quantity = Math.max(0, Number(row && row.quantity) || (tool.key === "steel-column" ? steelTotalStockBars : 0));
+  const quantity = Math.max(0, Number(row && row.quantity) || (estimateV2IsSteelworkTool(tool) ? steelTotalStockBars : 0));
   const tileLength = Math.max(0, Number(row && row.tileLength) || TILE_TAKEOFF.defaultLength);
   const tileWidth = Math.max(0, Number(row && row.tileWidth) || TILE_TAKEOFF.defaultWidth);
   const tileWastePercent = Math.max(0, Number(row && row.tileWastePercent) || 0);
@@ -6166,6 +6341,19 @@ function normalizeEstimateV2TakeoffRow(row) {
     slabXTotalLength: Math.max(0, Number(row && row.slabXTotalLength) || 0),
     slabYTotalLength: Math.max(0, Number(row && row.slabYTotalLength) || 0),
     slabTotalBars: Math.max(0, Number(row && row.slabTotalBars) || 0),
+    beamLength: Math.max(0, Number(row && row.beamLength) || 0),
+    beamWidth: Math.max(0, Number(row && row.beamWidth) || STEEL_BEAM_DEFAULTS.width),
+    beamDepth: Math.max(0, Number(row && row.beamDepth) || STEEL_BEAM_DEFAULTS.depth),
+    beamMainBars: Math.max(1, Math.ceil(Number(row && row.beamMainBars) || STEEL_BEAM_DEFAULTS.mainBars)),
+    beamMainTotalLength: Math.max(0, Number(row && row.beamMainTotalLength) || 0),
+    beamStirrupSpacing: Math.max(0, Number(row && row.beamStirrupSpacing) || STEEL_BEAM_DEFAULTS.stirrupSpacing),
+    beamStirrupCount: Math.max(0, Number(row && row.beamStirrupCount) || 0),
+    beamStirrupLengthEach: Math.max(0, Number(row && row.beamStirrupLengthEach) || 0),
+    beamStirrupTotalLength: Math.max(0, Number(row && row.beamStirrupTotalLength) || 0),
+    beamCrankBars: Math.max(0, Math.ceil(Number(row && row.beamCrankBars) || 0)),
+    beamCrankAllowancePerBar: Math.max(0, Number(row && row.beamCrankAllowancePerBar) || 0),
+    beamCrankLengthEach: Math.max(0, Number(row && row.beamCrankLengthEach) || 0),
+    beamCrankTotalLength: Math.max(0, Number(row && row.beamCrankTotalLength) || 0),
     columnWidth: Math.max(0, Number(row && row.columnWidth) || 0),
     columnDepth: Math.max(0, Number(row && row.columnDepth) || 0),
     columnHeight: Math.max(0, Number(row && row.columnHeight) || 0),
