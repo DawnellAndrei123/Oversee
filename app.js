@@ -43,7 +43,7 @@ const ESTIMATE_V2_TAKEOFF_TOOLS = [
   { key: "steel-column", label: "Column", type: "count", unit: "pcs", defaultName: "Column Rebar", color: "#60a5fa", steelwork: true },
   { key: "steel-footing", label: "Footing", type: "count", unit: "pcs", defaultName: "Footing Rebar", color: "#818cf8", steelwork: true },
   { key: "steel-beam", label: "Beam", type: "linear", unit: "pcs", defaultName: "Beam Rebar", color: "#c084fc", steelwork: true },
-  { key: "steel-wall", label: "Wall", type: "count", unit: "pcs", defaultName: "Wall Rebar", color: "#f472b6", steelwork: true },
+  { key: "steel-wall", label: "Wall", type: "linear", unit: "pcs", defaultName: "Wall Rebar", color: "#f472b6", steelwork: true },
   { key: "steel-slab", label: "Slab", type: "area", unit: "pcs", defaultName: "Slab Rebar", color: "#fb7185", steelwork: true },
   { key: "pipe-length", label: "Pipe Length", type: "linear", unit: "lm", defaultName: "Pipe Line", color: "#38bdf8" },
   { key: "wire-length", label: "Wire Length", type: "linear", unit: "lm", defaultName: "Electrical Wiring", color: "#a78bfa" },
@@ -100,6 +100,19 @@ const STEEL_BEAM_DEFAULTS = {
   stirrupSpacing: 0.2,
   crankBars: 2,
   crankAllowancePerBar: 0
+};
+const STEEL_WALL_VERTICAL_MODE_OPTIONS = [
+  { key: "full-height", label: "Full Wall Height" },
+  { key: "dowel", label: "Dowel" },
+  { key: "market-length", label: "Full Market Rebar Length" }
+];
+const STEEL_WALL_DEFAULTS = {
+  height: 3,
+  verticalSpacing: 0.6,
+  horizontalSpacing: 0.6,
+  dowelLength: 0.6,
+  allowancePerBar: 0,
+  verticalMode: "full-height"
 };
 const SNAP_GRID_TOOL_TYPES = new Set(["area", "linear", "curve", "chb"]);
 const ORTHO_TOOL_TYPES = new Set(["area", "linear", "chb"]);
@@ -1537,6 +1550,30 @@ function renderEstimateV2TakeoffActiveInputs(draft, activeTool) {
             <input data-estimate-v2-takeoff-input data-estimate-v2-beam-crank-allowance type="number" min="0" step="0.01" value="${numberInputValue(draft.beamCrankAllowancePerBar)}" placeholder="0.00">
           </label>
         ` : ""}
+        ${activeTool.key === "steel-wall" ? `
+          <label class="estimate-v2-field">
+            <span>Wall Height (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-steel-wall-height type="number" min="0" step="0.01" value="${numberInputValue(draft.steelWallHeight)}" placeholder="3.00">
+          </label>
+          <label class="estimate-v2-field">
+            <span>Vertical Bar Type</span>
+            <select data-estimate-v2-takeoff-input data-estimate-v2-steel-wall-mode>
+              ${STEEL_WALL_VERTICAL_MODE_OPTIONS.map((option) => `<option value="${escapeAttribute(option.key)}" ${draft.steelWallVerticalMode === option.key ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="estimate-v2-field">
+            <span>Vertical Spacing (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-steel-wall-vertical-spacing type="number" min="0" step="0.01" value="${numberInputValue(draft.steelWallVerticalSpacing)}" placeholder="0.60">
+          </label>
+          <label class="estimate-v2-field">
+            <span>Horizontal Spacing (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-steel-wall-horizontal-spacing type="number" min="0" step="0.01" value="${numberInputValue(draft.steelWallHorizontalSpacing)}" placeholder="0.60">
+          </label>
+          <label class="estimate-v2-field">
+            <span>Dowel Length (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-steel-wall-dowel-length type="number" min="0" step="0.01" value="${numberInputValue(draft.steelWallDowelLength)}" placeholder="0.60">
+          </label>
+        ` : ""}
         <label class="estimate-v2-field">
           <span>Rebar Diameter</span>
           <select data-estimate-v2-takeoff-input data-estimate-v2-rebar-diameter>
@@ -1922,7 +1959,7 @@ function renderEstimateV2TakeoffRow(row) {
     <tr data-estimate-v2-takeoff-row="${escapeAttribute(normalized.id)}" class="${state.estimateV2EditingRowId === normalized.id ? "editing-row" : ""}">
       <td><input class="estimate-input description" data-estimate-v2-takeoff-input data-field="description" value="${escapeAttribute(normalized.description)}" placeholder="Item"></td>
       <td><strong>${escapeHtml(tool.label)}</strong>${typeDetails}</td>
-      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0" ${tool.type === "chb" || tool.key === "steel-column" || tool.key === "steel-footing" || tool.key === "steel-slab" || tool.key === "steel-beam" ? "readonly" : ""}></td>
+      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0" ${tool.type === "chb" || tool.key === "steel-column" || tool.key === "steel-footing" || tool.key === "steel-slab" || tool.key === "steel-beam" || tool.key === "steel-wall" ? "readonly" : ""}></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="unit" value="${escapeAttribute(normalized.unit)}" placeholder="unit"></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(computedCost)}" placeholder="0.00" ${estimateV2RowHasComputedMaterialCost(normalized) ? "readonly" : ""}></td>
       <td data-estimate-v2-row-total title="${escapeAttribute(formatCurrency(rowTotal))}">${formatEstimateV2TotalCost(rowTotal)}</td>
@@ -2038,6 +2075,20 @@ function renderEstimateV2SteelworkDetails(row) {
       <small>Total length: ${formatSwaNumber(row.totalRebarLength)} m | Selected stock: ${formatInteger(row.totalStockBars)} pcs @ ${formatSwaNumber(row.rebarLength)} m</small>
       ${stockOptionsText ? `<small>Total stock options: ${escapeHtml(stockOptionsText)}</small>` : ""}
       <small>Weight estimate: ${formatSwaNumber(row.totalRebarWeightKg)} kg | ${formatSwaNumber(row.rebarDiameter)} mm</small>
+    `;
+  }
+  if (row.tool === "steel-wall") {
+    const stockOptions = estimateV2SteelWallStockOptionsFromRow(row);
+    const stockOptionsText = stockOptions
+      .map((option) => `${formatSwaNumber(option.length)}m=${formatInteger(option.totalStockBars)} pcs`)
+      .join(" | ");
+    return `
+      <small>Wall: ${formatSwaNumber(row.wallLength)} m long x ${formatSwaNumber(row.steelWallHeight)} m high | ${escapeHtml(row.steelWallVerticalModeLabel)}</small>
+      <small>Vertical bars: ${formatInteger(row.steelWallVerticalBarCount)} pcs x ${formatSwaNumber(row.steelWallVerticalBarLength)} m = ${formatSwaNumber(row.steelWallVerticalTotalLength)} m</small>
+      <small>Horizontal bars: ${formatInteger(row.steelWallHorizontalBarCount)} pcs x ${formatSwaNumber(row.wallLength)} m = ${formatSwaNumber(row.steelWallHorizontalTotalLength)} m</small>
+      <small>Total length: ${formatSwaNumber(row.totalRebarLength)} m | Selected stock: ${formatInteger(row.totalStockBars)} pcs @ ${formatSwaNumber(row.rebarLength)} m</small>
+      ${stockOptionsText ? `<small>Total stock options: ${escapeHtml(stockOptionsText)}</small>` : ""}
+      <small>Spacing: V ${formatSwaNumber(row.steelWallVerticalSpacing)} m | H ${formatSwaNumber(row.steelWallHorizontalSpacing)} m | Weight estimate: ${formatSwaNumber(row.totalRebarWeightKg)} kg | ${formatSwaNumber(row.rebarDiameter)} mm</small>
     `;
   }
   return `
@@ -2625,6 +2676,87 @@ function estimateV2SteelBeamTakeoff(source, beamLengthInput, options = {}) {
     beamCrankAllowancePerBar,
     beamCrankLengthEach,
     beamCrankTotalLength,
+    totalRebarLength,
+    totalRebarWeightKg,
+    totalStockBars,
+    stockLengthOptions
+  };
+}
+
+function steelWallVerticalModeOption(modeKey) {
+  return STEEL_WALL_VERTICAL_MODE_OPTIONS.find((option) => option.key === modeKey) || STEEL_WALL_VERTICAL_MODE_OPTIONS[0];
+}
+
+function estimateV2SteelWallStockOptions(totalLength) {
+  const wallRebarLength = Math.max(0, Number(totalLength) || 0);
+  return REBAR_LENGTH_OPTIONS.map((length) => {
+    const stockLength = Math.max(0, Number(length) || 0);
+    const totalStockBars = stockLength > 0 ? Math.ceil(wallRebarLength / stockLength) : 0;
+    return {
+      length: stockLength,
+      totalStockBars
+    };
+  });
+}
+
+function estimateV2SteelWallStockOptionsFromRow(row) {
+  if (Array.isArray(row && row.stockLengthOptions) && row.stockLengthOptions.length) {
+    return row.stockLengthOptions.map((option) => ({
+      length: Math.max(0, Number(option && option.length) || 0),
+      totalStockBars: Math.max(0, Number(option && option.totalStockBars) || 0)
+    })).filter((option) => option.length);
+  }
+  return estimateV2SteelWallStockOptions(row && row.totalRebarLength);
+}
+
+function estimateV2SteelWallTakeoff(source, wallLengthInput, options = {}) {
+  const wallLength = Math.max(0, Number(wallLengthInput) || Number(source && source.wallLength) || 0);
+  const steelWallHeight = Math.max(0, Number(source && source.steelWallHeight) || Number(source && source.chbWallHeight) || STEEL_WALL_DEFAULTS.height);
+  if (!wallLength || !steelWallHeight) {
+    if (!options.silent) toast("Draw the wall length and enter wall height.");
+    return null;
+  }
+  const rebarDiameter = REBAR_DIAMETER_OPTIONS.includes(Number(source && source.rebarDiameter)) ? Number(source.rebarDiameter) : REBAR_DIAMETER_OPTIONS[0];
+  const rebarLength = REBAR_LENGTH_OPTIONS.includes(Number(source && source.rebarLength)) ? Number(source.rebarLength) : REBAR_LENGTH_OPTIONS[0];
+  const steelWallVerticalMode = steelWallVerticalModeOption(source && source.steelWallVerticalMode);
+  const steelWallVerticalSpacing = Math.max(0, Number(source && source.steelWallVerticalSpacing) || STEEL_WALL_DEFAULTS.verticalSpacing);
+  const steelWallHorizontalSpacing = Math.max(0, Number(source && source.steelWallHorizontalSpacing) || STEEL_WALL_DEFAULTS.horizontalSpacing);
+  const steelWallDowelLength = Math.max(0, Number(source && source.steelWallDowelLength) || STEEL_WALL_DEFAULTS.dowelLength);
+  const steelWallAllowancePerBar = Math.max(0, Number(source && source.steelWallAllowancePerBar) || STEEL_WALL_DEFAULTS.allowancePerBar);
+  const steelWallVerticalBarCount = steelWallVerticalSpacing > 0 ? Math.ceil(wallLength / steelWallVerticalSpacing) + 1 : 0;
+  const steelWallHorizontalBarCount = steelWallHorizontalSpacing > 0 ? Math.ceil(steelWallHeight / steelWallHorizontalSpacing) + 1 : 0;
+  const steelWallVerticalBarLength = steelWallVerticalMode.key === "dowel"
+    ? steelWallDowelLength
+    : steelWallVerticalMode.key === "market-length"
+      ? rebarLength
+      : steelWallHeight + steelWallAllowancePerBar;
+  const steelWallHorizontalBarLength = wallLength + steelWallAllowancePerBar;
+  const steelWallVerticalTotalLength = steelWallVerticalBarCount * steelWallVerticalBarLength;
+  const steelWallHorizontalTotalLength = steelWallHorizontalBarCount * steelWallHorizontalBarLength;
+  const steelWallTotalBars = steelWallVerticalBarCount + steelWallHorizontalBarCount;
+  const totalRebarLength = steelWallVerticalTotalLength + steelWallHorizontalTotalLength;
+  const stockLengthOptions = estimateV2SteelWallStockOptions(totalRebarLength);
+  const selectedStockOption = stockLengthOptions.find((option) => option.length === rebarLength) || stockLengthOptions[0] || {};
+  const totalStockBars = Math.max(0, Number(selectedStockOption.totalStockBars) || 0);
+  const totalRebarWeightKg = totalRebarLength * rebarUnitWeight(rebarDiameter);
+  return {
+    wallLength,
+    steelWallHeight,
+    rebarDiameter,
+    rebarLength,
+    steelWallVerticalMode: steelWallVerticalMode.key,
+    steelWallVerticalModeLabel: steelWallVerticalMode.label,
+    steelWallVerticalSpacing,
+    steelWallHorizontalSpacing,
+    steelWallDowelLength,
+    steelWallAllowancePerBar,
+    steelWallVerticalBarCount,
+    steelWallHorizontalBarCount,
+    steelWallVerticalBarLength,
+    steelWallHorizontalBarLength,
+    steelWallVerticalTotalLength,
+    steelWallHorizontalTotalLength,
+    steelWallTotalBars,
     totalRebarLength,
     totalRebarWeightKg,
     totalStockBars,
@@ -4541,6 +4673,12 @@ function finishEstimateV2Takeoff() {
       quantity = steelBeam.totalStockBars;
       unit = "pcs";
       Object.assign(takeoffDetails, steelBeam);
+    } else if (tool.key === "steel-wall") {
+      const steelWall = estimateV2SteelWallTakeoff(draft, quantity);
+      if (!steelWall) return;
+      quantity = steelWall.totalStockBars;
+      unit = "pcs";
+      Object.assign(takeoffDetails, steelWall);
     }
     costPerUnit = draft.takeoffCostPerUnit;
   } else if (tool.type === "curve") {
@@ -4856,6 +4994,13 @@ async function editEstimateV2Takeoff(rowId) {
     draft.beamCrankBars = row.beamCrankBars || draft.beamCrankBars;
     draft.beamCrankAllowancePerBar = row.beamCrankAllowancePerBar || draft.beamCrankAllowancePerBar;
   }
+  if (row.tool === "steel-wall") {
+    draft.steelWallHeight = row.steelWallHeight || draft.steelWallHeight;
+    draft.steelWallVerticalMode = row.steelWallVerticalMode || draft.steelWallVerticalMode;
+    draft.steelWallVerticalSpacing = row.steelWallVerticalSpacing || draft.steelWallVerticalSpacing;
+    draft.steelWallHorizontalSpacing = row.steelWallHorizontalSpacing || draft.steelWallHorizontalSpacing;
+    draft.steelWallDowelLength = row.steelWallDowelLength || draft.steelWallDowelLength;
+  }
   if (row.chbWallHeight) draft.chbWallHeight = row.chbWallHeight;
   if (row.chbWastePercent || row.chbWastePercent === 0) draft.chbWastePercent = row.chbWastePercent;
   if (row.chbBlocksPerSquareMeter) draft.chbBlocksPerSquareMeter = row.chbBlocksPerSquareMeter;
@@ -5150,6 +5295,11 @@ function collectEstimateV2DraftFromDom() {
   const beamStirrupSpacingInput = document.querySelector("[data-estimate-v2-beam-stirrup-spacing]");
   const beamCrankBarsInput = document.querySelector("[data-estimate-v2-beam-crank-bars]");
   const beamCrankAllowanceInput = document.querySelector("[data-estimate-v2-beam-crank-allowance]");
+  const steelWallHeightInput = document.querySelector("[data-estimate-v2-steel-wall-height]");
+  const steelWallModeInput = document.querySelector("[data-estimate-v2-steel-wall-mode]");
+  const steelWallVerticalSpacingInput = document.querySelector("[data-estimate-v2-steel-wall-vertical-spacing]");
+  const steelWallHorizontalSpacingInput = document.querySelector("[data-estimate-v2-steel-wall-horizontal-spacing]");
+  const steelWallDowelLengthInput = document.querySelector("[data-estimate-v2-steel-wall-dowel-length]");
   const orthoModeInput = document.querySelector("[data-estimate-v2-ortho]");
   const objectSnapInput = document.querySelector("[data-estimate-v2-object-snap]");
   const snapGridInput = document.querySelector("[data-estimate-v2-snap-grid]");
@@ -5205,6 +5355,11 @@ function collectEstimateV2DraftFromDom() {
     beamStirrupSpacing: beamStirrupSpacingInput ? beamStirrupSpacingInput.value : current.beamStirrupSpacing,
     beamCrankBars: beamCrankBarsInput ? beamCrankBarsInput.value : current.beamCrankBars,
     beamCrankAllowancePerBar: beamCrankAllowanceInput ? beamCrankAllowanceInput.value : current.beamCrankAllowancePerBar,
+    steelWallHeight: steelWallHeightInput ? steelWallHeightInput.value : current.steelWallHeight,
+    steelWallVerticalMode: steelWallModeInput ? steelWallModeInput.value : current.steelWallVerticalMode,
+    steelWallVerticalSpacing: steelWallVerticalSpacingInput ? steelWallVerticalSpacingInput.value : current.steelWallVerticalSpacing,
+    steelWallHorizontalSpacing: steelWallHorizontalSpacingInput ? steelWallHorizontalSpacingInput.value : current.steelWallHorizontalSpacing,
+    steelWallDowelLength: steelWallDowelLengthInput ? steelWallDowelLengthInput.value : current.steelWallDowelLength,
     orthoModeEnabled: orthoModeInput ? orthoModeInput.checked : current.orthoModeEnabled,
     objectSnapEnabled: objectSnapInput ? objectSnapInput.checked : current.objectSnapEnabled,
     snapGridEnabled: snapGridInput ? snapGridInput.checked : current.snapGridEnabled,
@@ -5293,6 +5448,15 @@ function collectEstimateV2TakeoffRowsFromDom(fallbackRows = [], activeSettings =
       if (steelBeam) {
         quantity = steelBeam.totalStockBars;
         Object.assign(takeoffDetails, steelBeam);
+      }
+    }
+    if (tool.key === "steel-wall") {
+      const previousPoints = Array.isArray(previous.points) ? previous.points : [];
+      const previousWallLength = previous.wallLength || (previous.metersPerPixel ? estimateV2PolylinePixels(previousPoints) * previous.metersPerPixel : 0);
+      const steelWall = estimateV2SteelWallTakeoff(previous, previousWallLength, { silent: true });
+      if (steelWall) {
+        quantity = steelWall.totalStockBars;
+        Object.assign(takeoffDetails, steelWall);
       }
     }
     if (tool.type === "concrete-count") {
@@ -6082,6 +6246,11 @@ function defaultEstimateV2Draft() {
     beamStirrupSpacing: STEEL_BEAM_DEFAULTS.stirrupSpacing,
     beamCrankBars: STEEL_BEAM_DEFAULTS.crankBars,
     beamCrankAllowancePerBar: STEEL_BEAM_DEFAULTS.crankAllowancePerBar,
+    steelWallHeight: STEEL_WALL_DEFAULTS.height,
+    steelWallVerticalMode: STEEL_WALL_DEFAULTS.verticalMode,
+    steelWallVerticalSpacing: STEEL_WALL_DEFAULTS.verticalSpacing,
+    steelWallHorizontalSpacing: STEEL_WALL_DEFAULTS.horizontalSpacing,
+    steelWallDowelLength: STEEL_WALL_DEFAULTS.dowelLength,
     planFileName: "",
     takeoffPage: 1,
     takeoffPageCount: 0,
@@ -6169,6 +6338,11 @@ function normalizeEstimateV2Draft(draft) {
     beamStirrupSpacing: Math.max(0, Number(source.beamStirrupSpacing) || STEEL_BEAM_DEFAULTS.stirrupSpacing),
     beamCrankBars: Number.isFinite(beamCrankBars) ? Math.max(0, Math.ceil(beamCrankBars)) : STEEL_BEAM_DEFAULTS.crankBars,
     beamCrankAllowancePerBar: Math.max(0, Number(source.beamCrankAllowancePerBar) || STEEL_BEAM_DEFAULTS.crankAllowancePerBar),
+    steelWallHeight: Math.max(0, Number(source.steelWallHeight) || Number(source.chbWallHeight) || STEEL_WALL_DEFAULTS.height),
+    steelWallVerticalMode: steelWallVerticalModeOption(source.steelWallVerticalMode).key,
+    steelWallVerticalSpacing: Math.max(0, Number(source.steelWallVerticalSpacing) || STEEL_WALL_DEFAULTS.verticalSpacing),
+    steelWallHorizontalSpacing: Math.max(0, Number(source.steelWallHorizontalSpacing) || STEEL_WALL_DEFAULTS.horizontalSpacing),
+    steelWallDowelLength: Math.max(0, Number(source.steelWallDowelLength) || STEEL_WALL_DEFAULTS.dowelLength),
     planFileName: String(source.planFileName || source.fileName || "").trim(),
     takeoffPage: Math.max(1, Number(source.takeoffPage) || 1),
     takeoffPageCount: Math.max(0, Number(source.takeoffPageCount) || 0),
@@ -6354,6 +6528,20 @@ function normalizeEstimateV2TakeoffRow(row) {
     beamCrankAllowancePerBar: Math.max(0, Number(row && row.beamCrankAllowancePerBar) || 0),
     beamCrankLengthEach: Math.max(0, Number(row && row.beamCrankLengthEach) || 0),
     beamCrankTotalLength: Math.max(0, Number(row && row.beamCrankTotalLength) || 0),
+    steelWallHeight: Math.max(0, Number(row && row.steelWallHeight) || 0),
+    steelWallVerticalMode: steelWallVerticalModeOption(row && row.steelWallVerticalMode).key,
+    steelWallVerticalModeLabel: steelWallVerticalModeOption(row && row.steelWallVerticalMode).label,
+    steelWallVerticalSpacing: Math.max(0, Number(row && row.steelWallVerticalSpacing) || STEEL_WALL_DEFAULTS.verticalSpacing),
+    steelWallHorizontalSpacing: Math.max(0, Number(row && row.steelWallHorizontalSpacing) || STEEL_WALL_DEFAULTS.horizontalSpacing),
+    steelWallDowelLength: Math.max(0, Number(row && row.steelWallDowelLength) || STEEL_WALL_DEFAULTS.dowelLength),
+    steelWallAllowancePerBar: Math.max(0, Number(row && row.steelWallAllowancePerBar) || STEEL_WALL_DEFAULTS.allowancePerBar),
+    steelWallVerticalBarCount: Math.max(0, Number(row && row.steelWallVerticalBarCount) || 0),
+    steelWallHorizontalBarCount: Math.max(0, Number(row && row.steelWallHorizontalBarCount) || 0),
+    steelWallVerticalBarLength: Math.max(0, Number(row && row.steelWallVerticalBarLength) || 0),
+    steelWallHorizontalBarLength: Math.max(0, Number(row && row.steelWallHorizontalBarLength) || 0),
+    steelWallVerticalTotalLength: Math.max(0, Number(row && row.steelWallVerticalTotalLength) || 0),
+    steelWallHorizontalTotalLength: Math.max(0, Number(row && row.steelWallHorizontalTotalLength) || 0),
+    steelWallTotalBars: Math.max(0, Number(row && row.steelWallTotalBars) || 0),
     columnWidth: Math.max(0, Number(row && row.columnWidth) || 0),
     columnDepth: Math.max(0, Number(row && row.columnDepth) || 0),
     columnHeight: Math.max(0, Number(row && row.columnHeight) || 0),
