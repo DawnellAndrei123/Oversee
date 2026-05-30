@@ -81,6 +81,10 @@ const STEEL_COLUMN_DEFAULTS = {
   longitudinalWastePercent: 0,
   tieWastePercent: 0
 };
+const STEEL_FOOTING_DEFAULTS = {
+  rebarSpacing: 0.15,
+  allowancePerBar: 0
+};
 const SNAP_GRID_TOOL_TYPES = new Set(["area", "linear", "curve", "chb"]);
 const ORTHO_TOOL_TYPES = new Set(["area", "linear", "chb"]);
 const OBJECT_SNAP_TOOL_TYPES = new Set(["area", "linear", "curve", "chb"]);
@@ -1465,6 +1469,20 @@ function renderEstimateV2TakeoffActiveInputs(draft, activeTool) {
             <input data-estimate-v2-takeoff-input data-estimate-v2-lap-allowance type="number" min="0" step="0.01" value="${numberInputValue(draft.lapAllowancePerBar)}" placeholder="0.00">
           </label>
         ` : ""}
+        ${activeTool.key === "steel-footing" ? `
+          <label class="estimate-v2-field">
+            <span>Footing Length (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-footing-length type="number" min="0" step="0.01" value="${numberInputValue(draft.footingLength)}" placeholder="1.50">
+          </label>
+          <label class="estimate-v2-field">
+            <span>Footing Width (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-footing-width type="number" min="0" step="0.01" value="${numberInputValue(draft.footingWidth)}" placeholder="1.50">
+          </label>
+          <label class="estimate-v2-field">
+            <span>Footing Depth (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-footing-thickness type="number" min="0" step="0.01" value="${numberInputValue(draft.footingThickness)}" placeholder="0.30">
+          </label>
+        ` : ""}
         <label class="estimate-v2-field">
           <span>Rebar Diameter</span>
           <select data-estimate-v2-takeoff-input data-estimate-v2-rebar-diameter>
@@ -1850,7 +1868,7 @@ function renderEstimateV2TakeoffRow(row) {
     <tr data-estimate-v2-takeoff-row="${escapeAttribute(normalized.id)}" class="${state.estimateV2EditingRowId === normalized.id ? "editing-row" : ""}">
       <td><input class="estimate-input description" data-estimate-v2-takeoff-input data-field="description" value="${escapeAttribute(normalized.description)}" placeholder="Item"></td>
       <td><strong>${escapeHtml(tool.label)}</strong>${typeDetails}</td>
-      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0" ${tool.type === "chb" || tool.key === "steel-column" ? "readonly" : ""}></td>
+      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0" ${tool.type === "chb" || tool.key === "steel-column" || tool.key === "steel-footing" ? "readonly" : ""}></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="unit" value="${escapeAttribute(normalized.unit)}" placeholder="unit"></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(computedCost)}" placeholder="0.00" ${estimateV2RowHasComputedMaterialCost(normalized) ? "readonly" : ""}></td>
       <td data-estimate-v2-row-total title="${escapeAttribute(formatCurrency(rowTotal))}">${formatEstimateV2TotalCost(rowTotal)}</td>
@@ -1923,6 +1941,20 @@ function renderEstimateV2SteelworkDetails(row) {
       <small>Ties: ${formatInteger(row.tiesPerColumn)} / column x ${formatInteger(row.takeoffCount)} = ${formatInteger(row.tiePieceCount)} pcs @ ${formatSwaNumber(row.tieSpacing)} m spacing</small>
       <small>Lengths: Vertical ${formatSwaNumber(row.longitudinalTotalLength)} m | Ties ${formatSwaNumber(row.tieTotalLength)} m${row.lapAllowanceTotalLength ? ` | Lap ${formatSwaNumber(row.lapAllowanceTotalLength)} m` : ""}</small>
       <small>Weight estimate: ${formatSwaNumber(row.totalRebarWeightKg)} kg | ${formatSwaNumber(row.rebarDiameter)} mm${row.lapAllowancePerBar ? ` | Lap ${formatSwaNumber(row.lapAllowancePerBar)} m/bar` : ""}</small>
+    `;
+  }
+  if (row.tool === "steel-footing") {
+    const stockOptions = estimateV2SteelFootingStockOptionsFromRow(row);
+    const stockOptionsText = stockOptions
+      .map((option) => `${formatSwaNumber(option.length)}m=${formatInteger(option.totalStockBars)} pcs`)
+      .join(" | ");
+    return `
+      <small>${formatInteger(row.takeoffCount)} footing${row.takeoffCount === 1 ? "" : "s"} | ${formatSwaNumber(row.footingLength)} x ${formatSwaNumber(row.footingWidth)} x ${formatSwaNumber(row.footingThickness)} m</small>
+      <small>X direction: ${formatInteger(row.footingXBarsPerFooting)} bars/footing x ${formatSwaNumber(row.footingLength)} m = ${formatSwaNumber(row.footingXTotalLength)} m</small>
+      <small>Y direction: ${formatInteger(row.footingYBarsPerFooting)} bars/footing x ${formatSwaNumber(row.footingWidth)} m = ${formatSwaNumber(row.footingYTotalLength)} m</small>
+      <small>Total bars: ${formatInteger(row.footingTotalBars)} pcs | Total length: ${formatSwaNumber(row.totalRebarLength)} m | Selected stock: ${formatInteger(row.totalStockBars)} pcs @ ${formatSwaNumber(row.rebarLength)} m</small>
+      ${stockOptionsText ? `<small>Total stock options: ${escapeHtml(stockOptionsText)}</small>` : ""}
+      <small>Spacing: ${formatSwaNumber(row.footingRebarSpacing)} m both ways | Weight estimate: ${formatSwaNumber(row.totalRebarWeightKg)} kg | ${formatSwaNumber(row.rebarDiameter)} mm</small>
     `;
   }
   return `
@@ -2273,6 +2305,80 @@ function estimateV2SteelColumnTakeoff(source, columnCount, options = {}) {
     tieWastePercent: 0,
     tieStockBars,
     lapStockBars,
+    totalRebarLength,
+    totalRebarWeightKg,
+    totalStockBars,
+    stockLengthOptions
+  };
+}
+
+function estimateV2SteelFootingStockOptions(totalLength) {
+  const footingRebarLength = Math.max(0, Number(totalLength) || 0);
+  return REBAR_LENGTH_OPTIONS.map((length) => {
+    const stockLength = Math.max(0, Number(length) || 0);
+    const totalStockBars = stockLength > 0 ? Math.ceil(footingRebarLength / stockLength) : 0;
+    return {
+      length: stockLength,
+      totalStockBars
+    };
+  });
+}
+
+function estimateV2SteelFootingStockOptionsFromRow(row) {
+  if (Array.isArray(row && row.stockLengthOptions) && row.stockLengthOptions.length) {
+    return row.stockLengthOptions.map((option) => ({
+      length: Math.max(0, Number(option && option.length) || 0),
+      totalStockBars: Math.max(0, Number(option && option.totalStockBars) || 0)
+    })).filter((option) => option.length);
+  }
+  return estimateV2SteelFootingStockOptions(row && row.totalRebarLength);
+}
+
+function estimateV2SteelFootingTakeoff(source, footingCount, options = {}) {
+  const takeoffCount = Math.max(0, Number(footingCount) || 0);
+  const footingLength = Math.max(0, Number(source && source.footingLength) || 0);
+  const footingWidth = Math.max(0, Number(source && source.footingWidth) || 0);
+  const footingThickness = Math.max(0, Number(source && source.footingThickness) || 0);
+  if (!footingLength || !footingWidth || !footingThickness) {
+    if (!options.silent) toast("Enter footing length, width, and depth.");
+    return null;
+  }
+  const rebarDiameter = REBAR_DIAMETER_OPTIONS.includes(Number(source && source.rebarDiameter)) ? Number(source.rebarDiameter) : REBAR_DIAMETER_OPTIONS[0];
+  const rebarLength = REBAR_LENGTH_OPTIONS.includes(Number(source && source.rebarLength)) ? Number(source.rebarLength) : REBAR_LENGTH_OPTIONS[0];
+  const footingRebarSpacing = Math.max(0, Number(source && source.footingRebarSpacing) || STEEL_FOOTING_DEFAULTS.rebarSpacing);
+  const footingAllowancePerBar = Math.max(0, Number(source && source.footingAllowancePerBar) || STEEL_FOOTING_DEFAULTS.allowancePerBar);
+  const footingXBarsPerFooting = footingRebarSpacing > 0 ? Math.ceil(footingWidth / footingRebarSpacing) + 1 : 0;
+  const footingYBarsPerFooting = footingRebarSpacing > 0 ? Math.ceil(footingLength / footingRebarSpacing) + 1 : 0;
+  const footingXBarsTotal = footingXBarsPerFooting * takeoffCount;
+  const footingYBarsTotal = footingYBarsPerFooting * takeoffCount;
+  const footingXBarLength = footingLength + footingAllowancePerBar;
+  const footingYBarLength = footingWidth + footingAllowancePerBar;
+  const footingXTotalLength = footingXBarsTotal * footingXBarLength;
+  const footingYTotalLength = footingYBarsTotal * footingYBarLength;
+  const footingTotalBars = footingXBarsTotal + footingYBarsTotal;
+  const totalRebarLength = footingXTotalLength + footingYTotalLength;
+  const stockLengthOptions = estimateV2SteelFootingStockOptions(totalRebarLength);
+  const selectedStockOption = stockLengthOptions.find((option) => option.length === rebarLength) || stockLengthOptions[0] || {};
+  const totalStockBars = Math.max(0, Number(selectedStockOption.totalStockBars) || 0);
+  const totalRebarWeightKg = totalRebarLength * rebarUnitWeight(rebarDiameter);
+  return {
+    takeoffCount,
+    footingLength,
+    footingWidth,
+    footingThickness,
+    rebarDiameter,
+    rebarLength,
+    footingRebarSpacing,
+    footingAllowancePerBar,
+    footingXBarsPerFooting,
+    footingYBarsPerFooting,
+    footingXBarsTotal,
+    footingYBarsTotal,
+    footingXBarLength,
+    footingYBarLength,
+    footingXTotalLength,
+    footingYTotalLength,
+    footingTotalBars,
     totalRebarLength,
     totalRebarWeightKg,
     totalStockBars,
@@ -4215,6 +4321,12 @@ function finishEstimateV2Takeoff() {
       quantity = steelColumn.totalStockBars;
       unit = "pcs";
       Object.assign(takeoffDetails, steelColumn);
+    } else if (tool.key === "steel-footing") {
+      const steelFooting = estimateV2SteelFootingTakeoff(draft, pointCount);
+      if (!steelFooting) return;
+      quantity = steelFooting.totalStockBars;
+      unit = "pcs";
+      Object.assign(takeoffDetails, steelFooting);
     } else if (estimateV2IsSteelworkTool(tool)) {
       Object.assign(takeoffDetails, {
         takeoffCount: pointCount,
@@ -4450,6 +4562,11 @@ async function editEstimateV2Takeoff(rowId) {
     draft.longitudinalBarsPerColumn = row.longitudinalBarsPerColumn || draft.longitudinalBarsPerColumn;
     draft.tieSpacing = row.tieSpacing || draft.tieSpacing;
     draft.lapAllowancePerBar = row.lapAllowancePerBar || draft.lapAllowancePerBar;
+  }
+  if (row.tool === "steel-footing") {
+    draft.footingLength = row.footingLength || draft.footingLength;
+    draft.footingWidth = row.footingWidth || draft.footingWidth;
+    draft.footingThickness = row.footingThickness || draft.footingThickness;
   }
   if (row.chbWallHeight) draft.chbWallHeight = row.chbWallHeight;
   if (row.chbWastePercent || row.chbWastePercent === 0) draft.chbWastePercent = row.chbWastePercent;
@@ -4847,6 +4964,14 @@ function collectEstimateV2TakeoffRowsFromDom(fallbackRows = [], activeSettings =
       if (steelColumn) {
         quantity = steelColumn.totalStockBars;
         Object.assign(takeoffDetails, steelColumn);
+      }
+    }
+    if (tool.key === "steel-footing") {
+      const previousPoints = Array.isArray(previous.points) ? previous.points : [];
+      const steelFooting = estimateV2SteelFootingTakeoff(previous, previous.takeoffCount || previousPoints.length || 0, { silent: true });
+      if (steelFooting) {
+        quantity = steelFooting.totalStockBars;
+        Object.assign(takeoffDetails, steelFooting);
       }
     }
     if (tool.type === "concrete-count") {
@@ -5850,6 +5975,17 @@ function normalizeEstimateV2TakeoffRow(row) {
     totalRebarWeightKg: Math.max(0, Number(row && row.totalRebarWeightKg) || 0),
     totalStockBars: steelTotalStockBars,
     stockLengthOptions,
+    footingRebarSpacing: Math.max(0, Number(row && row.footingRebarSpacing) || STEEL_FOOTING_DEFAULTS.rebarSpacing),
+    footingAllowancePerBar: Math.max(0, Number(row && row.footingAllowancePerBar) || STEEL_FOOTING_DEFAULTS.allowancePerBar),
+    footingXBarsPerFooting: Math.max(0, Number(row && row.footingXBarsPerFooting) || 0),
+    footingYBarsPerFooting: Math.max(0, Number(row && row.footingYBarsPerFooting) || 0),
+    footingXBarsTotal: Math.max(0, Number(row && row.footingXBarsTotal) || 0),
+    footingYBarsTotal: Math.max(0, Number(row && row.footingYBarsTotal) || 0),
+    footingXBarLength: Math.max(0, Number(row && row.footingXBarLength) || 0),
+    footingYBarLength: Math.max(0, Number(row && row.footingYBarLength) || 0),
+    footingXTotalLength: Math.max(0, Number(row && row.footingXTotalLength) || 0),
+    footingYTotalLength: Math.max(0, Number(row && row.footingYTotalLength) || 0),
+    footingTotalBars: Math.max(0, Number(row && row.footingTotalBars) || 0),
     columnWidth: Math.max(0, Number(row && row.columnWidth) || 0),
     columnDepth: Math.max(0, Number(row && row.columnDepth) || 0),
     columnHeight: Math.max(0, Number(row && row.columnHeight) || 0),
