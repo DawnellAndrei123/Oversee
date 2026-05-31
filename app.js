@@ -40,6 +40,7 @@ const ESTIMATE_V2_TAKEOFF_TOOLS = [
   { key: "chb-wall", label: "CHB Wall", type: "chb", unit: "pcs", defaultName: "Concrete Hollow Block", color: "#14b8a6" },
   { key: "column-concrete", label: "Column", type: "concrete-count", unit: "cu.m", defaultName: "Column Concrete", color: "#06b6d4" },
   { key: "footing-concrete", label: "Footing", type: "concrete-count", unit: "cu.m", defaultName: "Column Footing Concrete", color: "#8b5cf6" },
+  { key: "beam-concrete", label: "Beam", type: "linear", unit: "cu.m", defaultName: "Beam Concrete", color: "#0ea5e9" },
   { key: "steel-column", label: "Column", type: "count", unit: "pcs", defaultName: "Column Rebar", color: "#60a5fa", steelwork: true },
   { key: "steel-footing", label: "Footing", type: "count", unit: "pcs", defaultName: "Footing Rebar", color: "#818cf8", steelwork: true },
   { key: "steel-beam", label: "Beam", type: "linear", unit: "pcs", defaultName: "Beam Rebar", color: "#c084fc", steelwork: true },
@@ -54,7 +55,7 @@ const ESTIMATE_V2_TAKEOFF_TOOLS = [
 const ESTIMATE_V2_TAKEOFF_GROUPS = [
   { key: "setup", label: "Setup", tools: ["calibrate"] },
   { key: "architectural", label: "Architectural", tools: ["door-count", "window-count", "curve-line"] },
-  { key: "structural", label: "Structural", tools: ["column-concrete", "footing-concrete", "floor-slab"] },
+  { key: "structural", label: "Structural", tools: ["column-concrete", "footing-concrete", "beam-concrete", "floor-slab"] },
   { key: "steelworks", label: "Steelworks", tools: ["steel-column", "steel-footing", "steel-beam", "steel-wall", "steel-slab"] },
   { key: "masonry", label: "Masonry", tools: ["tile-area", "chb-wall"] },
   { key: "plumbing", label: "Plumbing", tools: ["pipe-length"] },
@@ -1285,9 +1286,16 @@ function renderEstimateV2View() {
   const rows = estimateV2ProjectRows(draft);
   const totalCost = estimateV2TakeoffTotal(rows);
   const totalArea = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "area").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
-  const totalLength = rows.filter((row) => ["linear", "curve"].includes(estimateV2TakeoffTool(row.tool).type)).reduce((total, row) => total + (Number(row.quantity) || 0), 0);
+  const totalLength = rows.filter((row) => ["linear", "curve"].includes(estimateV2TakeoffTool(row.tool).type)).reduce((total, row) => {
+    if (row.tool === "beam-concrete" || row.tool === "steel-beam") return total + (Number(row.beamLength) || 0);
+    if (row.tool === "steel-wall") return total + (Number(row.wallLength) || 0);
+    return total + (Number(row.quantity) || 0);
+  }, 0);
   const totalChb = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "chb").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
-  const totalConcrete = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "concrete-count").reduce((total, row) => total + (Number(row.concreteVolume || row.quantity) || 0), 0);
+  const totalConcrete = rows.reduce((total, row) => {
+    const tool = estimateV2TakeoffTool(row.tool);
+    return total + (Number(row.concreteVolume) || (tool.type === "concrete-count" ? Number(row.quantity) || 0 : 0));
+  }, 0);
   const totalConcreteMix = concreteMixBreakdown(totalConcrete);
   const totalCount = rows.filter((row) => estimateV2TakeoffTool(row.tool).type === "count").reduce((total, row) => total + (Number(row.quantity) || 0), 0);
   return `
@@ -1662,6 +1670,29 @@ function renderEstimateV2TakeoffActiveInputs(draft, activeTool) {
       </div>
     `;
   }
+  if (activeTool.key === "beam-concrete") {
+    return `
+      <div class="estimate-v2-concrete-inputs">
+        <label class="estimate-v2-field">
+          <span>Beam Type</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-concrete-mark value="${escapeAttribute(draft.beamConcreteTypeMark)}" placeholder="B1">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Width (m)</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-beam-width type="number" min="0" step="0.01" value="${numberInputValue(draft.beamWidth)}" placeholder="0.20">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Depth (m)</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-beam-depth type="number" min="0" step="0.01" value="${numberInputValue(draft.beamDepth)}" placeholder="0.40">
+        </label>
+        <label class="estimate-v2-field">
+          <span>Waste %</span>
+          <input data-estimate-v2-takeoff-input data-estimate-v2-concrete-waste type="number" min="0" step="0.01" value="${numberInputValue(draft.concreteWastePercent)}" placeholder="0">
+        </label>
+        ${renderEstimateV2ConcreteCostInputs(draft, "cu.m")}
+      </div>
+    `;
+  }
   if (activeTool.key === "footing-concrete") {
     return `
       <div class="estimate-v2-concrete-inputs">
@@ -1941,7 +1972,7 @@ function renderEstimateV2TakeoffRow(row) {
   const tool = estimateV2TakeoffTool(normalized.tool);
   const typeDetails = tool.type === "chb"
     ? renderEstimateV2ChbDetails(normalized)
-    : tool.type === "concrete-count"
+    : tool.type === "concrete-count" || tool.key === "beam-concrete"
       ? renderEstimateV2ConcreteDetails(normalized)
       : tool.key === "floor-slab"
         ? renderEstimateV2FloorSlabDetails(normalized)
@@ -1958,7 +1989,7 @@ function renderEstimateV2TakeoffRow(row) {
     <tr data-estimate-v2-takeoff-row="${escapeAttribute(normalized.id)}" class="${state.estimateV2EditingRowId === normalized.id ? "editing-row" : ""}">
       <td><input class="estimate-input description" data-estimate-v2-takeoff-input data-field="description" value="${escapeAttribute(normalized.description)}" placeholder="Item"></td>
       <td><strong>${escapeHtml(tool.label)}</strong>${typeDetails}</td>
-      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0" ${tool.type === "chb" || tool.key === "steel-column" || tool.key === "steel-footing" || tool.key === "steel-slab" || tool.key === "steel-beam" || tool.key === "steel-wall" ? "readonly" : ""}></td>
+      <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="quantity" type="number" min="0" step="0.01" value="${numberInputValue(normalized.quantity)}" placeholder="0" ${tool.type === "chb" || tool.key === "beam-concrete" || tool.key === "steel-column" || tool.key === "steel-footing" || tool.key === "steel-slab" || tool.key === "steel-beam" || tool.key === "steel-wall" ? "readonly" : ""}></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="unit" value="${escapeAttribute(normalized.unit)}" placeholder="unit"></td>
       <td><input class="estimate-input" data-estimate-v2-takeoff-input data-field="costPerUnit" type="number" min="0" step="0.01" value="${numberInputValue(computedCost)}" placeholder="0.00" ${estimateV2RowHasComputedMaterialCost(normalized) ? "readonly" : ""}></td>
       <td data-estimate-v2-row-total title="${escapeAttribute(formatCurrency(rowTotal))}">${formatEstimateV2TotalCost(rowTotal)}</td>
@@ -1980,10 +2011,14 @@ function renderEstimateV2ChbDetails(row) {
 function renderEstimateV2ConcreteDetails(row) {
   const mix = concreteMixBreakdown(row.concreteVolume || row.quantity, row.concreteMixRatio);
   const materialCost = concreteMaterialCost(mix, row);
-  const countText = `${formatInteger(row.takeoffCount)} ${row.takeoffCount === 1 ? "point" : "points"}`;
+  const countText = row.concreteKind === "beam"
+    ? `${formatSwaNumber(row.beamLength)} m line`
+    : `${formatInteger(row.takeoffCount)} ${row.takeoffCount === 1 ? "point" : "points"}`;
   const baseText = row.concreteKind === "footing"
     ? `${formatSwaNumber(row.footingLength)} x ${formatSwaNumber(row.footingWidth)} x ${formatSwaNumber(row.footingThickness)} m footing`
-    : `${formatSwaNumber(row.columnWidth)} x ${formatSwaNumber(row.columnDepth)} x ${formatSwaNumber(row.columnHeight)} m column`;
+    : row.concreteKind === "beam"
+      ? `${formatSwaNumber(row.beamWidth)} x ${formatSwaNumber(row.beamDepth)} m beam section`
+      : `${formatSwaNumber(row.columnWidth)} x ${formatSwaNumber(row.columnDepth)} x ${formatSwaNumber(row.columnHeight)} m column`;
   const pedestalText = row.concreteKind === "footing" && row.pedestalVolume
     ? `<small>Pedestal: ${formatSwaNumber(row.pedestalWidth)} x ${formatSwaNumber(row.pedestalDepth)} x ${formatSwaNumber(row.pedestalHeight)} m</small>`
     : "";
@@ -2309,7 +2344,7 @@ function estimateV2TakeoffRowTotal(row) {
 
 function estimateV2RowHasComputedMaterialCost(row) {
   const tool = estimateV2TakeoffTool(row && row.tool);
-  return tool.type === "concrete-count" || tool.key === "floor-slab" || tool.key === "tile-area";
+  return tool.type === "concrete-count" || tool.key === "beam-concrete" || tool.key === "floor-slab" || tool.key === "tile-area";
 }
 
 function estimateV2ComputedRowCostPerUnit(row) {
@@ -2333,7 +2368,7 @@ function estimateV2ComputedTakeoffCostPerUnit(draft, tool) {
     const referenceRow = estimateV2TileTakeoffDetails(1, draft);
     return estimateV2TileTotalCost(referenceRow);
   }
-  if (activeTool.type !== "concrete-count" && activeTool.key !== "floor-slab") {
+  if (activeTool.type !== "concrete-count" && activeTool.key !== "beam-concrete" && activeTool.key !== "floor-slab") {
     return Math.max(0, Number(draft && draft.takeoffCostPerUnit) || 0);
   }
   const wasteFactor = 1 + (Math.max(0, Number(draft && draft.concreteWastePercent) || 0) / 100);
@@ -2925,10 +2960,10 @@ function estimateV2PointBounds(points) {
 }
 
 function estimateV2StructuralTakeoff(draft) {
-  const rows = (draft.materials || []).map(normalizeEstimateV2Material);
+  const projectTakeoffRows = estimateV2ProjectRows(draft);
+  const rows = projectTakeoffRows.length ? projectTakeoffRows : (draft.materials || []).map(normalizeEstimateV2Material);
   const concreteVolume = rows
-    .filter(isConcreteVolumeRow)
-    .reduce((total, row) => total + (Number(row.quantity) || 0), 0);
+    .reduce((total, row) => total + (Number(row.concreteVolume) || (isConcreteVolumeRow(row) ? Number(row.quantity) || 0 : 0)), 0);
   const mix = concreteMixBreakdown(concreteVolume);
   const chb = estimateChbTakeoff(rows, draft);
   return {
@@ -4677,8 +4712,21 @@ function finishEstimateV2Takeoff() {
       quantity = steelWall.totalStockBars;
       unit = "pcs";
       Object.assign(takeoffDetails, steelWall);
+    } else if (tool.key === "beam-concrete") {
+      const concreteBeam = estimateV2ConcreteBeamTakeoff(draft, quantity);
+      if (!concreteBeam) return;
+      quantity = concreteBeam.concreteVolume;
+      unit = "cu.m";
+      description = `${description} ${concreteBeam.typeMark}`.trim();
+      Object.assign(takeoffDetails, concreteBeam);
     }
-    costPerUnit = draft.takeoffCostPerUnit;
+    costPerUnit = tool.key === "beam-concrete"
+      ? estimateV2ComputedRowCostPerUnit({
+        tool: tool.key,
+        quantity,
+        ...takeoffDetails
+      })
+      : draft.takeoffCostPerUnit;
   } else if (tool.type === "curve") {
     if (points.length < 2) {
       toast("Curve takeoff needs at least 2 points.");
@@ -4835,6 +4883,32 @@ function estimateV2ConcreteCountTakeoff(tool, draft, count) {
     pedestalDepth,
     pedestalHeight,
     pedestalVolume: pedestalVolumeEach * takeoffCount,
+    concreteMixRatio: draft.concreteMixRatio,
+    cementPrice: draft.cementPrice,
+    sandPrice: draft.sandPrice,
+    gravelPrice: draft.gravelPrice,
+    concreteWastePercent,
+    concreteVolumeBase,
+    concreteVolume: concreteVolumeBase * (1 + concreteWastePercent / 100)
+  };
+}
+
+function estimateV2ConcreteBeamTakeoff(draft, beamLengthInput, options = {}) {
+  const beamLength = Math.max(0, Number(beamLengthInput) || Number(draft && draft.beamLength) || 0);
+  const beamWidth = Math.max(0, Number(draft && draft.beamWidth) || 0);
+  const beamDepth = Math.max(0, Number(draft && draft.beamDepth) || 0);
+  const concreteWastePercent = Math.max(0, Number(draft && draft.concreteWastePercent) || 0);
+  if (!beamLength || !beamWidth || !beamDepth) {
+    if (!options.silent) toast("Draw the beam length and enter beam width and depth.");
+    return null;
+  }
+  const concreteVolumeBase = beamLength * beamWidth * beamDepth;
+  return {
+    concreteKind: "beam",
+    typeMark: draft.beamConcreteTypeMark || "B1",
+    beamLength,
+    beamWidth,
+    beamDepth,
     concreteMixRatio: draft.concreteMixRatio,
     cementPrice: draft.cementPrice,
     sandPrice: draft.sandPrice,
@@ -5017,6 +5091,11 @@ async function editEstimateV2Takeoff(rowId) {
     draft.pedestalWidth = row.pedestalWidth || 0;
     draft.pedestalDepth = row.pedestalDepth || 0;
     draft.pedestalHeight = row.pedestalHeight || 0;
+  }
+  if (row.concreteKind === "beam") {
+    draft.beamConcreteTypeMark = row.typeMark || draft.beamConcreteTypeMark;
+    draft.beamWidth = row.beamWidth || draft.beamWidth;
+    draft.beamDepth = row.beamDepth || draft.beamDepth;
   }
   state.estimateV2ToolGroup = estimateV2GroupForTool(row.tool, state.estimateV2ToolGroup);
   state.estimateV2EditingRowId = row.id;
@@ -5321,6 +5400,7 @@ function collectEstimateV2DraftFromDom() {
     chbSize: chbSizeInput ? chbSizeInput.value : current.chbSize,
     concreteTypeMark: concreteMarkInput && activeTool.key === "column-concrete" ? concreteMarkInput.value : current.concreteTypeMark,
     footingTypeMark: concreteMarkInput && activeTool.key === "footing-concrete" ? concreteMarkInput.value : current.footingTypeMark,
+    beamConcreteTypeMark: concreteMarkInput && activeTool.key === "beam-concrete" ? concreteMarkInput.value : current.beamConcreteTypeMark,
     columnWidth: columnWidthInput ? columnWidthInput.value : current.columnWidth,
     columnDepth: columnDepthInput ? columnDepthInput.value : current.columnDepth,
     columnHeight: columnHeightInput ? columnHeightInput.value : current.columnHeight,
@@ -5414,6 +5494,15 @@ function collectEstimateV2TakeoffRowsFromDom(fallbackRows = [], activeSettings =
     }
     if (tool.key === "tile-area") {
       Object.assign(takeoffDetails, estimateV2TileTakeoffDetails(quantity, previous));
+    }
+    if (tool.key === "beam-concrete") {
+      const previousPoints = Array.isArray(previous.points) ? previous.points : [];
+      const previousBeamLength = previous.beamLength || (previous.metersPerPixel ? estimateV2PolylinePixels(previousPoints) * previous.metersPerPixel : 0);
+      const concreteBeam = estimateV2ConcreteBeamTakeoff(previous, previousBeamLength, { silent: true });
+      if (concreteBeam) {
+        quantity = concreteBeam.concreteVolume;
+        Object.assign(takeoffDetails, concreteBeam);
+      }
     }
     if (tool.key === "steel-column") {
       const previousPoints = Array.isArray(previous.points) ? previous.points : [];
@@ -6212,6 +6301,7 @@ function defaultEstimateV2Draft() {
     chbSize: CHB_SIZE_OPTIONS[1],
     concreteTypeMark: "C1",
     footingTypeMark: "F1",
+    beamConcreteTypeMark: "B1",
     columnWidth: 0.3,
     columnDepth: 0.3,
     columnHeight: 3,
@@ -6304,6 +6394,7 @@ function normalizeEstimateV2Draft(draft) {
     chbSize: CHB_SIZE_OPTIONS.includes(source.chbSize) ? source.chbSize : CHB_SIZE_OPTIONS[1],
     concreteTypeMark: String(source.concreteTypeMark || "C1").trim(),
     footingTypeMark: String(source.footingTypeMark || "F1").trim(),
+    beamConcreteTypeMark: String(source.beamConcreteTypeMark || "B1").trim(),
     columnWidth: Math.max(0, Number(source.columnWidth) || 0.3),
     columnDepth: Math.max(0, Number(source.columnDepth) || 0.3),
     columnHeight: Math.max(0, Number(source.columnHeight) || 3),
