@@ -97,6 +97,52 @@ button {
   display: inline-grid;
   place-items: center;
   padding: 0;
+  position: relative;
+  overflow: visible;
+}
+
+.icon-btn::after,
+.side-dock.collapsed .dock-btn::after {
+  content: attr(aria-label);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  z-index: 80;
+  width: max-content;
+  max-width: 220px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(40, 244, 255, 0.35);
+  color: var(--ink);
+  background: rgba(8, 0, 14, 0.96);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.icon-btn:hover::after,
+.icon-btn:focus-visible::after,
+.side-dock.collapsed .dock-btn:hover::after,
+.side-dock.collapsed .dock-btn:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.estimate-actions .icon-btn::after {
+  top: calc(100% + 8px);
+  bottom: auto;
+  transform: translate(-50%, -4px);
+}
+
+.estimate-actions .icon-btn:hover::after,
+.estimate-actions .icon-btn:focus-visible::after {
+  transform: translate(-50%, 0);
 }
 
 .screen {
@@ -453,7 +499,7 @@ button {
   top: 88px;
   min-height: calc(100vh - 106px);
   max-height: calc(100vh - 106px);
-  overflow-y: auto;
+  overflow: visible;
 }
 
 .side-dock.collapsed {
@@ -500,6 +546,8 @@ button {
   align-items: center;
   gap: 10px;
   padding: 0 14px;
+  position: relative;
+  overflow: visible;
 }
 
 .dock-btn .ui-icon {
@@ -526,6 +574,18 @@ button {
   width: 48px;
   min-width: 48px;
   padding: 0;
+}
+
+.side-dock.collapsed .dock-btn::after {
+  left: calc(100% + 10px);
+  top: 50%;
+  bottom: auto;
+  transform: translate(-4px, -50%);
+}
+
+.side-dock.collapsed .dock-btn:hover::after,
+.side-dock.collapsed .dock-btn:focus-visible::after {
+  transform: translate(0, -50%);
 }
 
 .dock-btn[disabled] {
