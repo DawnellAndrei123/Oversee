@@ -1593,6 +1593,40 @@ tfoot td {
   margin-top: 8px;
 }
 
+.estimate-v2-layer-group-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.estimate-v2-layer-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 8px;
+}
+
+.estimate-v2-layer-group summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 900;
+  text-transform: none;
+}
+
+.estimate-v2-layer-group summary small {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.estimate-v2-layer-list-nested {
+  margin-top: 10px;
+}
+
 .estimate-v2-layer-toggle {
   min-height: 34px;
   display: inline-flex;

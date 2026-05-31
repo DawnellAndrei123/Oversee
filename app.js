@@ -1382,7 +1382,8 @@ function renderEstimateV2ToolGroups(draft, activeTool) {
 }
 
 function renderEstimateV2LayerControls(draft) {
-  const layers = estimateV2LayerTools();
+  const layerGroups = estimateV2LayerGroups();
+  const activeGroup = estimateV2ActiveToolGroup(draft);
   return `
     <details class="estimate-v2-layer-panel" open>
       <summary>Layers</summary>
@@ -1391,12 +1392,27 @@ function renderEstimateV2LayerControls(draft) {
           <input data-estimate-v2-takeoff-input data-estimate-v2-label-toggle type="checkbox" ${draft.showTakeoffLabels ? "checked" : ""}>
           <span>Measurement Labels</span>
         </label>
-        ${layers.map((tool) => `
-          <label class="estimate-v2-layer-toggle">
-            <input data-estimate-v2-takeoff-input data-estimate-v2-layer-toggle value="${escapeAttribute(tool.key)}" type="checkbox" ${estimateV2LayerVisible(draft, tool.key) ? "checked" : ""}>
-            <span>${escapeHtml(tool.label)}</span>
-          </label>
-        `).join("")}
+      </div>
+      <div class="estimate-v2-layer-group-list">
+        ${layerGroups.map((group) => {
+          const visibleCount = group.tools.filter((tool) => estimateV2LayerVisible(draft, tool.key)).length;
+          return `
+            <details class="estimate-v2-layer-group" ${group.key === activeGroup ? "open" : ""}>
+              <summary>
+                <span>${escapeHtml(group.label)}</span>
+                <small>${formatInteger(visibleCount)}/${formatInteger(group.tools.length)} on</small>
+              </summary>
+              <div class="estimate-v2-layer-list estimate-v2-layer-list-nested">
+                ${group.tools.map((tool) => `
+                  <label class="estimate-v2-layer-toggle">
+                    <input data-estimate-v2-takeoff-input data-estimate-v2-layer-toggle value="${escapeAttribute(tool.key)}" type="checkbox" ${estimateV2LayerVisible(draft, tool.key) ? "checked" : ""}>
+                    <span>${escapeHtml(tool.label)}</span>
+                  </label>
+                `).join("")}
+              </div>
+            </details>
+          `;
+        }).join("")}
       </div>
     </details>
   `;
@@ -2298,6 +2314,13 @@ function estimateV2ActiveToolGroup(draft) {
 
 function estimateV2LayerTools() {
   return visibleEstimateV2TakeoffTools().filter((tool) => tool.type !== "calibrate");
+}
+
+function estimateV2LayerGroups() {
+  return ESTIMATE_V2_TAKEOFF_GROUPS.map((group) => ({
+    ...group,
+    tools: group.tools.map(estimateV2TakeoffTool).filter((tool) => !tool.hidden && tool.type !== "calibrate")
+  })).filter((group) => group.tools.length);
 }
 
 function defaultEstimateV2Layers() {
