@@ -1498,7 +1498,7 @@ function renderEstimateV2LayerControls(draft) {
   const layerGroups = estimateV2LayerGroups();
   const activeGroup = estimateV2ActiveToolGroup(draft);
   return `
-    <details class="estimate-v2-layer-panel" open>
+    <details class="estimate-v2-layer-panel">
       <summary>Layers</summary>
       <div class="estimate-v2-layer-list">
         <label class="estimate-v2-layer-toggle">
