@@ -255,6 +255,7 @@ const state = {
   estimateV2TakeoffRedoStack: [],
   estimateV2PlanExpanded: false,
   estimateV2ToolGroup: "setup",
+  sideDockCollapsed: false,
   cloudSyncApplying: false,
   cloudSyncTimer: null,
   cloudSyncLoaded: false,
@@ -293,6 +294,10 @@ document.addEventListener("click", (event) => {
     login: handleLogin,
     logout: handleLogout,
     "open-account": openAccountModal,
+    "toggle-side-dock": () => {
+      state.sideDockCollapsed = !state.sideDockCollapsed;
+      render();
+    },
     "main-view": () => openMainView(target.dataset.view),
     "engineering-tab": () => {
       if (target.dataset.premiumLocked === "true") {
@@ -335,6 +340,7 @@ document.addEventListener("click", (event) => {
     "extract-estimate-v2-pdf": extractEstimateV2Pdf,
     "extract-estimate-v2-local": extractEstimateV2LocalVision,
     "extract-estimate-v2-ai": extractEstimateV2Ai,
+    "open-estimate-v2-instructions": openEstimateV2InstructionModal,
     "add-estimate-v2-row": addEstimateV2Row,
     "save-estimate-v2-template": saveEstimateV2Template,
     "clear-estimate-v2": clearEstimateV2Draft,
@@ -953,7 +959,7 @@ function renderAppShell(account) {
           <button class="ghost-btn" data-action="logout">Log Out</button>
         </div>
       </header>
-      <div class="app-layout">
+      <div class="app-layout ${state.sideDockCollapsed ? "side-dock-collapsed" : ""}">
         ${renderSideDock(account)}
         <section class="main-stage">
           ${state.currentView === "engineering" ? renderEngineeringView(account) : renderWelcome(account)}
@@ -961,6 +967,69 @@ function renderAppShell(account) {
       </div>
     </main>
   `;
+}
+
+function iconSvg(name) {
+  const icons = {
+    account: '<circle cx="12" cy="8" r="4"></circle><path d="M4 21c1.6-4.5 14.4-4.5 16 0"></path>',
+    engineering: '<path d="M14.7 6.3l3 3"></path><path d="M3 21l4.5-1 10.2-10.2-3-3L4.5 17 3 21z"></path>',
+    procurement: '<path d="M6 7h15l-2 8H8L6 3H3"></path><circle cx="9" cy="20" r="1"></circle><circle cx="18" cy="20" r="1"></circle>',
+    accounting: '<rect x="4" y="3" width="16" height="18" rx="2"></rect><path d="M8 7h8M8 11h8M8 15h3M15 15h1M8 18h3M15 18h1"></path>',
+    administrative: '<path d="M9 4h6l1 2h3v15H5V6h3l1-2z"></path><path d="M9 12h6M9 16h6"></path>',
+    collapse: '<path d="M15 6l-6 6 6 6"></path>',
+    expand: '<path d="M9 6l6 6-6 6"></path>',
+    info: '<circle cx="12" cy="12" r="9"></circle><path d="M12 10v7"></path><path d="M12 7h.01"></path>',
+    save: '<path d="M5 3h12l2 2v16H5z"></path><path d="M8 3v6h8V3"></path><path d="M8 21v-7h8v7"></path>',
+    clear: '<path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path><path d="M10 11v6M14 11v6"></path>',
+    add: '<path d="M12 5v14M5 12h14"></path>',
+    check: '<path d="M20 6L9 17l-5-5"></path>',
+    fullscreen: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path>',
+    exitFullscreen: '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"></path>',
+    undo: '<path d="M9 7H4v5"></path><path d="M4 12c2-4 6-6 10-5 3 .7 5.4 3 6 6"></path>',
+    redo: '<path d="M15 7h5v5"></path><path d="M20 12c-2-4-6-6-10-5-3 .7-5.4 3-6 6"></path>',
+    eraser: '<path d="M3 17l8-8 6 6-5 5H6z"></path><path d="M14 6l5 5"></path><path d="M12 20h9"></path>',
+    zoomIn: '<circle cx="11" cy="11" r="7"></circle><path d="M21 21l-5-5"></path><path d="M11 8v6M8 11h6"></path>',
+    zoomOut: '<circle cx="11" cy="11" r="7"></circle><path d="M21 21l-5-5"></path><path d="M8 11h6"></path>',
+    reset: '<path d="M4 4v6h6"></path><path d="M5 10a7 7 0 1 0 2-5"></path>',
+    setup: '<path d="M4 18L18 4"></path><path d="M8 20l12-12"></path><path d="M4 18l2 2 2-2-2-2z"></path>',
+    architectural: '<path d="M3 21h18"></path><path d="M5 21V9l7-5 7 5v12"></path><path d="M9 21v-7h6v7"></path>',
+    structural: '<path d="M4 20h16"></path><path d="M6 20V6h12v14"></path><path d="M6 10h12M6 14h12M10 6v14M14 6v14"></path>',
+    steelworks: '<path d="M4 7h16M4 12h16M4 17h16"></path><path d="M7 5v14M17 5v14"></path>',
+    masonry: '<path d="M4 6h16v12H4z"></path><path d="M4 10h16M4 14h16M9 6v4M15 10v4M9 14v4"></path>',
+    plumbing: '<path d="M5 7h9a4 4 0 0 1 0 8H8"></path><path d="M8 12h6"></path><path d="M5 5v4M8 10v4"></path>',
+    electrical: '<path d="M13 2L5 14h6l-1 8 9-13h-6z"></path>',
+    calibrate: '<path d="M4 19l15-15"></path><path d="M7 16l2 2M10 13l2 2M13 10l2 2M16 7l2 2"></path>',
+    door: '<path d="M7 21V4h10v17"></path><path d="M7 21h12"></path><path d="M14 13h.01"></path>',
+    window: '<rect x="4" y="5" width="16" height="14" rx="1"></rect><path d="M12 5v14M4 12h16"></path>',
+    curve: '<path d="M4 17c5-11 11 11 16-2"></path>',
+    column: '<path d="M8 4h8v16H8z"></path><path d="M6 4h12M6 20h12"></path>',
+    footing: '<path d="M4 18h16"></path><path d="M7 14h10l2 4H5z"></path><path d="M10 6h4v8h-4z"></path>',
+    beam: '<path d="M4 10h16v4H4z"></path><path d="M6 7v10M18 7v10"></path>',
+    slab: '<path d="M4 8l8-4 8 4-8 4z"></path><path d="M4 12l8 4 8-4"></path><path d="M4 16l8 4 8-4"></path>',
+    tiles: '<path d="M4 4h7v7H4z"></path><path d="M13 4h7v7h-7z"></path><path d="M4 13h7v7H4z"></path><path d="M13 13h7v7h-7z"></path>',
+    chb: '<path d="M4 6h16v12H4z"></path><path d="M4 12h16M10 6v6M14 12v6"></path>',
+    pipe: '<path d="M4 8h11a5 5 0 0 1 0 10H8"></path><path d="M8 14h7"></path>',
+    wire: '<path d="M6 4c8 0 4 16 12 16"></path><path d="M4 8c8 0 4 12 12 12"></path>',
+    generic: '<circle cx="12" cy="12" r="8"></circle>'
+  };
+  return `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icons[name] || icons.generic}</svg>`;
+}
+
+function iconLabel(label) {
+  return `<span class="sr-only">${escapeHtml(label)}</span>`;
+}
+
+function iconButton(label, iconName, className, attributes = "") {
+  return `<button class="${className} icon-btn" ${attributes} title="${escapeAttribute(label)}" aria-label="${escapeAttribute(label)}">${iconSvg(iconName)}${iconLabel(label)}</button>`;
+}
+
+function accessIcon(key) {
+  return {
+    engineering: "engineering",
+    procurement: "procurement",
+    accounting: "accounting",
+    administrative: "administrative"
+  }[key] || "generic";
 }
 
 function renderWelcome(account) {
@@ -983,14 +1052,18 @@ function renderWelcome(account) {
 }
 
 function renderSideDock(account) {
+  const collapsed = state.sideDockCollapsed;
   return `
-    <aside class="side-dock">
-      <div class="dock-title">Account Controls</div>
+    <aside class="side-dock ${collapsed ? "collapsed" : ""}">
+      <div class="dock-head">
+        <div class="dock-title"><span class="dock-title-icon">${iconSvg("account")}</span><span class="dock-label">Account Controls</span></div>
+        ${iconButton(collapsed ? "Expand account controls" : "Collapse account controls", collapsed ? "expand" : "collapse", "ghost-btn compact-btn dock-collapse-btn", 'data-action="toggle-side-dock"')}
+      </div>
       <div class="dock-actions">
-        <button class="dock-btn" data-action="open-account">Account</button>
+        <button class="dock-btn" data-action="open-account" title="Account" aria-label="Account">${iconSvg("account")}<span class="dock-label">Account</span></button>
         ${ACCESS_KEYS.map((item) => `
-          <button class="dock-btn" data-action="main-view" data-view="${item.key}" ${hasAccess(account, item.key) ? "" : "disabled"}>
-            ${item.label}
+          <button class="dock-btn" data-action="main-view" data-view="${item.key}" title="${escapeAttribute(item.label)}" aria-label="${escapeAttribute(item.label)}" ${hasAccess(account, item.key) ? "" : "disabled"}>
+            ${iconSvg(accessIcon(item.key))}<span class="dock-label">${escapeHtml(item.label)}</span>
           </button>
         `).join("")}
       </div>
@@ -1305,8 +1378,9 @@ function renderEstimateV2View() {
         <h2>Estimate v2</h2>
       </div>
       <div class="estimate-actions">
-        <button class="secondary-btn" data-action="save-estimate-v2-template">Save Template</button>
-        <button class="ghost-btn danger" data-action="clear-estimate-v2">Clear</button>
+        ${iconButton("Estimate v2 Instructions", "info", "secondary-btn", 'data-action="open-estimate-v2-instructions"')}
+        ${iconButton("Save Template", "save", "secondary-btn", 'data-action="save-estimate-v2-template"')}
+        ${iconButton("Clear Estimate v2", "clear", "ghost-btn danger", 'data-action="clear-estimate-v2"')}
       </div>
     </div>
     <section class="estimate-v2-summary-panel estimate-v2-summary-panel-wide">
@@ -1323,8 +1397,47 @@ function renderEstimateV2View() {
   `;
 }
 
+function estimateV2GroupIcon(groupKey) {
+  return {
+    setup: "setup",
+    architectural: "architectural",
+    structural: "structural",
+    steelworks: "steelworks",
+    masonry: "masonry",
+    plumbing: "plumbing",
+    electrical: "electrical"
+  }[groupKey] || "generic";
+}
+
+function estimateV2ToolIcon(toolKey) {
+  return {
+    calibrate: "calibrate",
+    "door-count": "door",
+    "window-count": "window",
+    "curve-line": "curve",
+    "column-concrete": "column",
+    "footing-concrete": "footing",
+    "beam-concrete": "beam",
+    "floor-slab": "slab",
+    "steel-column": "column",
+    "steel-footing": "footing",
+    "steel-beam": "beam",
+    "steel-wall": "steelworks",
+    "steel-slab": "slab",
+    "tile-area": "tiles",
+    "chb-wall": "chb",
+    "pipe-length": "pipe",
+    "wire-length": "wire"
+  }[toolKey] || "generic";
+}
+
 function renderEstimateV2PlanToolbar(draft, activeTool) {
   const projects = getProjects();
+  const finishLabel = activeTool.type === "calibrate"
+    ? "Set Scale"
+    : state.estimateV2EditingRowId
+      ? "Update Shape"
+      : "Add Takeoff";
   return `
     <div class="estimate-v2-plan-toolbar">
       <div class="estimate-v2-plan-toolbar-top">
@@ -1350,12 +1463,12 @@ function renderEstimateV2PlanToolbar(draft, activeTool) {
         ${renderEstimateV2DrawingControls(draft, activeTool)}
         ${renderEstimateV2ZoomControls(draft)}
         <div class="estimate-v2-takeoff-actions">
-          <button class="primary-btn" data-action="finish-estimate-v2-takeoff" title="Shortcut: Enter">${activeTool.type === "calibrate" ? "Set Scale" : state.estimateV2EditingRowId ? "Update Shape" : "Add Takeoff"}</button>
-          <button class="secondary-btn estimate-v2-full-pdf-btn ${state.estimateV2PlanExpanded ? "active-full-pdf" : ""}" data-action="toggle-estimate-v2-plan-fullscreen">${state.estimateV2PlanExpanded ? "Exit Full PDF" : "Full PDF View"}</button>
-          <button class="secondary-btn" data-action="undo-estimate-v2-point" title="Shortcut: Ctrl/Cmd+Z">Undo Point</button>
-          <button class="secondary-btn" data-action="undo-estimate-v2-takeoff" title="Shortcut: Ctrl/Cmd+Z after a takeoff is generated">Undo Takeoff</button>
-          <button class="secondary-btn" data-action="redo-estimate-v2-point" title="Shortcut: Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y">Redo Point</button>
-          <button class="ghost-btn" data-action="clear-estimate-v2-points">Clear Points</button>
+          ${iconButton(`${finishLabel} (Enter)`, activeTool.type === "calibrate" ? "calibrate" : "add", "primary-btn", 'data-action="finish-estimate-v2-takeoff"')}
+          ${iconButton(state.estimateV2PlanExpanded ? "Exit Full PDF View" : "Full PDF View", state.estimateV2PlanExpanded ? "exitFullscreen" : "fullscreen", `secondary-btn estimate-v2-full-pdf-btn ${state.estimateV2PlanExpanded ? "active-full-pdf" : ""}`, 'data-action="toggle-estimate-v2-plan-fullscreen"')}
+          ${iconButton("Undo Point (Ctrl/Cmd+Z)", "undo", "secondary-btn", 'data-action="undo-estimate-v2-point"')}
+          ${iconButton("Undo Takeoff", "undo", "secondary-btn", 'data-action="undo-estimate-v2-takeoff"')}
+          ${iconButton("Redo Point", "redo", "secondary-btn", 'data-action="redo-estimate-v2-point"')}
+          ${iconButton("Clear Points", "eraser", "ghost-btn", 'data-action="clear-estimate-v2-points"')}
         </div>
       </div>
     </div>
@@ -1369,13 +1482,13 @@ function renderEstimateV2ToolGroups(draft, activeTool) {
   return `
     <div class="estimate-v2-tool-groups" aria-label="Takeoff groups">
       ${ESTIMATE_V2_TAKEOFF_GROUPS.map((toolGroup) => `
-        <button class="secondary-btn compact-btn estimate-v2-tool-group ${toolGroup.key === activeGroup ? "active-group" : ""}" data-action="set-estimate-v2-tool-group" data-group="${escapeAttribute(toolGroup.key)}">${escapeHtml(toolGroup.label)}</button>
+        <button class="secondary-btn compact-btn icon-btn estimate-v2-tool-group ${toolGroup.key === activeGroup ? "active-group" : ""}" data-action="set-estimate-v2-tool-group" data-group="${escapeAttribute(toolGroup.key)}" title="${escapeAttribute(toolGroup.label)}" aria-label="${escapeAttribute(toolGroup.label)}">${iconSvg(estimateV2GroupIcon(toolGroup.key))}${iconLabel(toolGroup.label)}</button>
       `).join("")}
     </div>
     <div class="estimate-v2-tool-strip estimate-v2-tool-members" aria-label="${escapeAttribute(group.label)} tools">
       <span class="estimate-v2-group-title">${escapeHtml(group.label)} Tools</span>
       ${memberTools.map((tool) => `
-        <button class="secondary-btn compact-btn ${tool.key === activeTool.key ? "active-tool" : ""}" data-action="set-estimate-v2-tool" data-tool="${escapeAttribute(tool.key)}">${escapeHtml(tool.label)}</button>
+        <button class="secondary-btn compact-btn icon-btn ${tool.key === activeTool.key ? "active-tool" : ""}" data-action="set-estimate-v2-tool" data-tool="${escapeAttribute(tool.key)}" title="${escapeAttribute(tool.label)}" aria-label="${escapeAttribute(tool.label)}">${iconSvg(estimateV2ToolIcon(tool.key))}${iconLabel(tool.label)}</button>
       `).join("")}
     </div>
   `;
@@ -1422,9 +1535,9 @@ function renderEstimateV2ZoomControls(draft) {
   const zoom = estimateV2ZoomValue(draft);
   return `
     <div class="estimate-v2-zoom-controls">
-      <button class="secondary-btn compact-btn" data-action="estimate-v2-zoom-out">Zoom Out</button>
-      <button class="secondary-btn compact-btn" data-action="estimate-v2-zoom-in">Zoom In</button>
-      <button class="ghost-btn compact-btn" data-action="estimate-v2-zoom-reset">Reset</button>
+      ${iconButton("Zoom Out", "zoomOut", "secondary-btn compact-btn", 'data-action="estimate-v2-zoom-out"')}
+      ${iconButton("Zoom In", "zoomIn", "secondary-btn compact-btn", 'data-action="estimate-v2-zoom-in"')}
+      ${iconButton("Reset Zoom", "reset", "ghost-btn compact-btn", 'data-action="estimate-v2-zoom-reset"')}
       <span>${formatInteger(zoom * 100)}%</span>
     </div>
   `;
@@ -1450,7 +1563,7 @@ function renderEstimateV2DrawingControls(draft, activeTool) {
         <span>Grid Size (px)</span>
         <input data-estimate-v2-takeoff-input data-estimate-v2-snap-size type="number" min="8" max="200" step="1" value="${numberInputValue(draft.snapGridSize)}" placeholder="32">
       </label>
-      <button class="secondary-btn compact-btn" data-action="add-estimate-v2-perpendicular" ${canPerpendicular ? "" : "disabled"} title="Shortcut: P">Perpendicular</button>
+      ${iconButton("Perpendicular (P)", "engineering", "secondary-btn compact-btn", `data-action="add-estimate-v2-perpendicular" ${canPerpendicular ? "" : "disabled"}`)}
     </div>
   `;
 }
@@ -3684,6 +3797,48 @@ function openOtpModal(email, delivery) {
       <div class="modal-foot">
         <button class="ghost-btn" data-action="close-modal">Cancel</button>
         <button class="primary-btn" data-action="verify-otp">Verify OTP</button>
+      </div>
+    </div>
+  `);
+}
+
+function openEstimateV2InstructionModal() {
+  openModal(`
+    <div class="modal estimate-v2-instruction-modal">
+      <div class="modal-head">
+        <h3>${iconSvg("info")} Estimate v2 Instructions</h3>
+        <button class="ghost-btn icon-btn" data-action="close-modal" title="Close" aria-label="Close">${iconSvg("clear")}${iconLabel("Close")}</button>
+      </div>
+      <div class="modal-body">
+        <div class="instruction-grid">
+          <article class="instruction-card">
+            <strong>1. Insert PDF</strong>
+            <p>Upload the floor plan PDF inside the PDF container. Use page controls to move between sheets.</p>
+          </article>
+          <article class="instruction-card">
+            <strong>2. Calibrate Scale</strong>
+            <p>Select Setup, choose Calibrate, click two known points, enter the real length, then press Set Scale.</p>
+          </article>
+          <article class="instruction-card">
+            <strong>3. Choose Tool Group</strong>
+            <p>Open Architectural, Structural, Steelworks, Masonry, Plumbing, or Electrical, then choose the icon for the item to measure.</p>
+          </article>
+          <article class="instruction-card">
+            <strong>4. Draw Takeoff</strong>
+            <p>Click points on the plan. Use Enter to add the takeoff, Ctrl/Cmd+Z to undo points, and F8 for Ortho mode.</p>
+          </article>
+          <article class="instruction-card">
+            <strong>5. Fill Properties</strong>
+            <p>Enter dimensions, ratios, waste, and prices in the controls. Computed quantities and cost per unit update from the calculator.</p>
+          </article>
+          <article class="instruction-card">
+            <strong>6. Manage Layers</strong>
+            <p>Use bundled Layers to hide or show measurements by group while keeping the takeoff table saved below.</p>
+          </article>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="primary-btn" data-action="close-modal">Got it</button>
       </div>
     </div>
   `);

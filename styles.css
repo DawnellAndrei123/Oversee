@@ -66,6 +66,39 @@ button {
   border: 0;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ui-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-block;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icon-btn {
+  width: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+}
+
 .screen {
   min-height: 100vh;
 }
@@ -350,6 +383,11 @@ button {
   grid-template-columns: 270px minmax(0, 1fr);
   gap: 18px;
   padding: 18px;
+  align-items: start;
+}
+
+.app-layout.side-dock-collapsed {
+  grid-template-columns: 78px minmax(0, 1fr);
 }
 
 .main-stage {
@@ -413,14 +451,41 @@ button {
   align-self: start;
   position: sticky;
   top: 88px;
+  min-height: calc(100vh - 106px);
+  max-height: calc(100vh - 106px);
+  overflow-y: auto;
+}
+
+.side-dock.collapsed {
+  padding: 10px;
+}
+
+.dock-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .dock-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 900;
   text-transform: uppercase;
   margin: 8px 8px 12px;
+}
+
+.dock-title-icon {
+  display: grid;
+  place-items: center;
+  color: var(--cyan);
+}
+
+.dock-collapse-btn {
+  flex: 0 0 auto;
 }
 
 .dock-actions {
@@ -431,7 +496,36 @@ button {
 .dock-btn {
   width: 100%;
   text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 0 14px;
+}
+
+.dock-btn .ui-icon {
+  color: var(--cyan);
+}
+
+.side-dock.collapsed .dock-title {
+  justify-content: center;
+  margin: 4px 0 12px;
+}
+
+.side-dock.collapsed .dock-label {
+  display: none;
+}
+
+.side-dock.collapsed .dock-head {
+  display: grid;
+  justify-items: center;
+}
+
+.side-dock.collapsed .dock-btn,
+.side-dock.collapsed .dock-collapse-btn {
+  justify-content: center;
+  width: 48px;
+  min-width: 48px;
+  padding: 0;
 }
 
 .dock-btn[disabled] {
@@ -1365,6 +1459,14 @@ tfoot td {
   gap: 8px;
 }
 
+.estimate-v2-tool-group.icon-btn,
+.estimate-v2-tool-members .icon-btn,
+.estimate-v2-takeoff-actions .icon-btn,
+.estimate-v2-zoom-controls .icon-btn {
+  width: 44px;
+  min-width: 44px;
+}
+
 .estimate-v2-tool-group.active-group {
   color: #07111a;
   background: linear-gradient(135deg, var(--cyan), #7bffcf);
@@ -1497,6 +1599,10 @@ tfoot td {
   overflow: hidden;
   background: #050009;
   box-shadow: 0 30px 90px rgba(0, 0, 0, 0.45);
+}
+
+.app-layout.side-dock-collapsed .estimate-v2-plan-shell.full-pdf-ui {
+  left: 114px;
 }
 
 .estimate-v2-full-pdf-head {
@@ -2095,11 +2201,39 @@ tfoot td {
 }
 
 .modal-head h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
 }
 
 .modal-body {
   padding: 18px;
+}
+
+.instruction-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.instruction-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.instruction-card strong {
+  display: block;
+  color: var(--cyan);
+  margin-bottom: 6px;
+}
+
+.instruction-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
 }
 
 .form-grid {
@@ -2743,6 +2877,10 @@ body[data-theme="light"] .premium-access-notice {
     grid-template-columns: 1fr;
   }
 
+  .app-layout.side-dock-collapsed {
+    grid-template-columns: 1fr;
+  }
+
   .brand-panel {
     min-height: auto;
   }
@@ -2750,6 +2888,8 @@ body[data-theme="light"] .premium-access-notice {
   .side-dock {
     position: static;
     order: -1;
+    min-height: auto;
+    max-height: none;
   }
 
   .dashboard-grid,
@@ -2812,6 +2952,14 @@ body[data-theme="light"] .premium-access-notice {
     right: 10px;
     bottom: 10px;
     left: 10px;
+  }
+
+  .app-layout.side-dock-collapsed .estimate-v2-plan-shell.full-pdf-ui {
+    left: 10px;
+  }
+
+  .instruction-grid {
+    grid-template-columns: 1fr;
   }
 
   .dashboard-filter select {
