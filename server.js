@@ -1130,7 +1130,7 @@ async function saveAccountAppData(req, res) {
   const body = await readJsonBody(req, MAX_APP_DATA_BODY_BYTES);
   const data = normalizeAccountAppData(body.data);
   const updatedAt = new Date().toISOString();
-  await writeAccountAppData(account.id, data, updatedAt, store);
+  await writeAccountAppData(account, data, updatedAt, store);
   audit(store, "app_data_saved", { accountId: account.id, keys: Object.keys(data), meta: requestMeta(req) });
   await writeStore(store);
   jsonResponse(req, res, 200, { ok: true, updatedAt });
@@ -1154,7 +1154,8 @@ async function readAccountAppData(accountId, store) {
   return record ? { data: normalizeAccountAppData(record.data), updatedAt: record.updatedAt || null } : null;
 }
 
-async function writeAccountAppData(accountId, data, updatedAt, store) {
+async function writeAccountAppData(account, data, updatedAt, store) {
+  const accountId = account && account.id;
   if (SUPABASE_ENABLED) {
     try {
       await supabaseRequest("oversee_app_data", {
@@ -1167,6 +1168,7 @@ async function writeAccountAppData(accountId, data, updatedAt, store) {
         }],
         prefer: "resolution=merge-duplicates,return=minimal"
       });
+      await writeGatheredAppData(account, data, updatedAt);
       return;
     } catch (error) {
       throw appDataStorageError(error);
@@ -1176,12 +1178,71 @@ async function writeAccountAppData(accountId, data, updatedAt, store) {
   const records = Array.isArray(store.appData) ? store.appData : [];
   const record = {
     accountId,
+    accountEmail: account && account.email || null,
+    accountName: account && account.name || null,
     data,
+    dataSummary: summarizeAccountAppData(data),
     updatedAt
   };
   store.appData = records.some((item) => item.accountId === accountId)
     ? records.map((item) => item.accountId === accountId ? record : item)
     : [...records, record];
+}
+
+async function writeGatheredAppData(account, data, updatedAt) {
+  if (!SUPABASE_ENABLED || !account || !account.id) return;
+  try {
+    await supabaseRequest("oversee_gathered_app_data", {
+      method: "POST",
+      query: "?on_conflict=account_id",
+      body: [{
+        account_id: account.id,
+        account_email: account.email || null,
+        account_name: account.name || null,
+        saved_by_account_id: account.id,
+        saved_by_email: account.email || null,
+        saved_by_name: account.name || null,
+        data,
+        data_summary: summarizeAccountAppData(data),
+        saved_at: updatedAt,
+        updated_at: updatedAt
+      }],
+      prefer: "resolution=merge-duplicates,return=minimal"
+    });
+  } catch (error) {
+    const message = String(error && error.message || "");
+    if (/oversee_gathered_app_data|relation .* does not exist|schema cache/i.test(message)) {
+      console.warn("Supabase gathered app data table is not created yet. Run supabase/schema.sql to enable it.");
+      return;
+    }
+    throw error;
+  }
+}
+
+function summarizeAccountAppData(data) {
+  const source = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  const projects = Array.isArray(source.projects) ? source.projects : [];
+  const estimateTemplates = Array.isArray(source.estimateTemplates) ? source.estimateTemplates : [];
+  const materialPrices = Array.isArray(source.materialPrices) ? source.materialPrices : [];
+  const swa = source.swa && typeof source.swa === "object" ? source.swa : {};
+  const estimateV2Draft = source.estimateV2Draft && typeof source.estimateV2Draft === "object" ? source.estimateV2Draft : {};
+  const takeoffRows = Array.isArray(estimateV2Draft.takeoffRows) ? estimateV2Draft.takeoffRows : [];
+  const swaSheets = Object.values(swa).reduce((total, projectSwa) => {
+    if (!projectSwa || typeof projectSwa !== "object") return total;
+    if (Array.isArray(projectSwa.sheets)) return total + projectSwa.sheets.length;
+    if (Array.isArray(projectSwa.billings)) return total + projectSwa.billings.length;
+    return total;
+  }, 0);
+
+  return {
+    projectCount: projects.length,
+    swaProjectCount: Object.keys(swa).length,
+    swaSheetCount: swaSheets,
+    estimateTemplateCount: estimateTemplates.length,
+    materialStoreCount: materialPrices.length,
+    estimateV2TakeoffRowCount: takeoffRows.length,
+    savedAt: String(source.savedAt || new Date().toISOString())
+  };
 }
 
 function normalizeAccountAppData(data) {

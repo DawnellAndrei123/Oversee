@@ -80,10 +80,13 @@ Account data will appear in Supabase Table Editor under:
 - `oversee_invites`
 - `oversee_audit_log`
 - `oversee_app_data`
+- `oversee_gathered_app_data`
 
 `oversee_app_data` stores each signed-in account's shared app data, including projects, SWA data, estimate drafts, Estimate v2 takeoff rows, estimate templates, material price lists, and subscription state. This is what lets a user log in on another device and see the same project data.
 
-Most app details are stored in the `data` JSONB column. The tables also include searchable helper columns such as `email`, `account_id`, `expires_at`, and `at`.
+`oversee_gathered_app_data` mirrors that saved app data with searchable owner columns: `account_email`, `account_name`, `saved_by_email`, and `saved_by_name`. Use this table in Supabase Table Editor when you want to see who entered the data.
+
+Most app details are stored in the `data` JSONB column. The tables also include searchable helper columns such as `email`, `account_id`, `account_email`, `account_name`, `expires_at`, and `at`.
 
 To migrate your current local `backend/data/store.json` into Supabase after creating the tables:
 
