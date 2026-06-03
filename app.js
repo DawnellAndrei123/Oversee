@@ -86,13 +86,17 @@ const STEEL_FOOTING_DEFAULTS = {
   rebarSpacing: 0.15,
   allowancePerBar: 0
 };
-const STEEL_SLAB_LEVEL_OPTIONS = [
-  { key: "ground-floor", label: "Ground Floor Slab", factor: 1 },
-  { key: "second-floor", label: "Second Floor Slab", factor: 2 }
+const STEEL_SLAB_TYPE_OPTIONS = [
+  { key: "auto", label: "Auto by Span Ratio" },
+  { key: "one-way", label: "One-Way Slab" },
+  { key: "two-way", label: "Two-Way Slab" }
 ];
 const STEEL_SLAB_DEFAULTS = {
   rebarSpacing: 0.2,
-  allowancePerBar: 0
+  type: "auto",
+  thickness: 0.15,
+  cover: 0.02,
+  wastePercent: 10
 };
 const STEEL_BEAM_DEFAULTS = {
   width: 0.2,
@@ -1652,12 +1656,24 @@ function renderEstimateV2TakeoffActiveInputs(draft, activeTool) {
           <label class="estimate-v2-field">
             <span>Slab Type</span>
             <select data-estimate-v2-takeoff-input data-estimate-v2-steel-slab-level>
-              ${STEEL_SLAB_LEVEL_OPTIONS.map((option) => `<option value="${escapeAttribute(option.key)}" ${draft.steelSlabLevel === option.key ? "selected" : ""}>${escapeHtml(option.label)} x${formatSwaNumber(option.factor)}</option>`).join("")}
+              ${STEEL_SLAB_TYPE_OPTIONS.map((option) => `<option value="${escapeAttribute(option.key)}" ${(draft.steelSlabType || draft.steelSlabLevel) === option.key ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
             </select>
           </label>
           <label class="estimate-v2-field">
             <span>Rebar Spacing (m)</span>
             <input data-estimate-v2-takeoff-input data-estimate-v2-steel-slab-spacing type="number" min="0" step="0.01" value="${numberInputValue(draft.steelSlabRebarSpacing)}" placeholder="0.20">
+          </label>
+          <label class="estimate-v2-field">
+            <span>Slab Thickness (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-steel-slab-thickness type="number" min="0" step="0.01" value="${numberInputValue(draft.steelSlabThickness)}" placeholder="0.15">
+          </label>
+          <label class="estimate-v2-field">
+            <span>Concrete Cover (m)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-steel-slab-cover type="number" min="0" step="0.005" value="${numberInputValue(draft.steelSlabCover)}" placeholder="0.02">
+          </label>
+          <label class="estimate-v2-field">
+            <span>Waste / Lap (%)</span>
+            <input data-estimate-v2-takeoff-input data-estimate-v2-steel-slab-waste type="number" min="0" step="1" value="${numberInputValue(draft.steelSlabWastePercent)}" placeholder="10">
           </label>
         ` : ""}
         ${activeTool.key === "steel-beam" ? `
@@ -2216,11 +2232,16 @@ function renderEstimateV2SteelworkDetails(row) {
     const stockOptionsText = stockOptions
       .map((option) => `${formatSwaNumber(option.length)}m=${formatInteger(option.totalStockBars)} pcs`)
       .join(" | ");
+    const slabTypeNote = row.steelSlabType === "auto"
+      ? `Auto: ${row.steelSlabResolvedTypeLabel}`
+      : row.steelSlabResolvedTypeLabel;
     return `
-      <small>${escapeHtml(row.steelSlabLevelLabel)} | Area ${formatSwaNumber(row.slabArea)} sq.m | Approx. ${formatSwaNumber(row.slabLength)} x ${formatSwaNumber(row.slabWidth)} m</small>
-      <small>X direction: ${formatInteger(row.slabXBarsPerLayer)} bars/layer x ${formatSwaNumber(row.slabLength)} m x ${formatSwaNumber(row.steelSlabFactor)} factor = ${formatSwaNumber(row.slabXTotalLength)} m</small>
-      <small>Y direction: ${formatInteger(row.slabYBarsPerLayer)} bars/layer x ${formatSwaNumber(row.slabWidth)} m x ${formatSwaNumber(row.steelSlabFactor)} factor = ${formatSwaNumber(row.slabYTotalLength)} m</small>
-      <small>Total bars: ${formatInteger(row.slabTotalBars)} pcs | Total length: ${formatSwaNumber(row.totalRebarLength)} m | Selected stock: ${formatInteger(row.totalStockBars)} pcs @ ${formatSwaNumber(row.rebarLength)} m</small>
+      <small>${escapeHtml(slabTypeNote)} | Ratio ${formatSwaNumber(row.steelSlabLongSpan)} ÷ ${formatSwaNumber(row.steelSlabShortSpan)} = ${formatSwaNumber(row.steelSlabSpanRatio)} | Area ${formatSwaNumber(row.slabArea)} sq.m</small>
+      <small>${escapeHtml(row.slabShortBarsLabel)}: ${formatInteger(row.slabShortBarsCount)} pcs x ${formatSwaNumber(row.slabShortBarLength)} m = ${formatSwaNumber(row.slabShortTotalLength)} m</small>
+      <small>${escapeHtml(row.slabLongBarsLabel)}: ${formatInteger(row.slabLongBarsCount)} pcs x ${formatSwaNumber(row.slabLongBarLength)} m = ${formatSwaNumber(row.slabLongTotalLength)} m</small>
+      <small>Crank allowance: 0.42D = ${formatSwaNumber(row.steelSlabCrankAllowance)} m | D ${formatSwaNumber(row.steelSlabThickness)} - ${formatSwaNumber(row.steelSlabCover)} = ${formatSwaNumber(row.steelSlabEffectiveDepth)} m</small>
+      <small>Total bars: ${formatInteger(row.slabTotalBars)} pcs | Length before waste: ${formatSwaNumber(row.slabTotalLengthBeforeWaste)} m | Final length: ${formatSwaNumber(row.totalRebarLength)} m</small>
+      <small>Selected stock: ${formatInteger(row.totalStockBars)} pcs @ ${formatSwaNumber(row.rebarLength)} m | Waste/Lap: ${formatSwaNumber(row.steelSlabWastePercent)}%</small>
       ${stockOptionsText ? `<small>Total stock options: ${escapeHtml(stockOptionsText)}</small>` : ""}
       <small>Spacing: ${formatSwaNumber(row.steelSlabRebarSpacing)} m both ways | Weight estimate: ${formatSwaNumber(row.totalRebarWeightKg)} kg | ${formatSwaNumber(row.rebarDiameter)} mm</small>
     `;
@@ -2690,8 +2711,15 @@ function estimateV2SteelFootingTakeoff(source, footingCount, options = {}) {
   };
 }
 
+function steelSlabTypeOption(typeKey) {
+  const normalizedType = typeKey === "ground-floor" || typeKey === "second-floor"
+    ? STEEL_SLAB_DEFAULTS.type
+    : typeKey;
+  return STEEL_SLAB_TYPE_OPTIONS.find((option) => option.key === normalizedType) || STEEL_SLAB_TYPE_OPTIONS[0];
+}
+
 function steelSlabLevelOption(levelKey) {
-  return STEEL_SLAB_LEVEL_OPTIONS.find((option) => option.key === levelKey) || STEEL_SLAB_LEVEL_OPTIONS[0];
+  return steelSlabTypeOption(levelKey);
 }
 
 function estimateV2SteelSlabStockOptions(totalLength) {
@@ -2723,28 +2751,48 @@ function estimateV2SteelSlabTakeoff(source, points, slabAreaInput, options = {})
   const rawLength = bounds && metersPerPixel ? (bounds.maxX - bounds.minX) * metersPerPixel : Number(source && source.slabLength) || 0;
   const rawWidth = bounds && metersPerPixel ? (bounds.maxY - bounds.minY) * metersPerPixel : Number(source && source.slabWidth) || 0;
   const fallbackSide = slabArea ? Math.sqrt(slabArea) : 0;
-  const slabLength = Math.max(rawLength, rawWidth, fallbackSide);
-  const slabWidth = Math.max(Math.min(rawLength || fallbackSide, rawWidth || fallbackSide), fallbackSide && !rawLength && !rawWidth ? fallbackSide : 0);
+  const measuredLength = Math.max(0, Number(rawLength) || 0);
+  const measuredWidth = Math.max(0, Number(rawWidth) || 0);
+  let slabLength = Math.max(measuredLength, measuredWidth);
+  let slabWidth = Math.min(measuredLength || Infinity, measuredWidth || Infinity);
+  if (!Number.isFinite(slabWidth)) slabWidth = 0;
+  if (slabArea && slabLength && !slabWidth) slabWidth = slabArea / slabLength;
+  if (!slabLength && fallbackSide) {
+    slabLength = fallbackSide;
+    slabWidth = fallbackSide;
+  }
   if (!slabArea || !slabLength || !slabWidth) {
     if (!options.silent) toast("Draw a slab area after calibrating the scale.");
     return null;
   }
   const rebarDiameter = REBAR_DIAMETER_OPTIONS.includes(Number(source && source.rebarDiameter)) ? Number(source.rebarDiameter) : REBAR_DIAMETER_OPTIONS[0];
   const rebarLength = REBAR_LENGTH_OPTIONS.includes(Number(source && source.rebarLength)) ? Number(source.rebarLength) : REBAR_LENGTH_OPTIONS[0];
-  const steelSlabLevel = steelSlabLevelOption(source && source.steelSlabLevel);
-  const steelSlabFactor = Math.max(1, Number(steelSlabLevel.factor) || 1);
+  const steelSlabType = steelSlabTypeOption(source && (source.steelSlabType || source.steelSlabLevel));
   const steelSlabRebarSpacing = Math.max(0, Number(source && source.steelSlabRebarSpacing) || STEEL_SLAB_DEFAULTS.rebarSpacing);
-  const steelSlabAllowancePerBar = Math.max(0, Number(source && source.steelSlabAllowancePerBar) || STEEL_SLAB_DEFAULTS.allowancePerBar);
-  const slabXBarsPerLayer = steelSlabRebarSpacing > 0 ? Math.ceil(slabWidth / steelSlabRebarSpacing) + 1 : 0;
-  const slabYBarsPerLayer = steelSlabRebarSpacing > 0 ? Math.ceil(slabLength / steelSlabRebarSpacing) + 1 : 0;
-  const slabXBarsTotal = slabXBarsPerLayer * steelSlabFactor;
-  const slabYBarsTotal = slabYBarsPerLayer * steelSlabFactor;
-  const slabXBarLength = slabLength + steelSlabAllowancePerBar;
-  const slabYBarLength = slabWidth + steelSlabAllowancePerBar;
-  const slabXTotalLength = slabXBarsTotal * slabXBarLength;
-  const slabYTotalLength = slabYBarsTotal * slabYBarLength;
-  const slabTotalBars = slabXBarsTotal + slabYBarsTotal;
-  const totalRebarLength = slabXTotalLength + slabYTotalLength;
+  const sourceSteelSlabThickness = Number(source && source.steelSlabThickness);
+  const sourceSteelSlabCover = Number(source && source.steelSlabCover);
+  const sourceSteelSlabWastePercent = Number(source && source.steelSlabWastePercent);
+  const steelSlabThickness = Number.isFinite(sourceSteelSlabThickness) ? Math.max(0, sourceSteelSlabThickness) : STEEL_SLAB_DEFAULTS.thickness;
+  const steelSlabCover = Number.isFinite(sourceSteelSlabCover) ? Math.max(0, sourceSteelSlabCover) : STEEL_SLAB_DEFAULTS.cover;
+  const steelSlabWastePercent = Number.isFinite(sourceSteelSlabWastePercent) ? Math.max(0, sourceSteelSlabWastePercent) : STEEL_SLAB_DEFAULTS.wastePercent;
+  const shortSpan = Math.min(slabLength, slabWidth);
+  const longSpan = Math.max(slabLength, slabWidth);
+  const steelSlabSpanRatio = shortSpan > 0 ? longSpan / shortSpan : 0;
+  const detectedSlabTypeKey = steelSlabSpanRatio >= 2 ? "one-way" : "two-way";
+  const resolvedSlabTypeKey = steelSlabType.key === "auto" ? detectedSlabTypeKey : steelSlabType.key;
+  const resolvedSlabType = steelSlabTypeOption(resolvedSlabTypeKey);
+  const effectiveDepth = Math.max(0, steelSlabThickness - steelSlabCover);
+  const steelSlabCrankAllowance = 0.42 * effectiveDepth;
+  const slabShortBarsCount = steelSlabRebarSpacing > 0 ? Math.ceil(longSpan / steelSlabRebarSpacing) + 1 : 0;
+  const slabLongBarsCount = steelSlabRebarSpacing > 0 ? Math.ceil(shortSpan / steelSlabRebarSpacing) + 1 : 0;
+  const slabShortBarLength = shortSpan + steelSlabCrankAllowance;
+  const slabLongBarLength = resolvedSlabTypeKey === "one-way" ? longSpan : longSpan + steelSlabCrankAllowance;
+  const slabShortTotalLength = slabShortBarsCount * slabShortBarLength;
+  const slabLongTotalLength = slabLongBarsCount * slabLongBarLength;
+  const slabTotalBars = slabShortBarsCount + slabLongBarsCount;
+  const slabTotalLengthBeforeWaste = slabShortTotalLength + slabLongTotalLength;
+  const steelSlabWasteFactor = 1 + (steelSlabWastePercent / 100);
+  const totalRebarLength = slabTotalLengthBeforeWaste * steelSlabWasteFactor;
   const stockLengthOptions = estimateV2SteelSlabStockOptions(totalRebarLength);
   const selectedStockOption = stockLengthOptions.find((option) => option.length === rebarLength) || stockLengthOptions[0] || {};
   const totalStockBars = Math.max(0, Number(selectedStockOption.totalStockBars) || 0);
@@ -2755,19 +2803,42 @@ function estimateV2SteelSlabTakeoff(source, points, slabAreaInput, options = {})
     slabWidth,
     rebarDiameter,
     rebarLength,
-    steelSlabLevel: steelSlabLevel.key,
-    steelSlabLevelLabel: steelSlabLevel.label,
-    steelSlabFactor,
+    steelSlabType: steelSlabType.key,
+    steelSlabTypeLabel: steelSlabType.label,
+    steelSlabLevel: steelSlabType.key,
+    steelSlabLevelLabel: steelSlabType.label,
+    steelSlabDetectedType: detectedSlabTypeKey,
+    steelSlabDetectedTypeLabel: steelSlabTypeOption(detectedSlabTypeKey).label,
+    steelSlabResolvedType: resolvedSlabTypeKey,
+    steelSlabResolvedTypeLabel: resolvedSlabType.label,
+    steelSlabFactor: 1,
     steelSlabRebarSpacing,
-    steelSlabAllowancePerBar,
-    slabXBarsPerLayer,
-    slabYBarsPerLayer,
-    slabXBarsTotal,
-    slabYBarsTotal,
-    slabXBarLength,
-    slabYBarLength,
-    slabXTotalLength,
-    slabYTotalLength,
+    steelSlabThickness,
+    steelSlabCover,
+    steelSlabEffectiveDepth: effectiveDepth,
+    steelSlabCrankAllowance,
+    steelSlabAllowancePerBar: steelSlabCrankAllowance,
+    steelSlabWastePercent,
+    steelSlabSpanRatio,
+    steelSlabShortSpan: shortSpan,
+    steelSlabLongSpan: longSpan,
+    slabShortBarsLabel: resolvedSlabTypeKey === "one-way" ? "Main bars along short span" : "Short-span bars",
+    slabLongBarsLabel: resolvedSlabTypeKey === "one-way" ? "Distribution bars along long span" : "Long-span bars",
+    slabShortBarsCount,
+    slabLongBarsCount,
+    slabShortBarLength,
+    slabLongBarLength,
+    slabShortTotalLength,
+    slabLongTotalLength,
+    slabTotalLengthBeforeWaste,
+    slabXBarsPerLayer: slabShortBarsCount,
+    slabYBarsPerLayer: slabLongBarsCount,
+    slabXBarsTotal: slabShortBarsCount,
+    slabYBarsTotal: slabLongBarsCount,
+    slabXBarLength: slabShortBarLength,
+    slabYBarLength: slabLongBarLength,
+    slabXTotalLength: slabShortTotalLength,
+    slabYTotalLength: slabLongTotalLength,
     slabTotalBars,
     totalRebarLength,
     totalRebarWeightKg,
@@ -5233,8 +5304,12 @@ async function editEstimateV2Takeoff(rowId) {
     draft.footingThickness = row.footingThickness || draft.footingThickness;
   }
   if (row.tool === "steel-slab") {
-    draft.steelSlabLevel = row.steelSlabLevel || draft.steelSlabLevel;
+    draft.steelSlabType = row.steelSlabType || row.steelSlabLevel || draft.steelSlabType;
+    draft.steelSlabLevel = draft.steelSlabType;
     draft.steelSlabRebarSpacing = row.steelSlabRebarSpacing || draft.steelSlabRebarSpacing;
+    draft.steelSlabThickness = row.steelSlabThickness || draft.steelSlabThickness;
+    draft.steelSlabCover = row.steelSlabCover || draft.steelSlabCover;
+    if (row.steelSlabWastePercent || row.steelSlabWastePercent === 0) draft.steelSlabWastePercent = row.steelSlabWastePercent;
   }
   if (row.tool === "steel-beam") {
     draft.beamWidth = row.beamWidth || draft.beamWidth;
@@ -5544,6 +5619,9 @@ function collectEstimateV2DraftFromDom() {
   const lapAllowanceInput = document.querySelector("[data-estimate-v2-lap-allowance]");
   const steelSlabLevelInput = document.querySelector("[data-estimate-v2-steel-slab-level]");
   const steelSlabSpacingInput = document.querySelector("[data-estimate-v2-steel-slab-spacing]");
+  const steelSlabThicknessInput = document.querySelector("[data-estimate-v2-steel-slab-thickness]");
+  const steelSlabCoverInput = document.querySelector("[data-estimate-v2-steel-slab-cover]");
+  const steelSlabWasteInput = document.querySelector("[data-estimate-v2-steel-slab-waste]");
   const beamWidthInput = document.querySelector("[data-estimate-v2-beam-width]");
   const beamDepthInput = document.querySelector("[data-estimate-v2-beam-depth]");
   const beamMainBarsInput = document.querySelector("[data-estimate-v2-beam-main-bars]");
@@ -5603,8 +5681,12 @@ function collectEstimateV2DraftFromDom() {
     longitudinalBarsPerColumn: longitudinalBarsInput ? longitudinalBarsInput.value : current.longitudinalBarsPerColumn,
     tieSpacing: tieSpacingInput ? tieSpacingInput.value : current.tieSpacing,
     lapAllowancePerBar: lapAllowanceInput ? lapAllowanceInput.value : current.lapAllowancePerBar,
+    steelSlabType: steelSlabLevelInput ? steelSlabLevelInput.value : current.steelSlabType,
     steelSlabLevel: steelSlabLevelInput ? steelSlabLevelInput.value : current.steelSlabLevel,
     steelSlabRebarSpacing: steelSlabSpacingInput ? steelSlabSpacingInput.value : current.steelSlabRebarSpacing,
+    steelSlabThickness: steelSlabThicknessInput ? steelSlabThicknessInput.value : current.steelSlabThickness,
+    steelSlabCover: steelSlabCoverInput ? steelSlabCoverInput.value : current.steelSlabCover,
+    steelSlabWastePercent: steelSlabWasteInput ? steelSlabWasteInput.value : current.steelSlabWastePercent,
     beamWidth: beamWidthInput ? beamWidthInput.value : current.beamWidth,
     beamDepth: beamDepthInput ? beamDepthInput.value : current.beamDepth,
     beamMainBars: beamMainBarsInput ? beamMainBarsInput.value : current.beamMainBars,
@@ -6504,8 +6586,12 @@ function defaultEstimateV2Draft() {
     longitudinalBarsPerColumn: STEEL_COLUMN_DEFAULTS.longitudinalBarsPerColumn,
     tieSpacing: STEEL_COLUMN_DEFAULTS.tieSpacing,
     lapAllowancePerBar: STEEL_COLUMN_DEFAULTS.lapAllowancePerBar,
-    steelSlabLevel: STEEL_SLAB_LEVEL_OPTIONS[0].key,
+    steelSlabType: STEEL_SLAB_DEFAULTS.type,
+    steelSlabLevel: STEEL_SLAB_DEFAULTS.type,
     steelSlabRebarSpacing: STEEL_SLAB_DEFAULTS.rebarSpacing,
+    steelSlabThickness: STEEL_SLAB_DEFAULTS.thickness,
+    steelSlabCover: STEEL_SLAB_DEFAULTS.cover,
+    steelSlabWastePercent: STEEL_SLAB_DEFAULTS.wastePercent,
     beamWidth: STEEL_BEAM_DEFAULTS.width,
     beamDepth: STEEL_BEAM_DEFAULTS.depth,
     beamMainBars: STEEL_BEAM_DEFAULTS.mainBars,
@@ -6560,6 +6646,10 @@ function normalizeEstimateV2Draft(draft) {
   const floorSlabThickness = Number(source.floorSlabThickness);
   const tileWastePercent = Number(source.tileWastePercent);
   const beamCrankBars = Number(source.beamCrankBars);
+  const steelSlabType = steelSlabTypeOption(source.steelSlabType || source.steelSlabLevel);
+  const steelSlabThickness = Number(source.steelSlabThickness);
+  const steelSlabCover = Number(source.steelSlabCover);
+  const steelSlabWastePercent = Number(source.steelSlabWastePercent);
   return {
     selectedProjectId: String(source.selectedProjectId || "").trim(),
     planType: PLAN_TYPES.includes(source.planType) ? source.planType : PLAN_TYPES[0],
@@ -6597,8 +6687,12 @@ function normalizeEstimateV2Draft(draft) {
     longitudinalBarsPerColumn: Math.max(1, Math.ceil(Number(source.longitudinalBarsPerColumn) || STEEL_COLUMN_DEFAULTS.longitudinalBarsPerColumn)),
     tieSpacing: Math.max(0, Number(source.tieSpacing) || STEEL_COLUMN_DEFAULTS.tieSpacing),
     lapAllowancePerBar: Math.max(0, Number(source.lapAllowancePerBar) || STEEL_COLUMN_DEFAULTS.lapAllowancePerBar),
-    steelSlabLevel: steelSlabLevelOption(source.steelSlabLevel).key,
+    steelSlabType: steelSlabType.key,
+    steelSlabLevel: steelSlabType.key,
     steelSlabRebarSpacing: Math.max(0, Number(source.steelSlabRebarSpacing) || STEEL_SLAB_DEFAULTS.rebarSpacing),
+    steelSlabThickness: Number.isFinite(steelSlabThickness) ? Math.max(0, steelSlabThickness) : STEEL_SLAB_DEFAULTS.thickness,
+    steelSlabCover: Number.isFinite(steelSlabCover) ? Math.max(0, steelSlabCover) : STEEL_SLAB_DEFAULTS.cover,
+    steelSlabWastePercent: Number.isFinite(steelSlabWastePercent) ? Math.max(0, steelSlabWastePercent) : STEEL_SLAB_DEFAULTS.wastePercent,
     beamWidth: Math.max(0, Number(source.beamWidth) || STEEL_BEAM_DEFAULTS.width),
     beamDepth: Math.max(0, Number(source.beamDepth) || STEEL_BEAM_DEFAULTS.depth),
     beamMainBars: Math.max(1, Math.ceil(Number(source.beamMainBars) || STEEL_BEAM_DEFAULTS.mainBars)),
@@ -6697,6 +6791,29 @@ function normalizeEstimateV2TakeoffRow(row) {
       ) || 0)
     })).filter((option) => option.length)
     : [];
+  const rowSteelSlabType = steelSlabTypeOption(row && (row.steelSlabType || row.steelSlabLevel));
+  const rowSlabLength = Math.max(0, Number(row && row.slabLength) || 0);
+  const rowSlabWidth = Math.max(0, Number(row && row.slabWidth) || 0);
+  const rowSlabShortFallback = rowSlabLength && rowSlabWidth ? Math.min(rowSlabLength, rowSlabWidth) : (rowSlabLength || rowSlabWidth || 0);
+  const rowSteelSlabShortSpan = Math.max(0, Number(row && row.steelSlabShortSpan) || rowSlabShortFallback);
+  const rowSteelSlabLongSpan = Math.max(0, Number(row && row.steelSlabLongSpan) || Math.max(rowSlabLength, rowSlabWidth));
+  const rowSteelSlabSpanRatio = Math.max(0, Number(row && row.steelSlabSpanRatio) || (rowSteelSlabShortSpan ? rowSteelSlabLongSpan / rowSteelSlabShortSpan : 0));
+  const rowDetectedSlabTypeKey = rowSteelSlabSpanRatio >= 2 ? "one-way" : "two-way";
+  const rowSteelSlabDetectedType = steelSlabTypeOption(row && row.steelSlabDetectedType || rowDetectedSlabTypeKey);
+  const rowSteelSlabResolvedType = steelSlabTypeOption(row && row.steelSlabResolvedType || (rowSteelSlabType.key === "auto" ? rowSteelSlabDetectedType.key : rowSteelSlabType.key));
+  const rowSteelSlabThickness = Number(row && row.steelSlabThickness);
+  const rowSteelSlabCover = Number(row && row.steelSlabCover);
+  const rowSteelSlabEffectiveDepth = Number(row && row.steelSlabEffectiveDepth);
+  const rowSteelSlabCrankAllowance = Number(row && row.steelSlabCrankAllowance);
+  const rowSteelSlabWastePercent = Number(row && row.steelSlabWastePercent);
+  const normalizedSteelSlabThickness = Number.isFinite(rowSteelSlabThickness) ? Math.max(0, rowSteelSlabThickness) : STEEL_SLAB_DEFAULTS.thickness;
+  const normalizedSteelSlabCover = Number.isFinite(rowSteelSlabCover) ? Math.max(0, rowSteelSlabCover) : STEEL_SLAB_DEFAULTS.cover;
+  const normalizedSteelSlabEffectiveDepth = Number.isFinite(rowSteelSlabEffectiveDepth)
+    ? Math.max(0, rowSteelSlabEffectiveDepth)
+    : Math.max(0, normalizedSteelSlabThickness - normalizedSteelSlabCover);
+  const normalizedSteelSlabCrankAllowance = Number.isFinite(rowSteelSlabCrankAllowance)
+    ? Math.max(0, rowSteelSlabCrankAllowance)
+    : Math.max(0, Number(row && row.steelSlabAllowancePerBar) || (0.42 * normalizedSteelSlabEffectiveDepth));
   return {
     id: row && row.id || cryptoId(),
     projectId: String(row && row.projectId || "").trim(),
@@ -6766,13 +6883,36 @@ function normalizeEstimateV2TakeoffRow(row) {
     footingYTotalLength: Math.max(0, Number(row && row.footingYTotalLength) || 0),
     footingTotalBars: Math.max(0, Number(row && row.footingTotalBars) || 0),
     slabArea: Math.max(0, Number(row && row.slabArea) || 0),
-    slabLength: Math.max(0, Number(row && row.slabLength) || 0),
-    slabWidth: Math.max(0, Number(row && row.slabWidth) || 0),
-    steelSlabLevel: steelSlabLevelOption(row && row.steelSlabLevel).key,
-    steelSlabLevelLabel: steelSlabLevelOption(row && row.steelSlabLevel).label,
-    steelSlabFactor: Math.max(1, Number(row && row.steelSlabFactor) || steelSlabLevelOption(row && row.steelSlabLevel).factor),
+    slabLength: rowSlabLength,
+    slabWidth: rowSlabWidth,
+    steelSlabType: rowSteelSlabType.key,
+    steelSlabTypeLabel: rowSteelSlabType.label,
+    steelSlabLevel: rowSteelSlabType.key,
+    steelSlabLevelLabel: rowSteelSlabType.label,
+    steelSlabDetectedType: rowSteelSlabDetectedType.key,
+    steelSlabDetectedTypeLabel: rowSteelSlabDetectedType.label,
+    steelSlabResolvedType: rowSteelSlabResolvedType.key,
+    steelSlabResolvedTypeLabel: rowSteelSlabResolvedType.label,
+    steelSlabFactor: Math.max(1, Number(row && row.steelSlabFactor) || 1),
     steelSlabRebarSpacing: Math.max(0, Number(row && row.steelSlabRebarSpacing) || STEEL_SLAB_DEFAULTS.rebarSpacing),
-    steelSlabAllowancePerBar: Math.max(0, Number(row && row.steelSlabAllowancePerBar) || STEEL_SLAB_DEFAULTS.allowancePerBar),
+    steelSlabThickness: normalizedSteelSlabThickness,
+    steelSlabCover: normalizedSteelSlabCover,
+    steelSlabEffectiveDepth: normalizedSteelSlabEffectiveDepth,
+    steelSlabCrankAllowance: normalizedSteelSlabCrankAllowance,
+    steelSlabAllowancePerBar: normalizedSteelSlabCrankAllowance,
+    steelSlabWastePercent: Number.isFinite(rowSteelSlabWastePercent) ? Math.max(0, rowSteelSlabWastePercent) : STEEL_SLAB_DEFAULTS.wastePercent,
+    steelSlabSpanRatio: rowSteelSlabSpanRatio,
+    steelSlabShortSpan: rowSteelSlabShortSpan,
+    steelSlabLongSpan: rowSteelSlabLongSpan,
+    slabShortBarsLabel: String(row && row.slabShortBarsLabel || (rowSteelSlabResolvedType.key === "one-way" ? "Main bars along short span" : "Short-span bars")).trim(),
+    slabLongBarsLabel: String(row && row.slabLongBarsLabel || (rowSteelSlabResolvedType.key === "one-way" ? "Distribution bars along long span" : "Long-span bars")).trim(),
+    slabShortBarsCount: Math.max(0, Number(row && row.slabShortBarsCount) || Number(row && row.slabXBarsPerLayer) || 0),
+    slabLongBarsCount: Math.max(0, Number(row && row.slabLongBarsCount) || Number(row && row.slabYBarsPerLayer) || 0),
+    slabShortBarLength: Math.max(0, Number(row && row.slabShortBarLength) || Number(row && row.slabXBarLength) || 0),
+    slabLongBarLength: Math.max(0, Number(row && row.slabLongBarLength) || Number(row && row.slabYBarLength) || 0),
+    slabShortTotalLength: Math.max(0, Number(row && row.slabShortTotalLength) || Number(row && row.slabXTotalLength) || 0),
+    slabLongTotalLength: Math.max(0, Number(row && row.slabLongTotalLength) || Number(row && row.slabYTotalLength) || 0),
+    slabTotalLengthBeforeWaste: Math.max(0, Number(row && row.slabTotalLengthBeforeWaste) || ((Number(row && row.slabShortTotalLength) || Number(row && row.slabXTotalLength) || 0) + (Number(row && row.slabLongTotalLength) || Number(row && row.slabYTotalLength) || 0))),
     slabXBarsPerLayer: Math.max(0, Number(row && row.slabXBarsPerLayer) || 0),
     slabYBarsPerLayer: Math.max(0, Number(row && row.slabYBarsPerLayer) || 0),
     slabXBarsTotal: Math.max(0, Number(row && row.slabXBarsTotal) || 0),
