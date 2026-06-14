@@ -113,7 +113,7 @@ button {
   padding: 6px 9px;
   border-radius: 8px;
   border: 1px solid rgba(40, 244, 255, 0.35);
-  color: var(--ink);
+  color: #f6ecff;
   background: rgba(8, 0, 14, 0.96);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
   font-size: 12px;
@@ -496,6 +496,7 @@ button {
   padding: 14px;
   align-self: start;
   position: sticky;
+  z-index: 30;
   top: 88px;
   min-height: calc(100vh - 106px);
   max-height: calc(100vh - 106px);
@@ -580,6 +581,7 @@ button {
   left: calc(100% + 10px);
   top: 50%;
   bottom: auto;
+  z-index: 120;
   transform: translate(-4px, -50%);
 }
 
@@ -3348,6 +3350,14 @@ body[data-theme="light"] .mini-card {
 body[data-theme="light"] .topbar {
   background: rgba(250, 254, 255, 0.92);
   backdrop-filter: blur(14px);
+}
+
+body[data-theme="light"] .icon-btn::after,
+body[data-theme="light"] .side-dock.collapsed .dock-btn::after {
+  color: #ffffff;
+  background: rgba(20, 32, 51, 0.97);
+  border-color: rgba(0, 143, 168, 0.48);
+  box-shadow: 0 12px 30px rgba(20, 32, 51, 0.3);
 }
 
 body[data-theme="light"] .welcome-card {

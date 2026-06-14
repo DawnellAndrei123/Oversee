@@ -1243,7 +1243,7 @@ function iconLabel(label) {
 }
 
 function iconButton(label, iconName, className, attributes = "") {
-  return `<button class="${className} icon-btn" ${attributes} title="${escapeAttribute(label)}" aria-label="${escapeAttribute(label)}">${iconSvg(iconName)}${iconLabel(label)}</button>`;
+  return `<button class="${className} icon-btn" ${attributes} aria-label="${escapeAttribute(label)}">${iconSvg(iconName)}${iconLabel(label)}</button>`;
 }
 
 function accessIcon(key) {
@@ -1283,9 +1283,9 @@ function renderSideDock(account) {
         ${iconButton(collapsed ? "Expand account controls" : "Collapse account controls", collapsed ? "expand" : "collapse", "ghost-btn compact-btn dock-collapse-btn", 'data-action="toggle-side-dock"')}
       </div>
       <div class="dock-actions">
-        <button class="dock-btn" data-action="open-account" title="Account" aria-label="Account">${iconSvg("account")}<span class="dock-label">Account</span></button>
+        <button class="dock-btn" data-action="open-account" aria-label="Account">${iconSvg("account")}<span class="dock-label">Account</span></button>
         ${ACCESS_KEYS.filter((item) => item.key !== "administrative" || account.role === "owner").map((item) => `
-          <button class="dock-btn" data-action="main-view" data-view="${item.key}" title="${escapeAttribute(item.label)}" aria-label="${escapeAttribute(item.label)}" ${hasAccess(account, item.key) ? "" : "disabled"}>
+          <button class="dock-btn" data-action="main-view" data-view="${item.key}" aria-label="${escapeAttribute(item.label)}" ${hasAccess(account, item.key) ? "" : "disabled"}>
             ${iconSvg(accessIcon(item.key))}<span class="dock-label">${escapeHtml(item.label)}</span>
           </button>
         `).join("")}
