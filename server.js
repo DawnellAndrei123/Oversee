@@ -16,6 +16,10 @@ const PORT = Number(process.env.PORT || 8000);
 const HOST = cleanEnvValue(process.env.HOST) || (process.env.RENDER || process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
 const OTP_TTL_MINUTES = Number(process.env.OTP_TTL_MINUTES || 10);
 const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS || 30);
+const INVITE_TTL_DAYS = Number(process.env.INVITE_TTL_DAYS || 7);
+const MAX_PASSWORD_LENGTH = Number(process.env.MAX_PASSWORD_LENGTH || 128);
+const MAX_NAME_LENGTH = Number(process.env.MAX_NAME_LENGTH || 120);
+const MAX_EMAIL_LENGTH = 254;
 const MAX_JSON_BODY_BYTES = Number(process.env.MAX_JSON_BODY_BYTES || 65536);
 const MAX_APP_DATA_BODY_BYTES = Number(process.env.MAX_APP_DATA_BODY_BYTES || 2 * 1024 * 1024);
 const MAX_PDF_UPLOAD_BYTES = Number(process.env.MAX_PDF_UPLOAD_BYTES || 8 * 1024 * 1024);
@@ -147,6 +151,9 @@ const PUBLIC_STATIC_FILES = new Set([
 ]);
 
 const rateLimitBuckets = new Map();
+const appDataSaveLocks = new Map();
+const signupLocks = new Map();
+const MAX_RATE_LIMIT_BUCKETS = 5000;
 
 const SUPABASE_COLLECTIONS = [
   {
@@ -368,7 +375,9 @@ function securityHeaders() {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Resource-Policy": "same-origin",
+    "Origin-Agent-Cluster": "?1",
     "Content-Security-Policy": [
       "default-src 'self'",
       "script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'",
@@ -462,7 +471,10 @@ function httpError(message, statusCode = 500) {
 
 function publicErrorMessage(error) {
   if (!error) return "Server error";
-  return error.publicMessage || error.message || "Server error";
+  if (error.publicMessage) return error.publicMessage;
+  return Number(error.statusCode) >= 400 && Number(error.statusCode) < 500
+    ? error.message || "Request failed"
+    : "Server error";
 }
 
 function notFound(req, res) {
@@ -498,6 +510,30 @@ function normalizeEmail(value) {
 
 function validateEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function validateSignupInput({ name, email, password, confirmPassword, requireConfirmation = false }) {
+  if (!name) return "Full name is required.";
+  if (name.length > MAX_NAME_LENGTH) return `Full name must be ${MAX_NAME_LENGTH} characters or fewer.`;
+  if (!validateEmail(email) || email.length > MAX_EMAIL_LENGTH) return "A valid email is required.";
+  if (password.length < 8) return "Password must be at least 8 characters.";
+  if (password.length > MAX_PASSWORD_LENGTH) return `Password must be ${MAX_PASSWORD_LENGTH} characters or fewer.`;
+  if (requireConfirmation && confirmPassword !== password) return "Passwords do not match.";
+  return "";
+}
+
+function validateInviteForSignup(store, inviteToken, email) {
+  if (!inviteToken) return null;
+  const invite = store.invites.find((item) => item.token === inviteToken);
+  if (!invite) throw httpError("Invitation link is invalid.", 404);
+  if (invite.acceptedBy) throw httpError("Invitation link has already been used.", 409);
+  if (invite.expiresAt && new Date(invite.expiresAt) <= new Date()) {
+    throw httpError("Invitation link has expired. Ask the owner for a new invitation.", 410);
+  }
+  if (invite.email && normalizeEmail(invite.email) !== email) {
+    throw httpError("This invitation was sent to a different email address.", 403);
+  }
+  return invite;
 }
 
 function allAccess() {
@@ -608,6 +644,14 @@ function rateLimitKey(req, scope, identifier = "") {
 
 function isRateLimited(key, { limit, windowMs }) {
   const now = Date.now();
+  if (rateLimitBuckets.size >= MAX_RATE_LIMIT_BUCKETS) {
+    for (const [bucketKey, value] of rateLimitBuckets) {
+      if (value.resetAt <= now) rateLimitBuckets.delete(bucketKey);
+    }
+    while (rateLimitBuckets.size >= MAX_RATE_LIMIT_BUCKETS) {
+      rateLimitBuckets.delete(rateLimitBuckets.keys().next().value);
+    }
+  }
   const bucket = rateLimitBuckets.get(key);
   if (!bucket || bucket.resetAt <= now) {
     rateLimitBuckets.set(key, { count: 1, resetAt: now + windowMs });
@@ -666,13 +710,38 @@ function requireOwner(req, res, store) {
 }
 
 function audit(store, action, details = {}) {
-  store.auditLog.push({
+  const event = {
     id: randomId("audit"),
     action,
     details,
     at: new Date().toISOString()
-  });
+  };
+  store.auditLog.push(event);
   store.auditLog = store.auditLog.slice(-1000);
+  return event;
+}
+
+async function persistAuditEvent(store, event) {
+  if (!SUPABASE_ENABLED) return writeStore(store);
+  return supabaseRequest("oversee_audit_log", {
+    method: "POST",
+    body: [{
+      id: event.id,
+      action: event.action,
+      data: event,
+      at: event.at
+    }],
+    prefer: "return=minimal"
+  });
+}
+
+function withKeyedLock(lockMap, key, task) {
+  const previous = lockMap.get(key) || Promise.resolve();
+  const run = previous.catch(() => undefined).then(task);
+  lockMap.set(key, run);
+  return run.finally(() => {
+    if (lockMap.get(key) === run) lockMap.delete(key);
+  });
 }
 
 function cleanHeader(value) {
@@ -918,14 +987,14 @@ async function requestSignupOtp(req, res) {
   if (checkRateLimit(req, res, "signup-ip", "", { limit: 8, windowMs: 15 * 60 * 1000 })) return;
   if (email && checkRateLimit(req, res, "signup-email", email, { limit: 4, windowMs: 30 * 60 * 1000 })) return;
 
-  if (!name) return jsonResponse(req, res, 400, { ok: false, error: "Full name is required." });
-  if (!validateEmail(email)) return jsonResponse(req, res, 400, { ok: false, error: "A valid email is required." });
-  if (password.length < 8) return jsonResponse(req, res, 400, { ok: false, error: "Password must be at least 8 characters." });
+  const validationError = validateSignupInput({ name, email, password });
+  if (validationError) return jsonResponse(req, res, 400, { ok: false, error: validationError });
 
   const store = await readStore();
   if (store.accounts.some((account) => account.email === email)) {
     return jsonResponse(req, res, 409, { ok: false, error: "An account already exists with that email." });
   }
+  validateInviteForSignup(store, inviteToken, email);
 
   const otp = generateOtp();
   const passwordSecret = hashValue(password);
@@ -993,31 +1062,32 @@ async function signupDirect(req, res) {
   if (checkRateLimit(req, res, "signup-ip", "", { limit: 8, windowMs: 15 * 60 * 1000 })) return;
   if (email && checkRateLimit(req, res, "signup-email", email, { limit: 4, windowMs: 30 * 60 * 1000 })) return;
 
-  if (!name) return jsonResponse(req, res, 400, { ok: false, error: "Full name is required." });
-  if (!validateEmail(email)) return jsonResponse(req, res, 400, { ok: false, error: "A valid email is required." });
-  if (password.length < 8) return jsonResponse(req, res, 400, { ok: false, error: "Password must be at least 8 characters." });
-  if (confirmPassword !== password) return jsonResponse(req, res, 400, { ok: false, error: "Passwords do not match." });
+  const validationError = validateSignupInput({ name, email, password, confirmPassword, requireConfirmation: true });
+  if (validationError) return jsonResponse(req, res, 400, { ok: false, error: validationError });
 
-  const store = await readStore();
-  if (store.accounts.some((account) => account.email === email)) {
-    return jsonResponse(req, res, 409, { ok: false, error: "An account already exists with that email." });
-  }
-
-  const passwordSecret = hashValue(password);
-  const account = addAccountToStore(store, {
-    name,
-    email,
-    passwordHash: passwordSecret.hash,
-    passwordSalt: passwordSecret.salt,
-    gmailLinked,
-    inviteToken,
-    plan: "free",
-    requestMeta: requestMeta(req),
-    emailVerified: false
+  const { account, session } = await withKeyedLock(signupLocks, inviteToken || email, async () => {
+    const store = await readStore();
+    if (store.accounts.some((item) => item.email === email)) {
+      throw httpError("An account already exists with that email.", 409);
+    }
+    const invite = validateInviteForSignup(store, inviteToken, email);
+    const passwordSecret = hashValue(password);
+    const createdAccount = addAccountToStore(store, {
+      name,
+      email,
+      passwordHash: passwordSecret.hash,
+      passwordSalt: passwordSecret.salt,
+      gmailLinked,
+      invite,
+      plan: "free",
+      requestMeta: requestMeta(req),
+      emailVerified: false
+    });
+    const createdSession = createSession(store, createdAccount.id, req);
+    audit(store, "account_created_without_otp", { accountId: createdAccount.id, email, role: createdAccount.role });
+    await writeStore(store);
+    return { account: createdAccount, session: createdSession };
   });
-  const session = createSession(store, account.id, req);
-  audit(store, "account_created_without_otp", { accountId: account.id, email, role: account.role });
-  await writeStore(store);
 
   jsonResponse(req, res, 201, {
     ok: true,
@@ -1062,6 +1132,7 @@ async function verifySignupOtp(req, res) {
     await writeStore(store);
     return jsonResponse(req, res, 409, { ok: false, error: "An account already exists with that email." });
   }
+  const invite = validateInviteForSignup(store, pending.inviteToken, email);
 
   const account = addAccountToStore(store, {
     name: pending.name,
@@ -1069,7 +1140,7 @@ async function verifySignupOtp(req, res) {
     passwordHash: pending.passwordHash,
     passwordSalt: pending.passwordSalt,
     gmailLinked: pending.gmailLinked,
-    inviteToken: pending.inviteToken,
+    invite,
     plan: "free",
     requestMeta: pending.requestMeta,
     emailVerified: true
@@ -1082,9 +1153,7 @@ async function verifySignupOtp(req, res) {
 }
 
 function addAccountToStore(store, signup) {
-  const invite = signup.inviteToken
-    ? store.invites.find((item) => item.token === signup.inviteToken)
-    : null;
+  const invite = signup.invite || null;
   const isInvitedAccount = Boolean(invite);
   const now = new Date().toISOString();
   const account = {
@@ -1136,12 +1205,15 @@ async function login(req, res) {
 
   if (checkRateLimit(req, res, "login-ip", "", { limit: 20, windowMs: 15 * 60 * 1000 })) return;
   if (email && checkRateLimit(req, res, "login-email", email, { limit: 8, windowMs: 15 * 60 * 1000 })) return;
+  if (!validateEmail(email) || email.length > MAX_EMAIL_LENGTH || !password || password.length > MAX_PASSWORD_LENGTH) {
+    return jsonResponse(req, res, 401, { ok: false, error: "Email or password is incorrect." });
+  }
 
   const store = await readStore();
   const account = store.accounts.find((item) => item.email === email);
   if (!account || !verifyHash(password, { hash: account.passwordHash, salt: account.passwordSalt })) {
-    audit(store, "login_failed", { email, meta: requestMeta(req) });
-    await writeStore(store);
+    const event = audit(store, "login_failed", { email, meta: requestMeta(req) });
+    await persistAuditEvent(store, event);
     return jsonResponse(req, res, 401, { ok: false, error: "Email or password is incorrect." });
   }
 
@@ -1153,12 +1225,27 @@ async function login(req, res) {
   jsonResponse(req, res, 200, { ok: true, account: publicAccount(account), session });
 }
 
+async function logout(req, res) {
+  const store = await readStore();
+  const token = bearerToken(req);
+  if (!token) return jsonResponse(req, res, 200, { ok: true });
+
+  const account = sessionAccountFromRequest(req, store);
+  const sessionCount = store.sessions.length;
+  store.sessions = store.sessions.filter((item) => !item.token || !safeTokenMatches(item.token, token));
+  if (store.sessions.length !== sessionCount) {
+    audit(store, "logout_succeeded", { accountId: account && account.id || null, meta: requestMeta(req) });
+    await writeStore(store);
+  }
+  jsonResponse(req, res, 200, { ok: true });
+}
+
 async function listAccounts(req, res) {
   const store = await readStore();
   const owner = requireOwner(req, res, store);
   if (!owner) return;
-  audit(store, "accounts_listed", { accountId: owner.id, meta: requestMeta(req) });
-  await writeStore(store);
+  const event = audit(store, "accounts_listed", { accountId: owner.id, meta: requestMeta(req) });
+  await persistAuditEvent(store, event);
   jsonResponse(req, res, 200, {
     ok: true,
     accounts: store.accounts.filter((account) => account.id === owner.id || account.invitedBy === owner.id).map(publicAccount),
@@ -1189,7 +1276,9 @@ async function createOwnerInvite(req, res) {
   if (!owner) return;
   const body = await readJsonBody(req);
   const email = normalizeEmail(body.email);
-  if (email && !validateEmail(email)) return jsonResponse(req, res, 400, { ok: false, error: "A valid invite email is required." });
+  if (email && (!validateEmail(email) || email.length > MAX_EMAIL_LENGTH)) {
+    return jsonResponse(req, res, 400, { ok: false, error: "A valid invite email is required." });
+  }
   if (email && store.accounts.some((account) => account.email === email)) {
     return jsonResponse(req, res, 409, { ok: false, error: "An account already exists with that email." });
   }
@@ -1199,6 +1288,7 @@ async function createOwnerInvite(req, res) {
     access: memberAccess(body.access),
     createdBy: owner.id,
     createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + INVITE_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString(),
     acceptedBy: null
   };
   store.invites.push(invite);
@@ -1214,8 +1304,6 @@ async function loadAccountAppData(req, res) {
 
   const workspaceAccount = workspaceAccountFor(account, store);
   const record = await readAccountAppData(workspaceAccount.id, store);
-  audit(store, "app_data_loaded", { accountId: account.id, workspaceAccountId: workspaceAccount.id, hasData: Boolean(record), meta: requestMeta(req) });
-  await writeStore(store);
   jsonResponse(req, res, 200, {
     ok: true,
     empty: !record,
@@ -1233,12 +1321,20 @@ async function saveAccountAppData(req, res) {
 
   const body = await readJsonBody(req, MAX_APP_DATA_BODY_BYTES);
   const workspaceAccount = workspaceAccountFor(account, store);
-  const existing = await readAccountAppData(workspaceAccount.id, store);
-  const data = mergeAppDataForAccount(existing && existing.data, body.data, account);
-  const updatedAt = new Date().toISOString();
-  await writeAccountAppData(workspaceAccount, account, data, updatedAt, store);
-  audit(store, "app_data_saved", { accountId: account.id, workspaceAccountId: workspaceAccount.id, keys: appDataWriteKeysForAccount(account), meta: requestMeta(req) });
-  await writeStore(store);
+  const updatedAt = await withKeyedLock(appDataSaveLocks, workspaceAccount.id, async () => {
+    const existing = await readAccountAppData(workspaceAccount.id, store);
+    const data = mergeAppDataForAccount(existing && existing.data, body.data, account);
+    const savedAt = new Date().toISOString();
+    await writeAccountAppData(workspaceAccount, account, data, savedAt, store);
+    const event = audit(store, "app_data_saved", {
+      accountId: account.id,
+      workspaceAccountId: workspaceAccount.id,
+      keys: appDataWriteKeysForAccount(account),
+      meta: requestMeta(req)
+    });
+    await persistAuditEvent(store, event);
+    return savedAt;
+  });
   jsonResponse(req, res, 200, { ok: true, updatedAt, account: publicAccount(account), workspaceAccountId: workspaceAccount.id });
 }
 
@@ -1395,7 +1491,7 @@ async function extractEstimateV2Pdf(req, res) {
 
   const extracted = extractReadablePdfText(upload.pdfBuffer);
   const materials = detectMaterialsFromText(extracted.text, upload.planType);
-  audit(store, "estimate_v2_pdf_extracted", {
+  const event = audit(store, "estimate_v2_pdf_extracted", {
     accountId: account.id,
     fileName: upload.fileName,
     planType: upload.planType,
@@ -1403,7 +1499,7 @@ async function extractEstimateV2Pdf(req, res) {
     materialCount: materials.length,
     meta: requestMeta(req)
   });
-  await writeStore(store);
+  await persistAuditEvent(store, event);
 
   jsonResponse(req, res, 200, {
     ok: true,
@@ -1445,7 +1541,7 @@ async function extractEstimateV2Ai(req, res) {
   });
   const materials = normalizeAiMaterials(aiResult.materials);
 
-  audit(store, "estimate_v2_ai_extracted", {
+  const event = audit(store, "estimate_v2_ai_extracted", {
     accountId: account.id,
     fileName: upload.fileName,
     planType: upload.planType,
@@ -1454,7 +1550,7 @@ async function extractEstimateV2Ai(req, res) {
     model: OPENAI_VISION_MODEL,
     meta: requestMeta(req)
   });
-  await writeStore(store);
+  await persistAuditEvent(store, event);
 
   jsonResponse(req, res, 200, {
     ok: true,
@@ -1885,6 +1981,9 @@ async function routeApi(req, res, url) {
     if (req.method === "POST" && url.pathname === "/api/auth/login") {
       return await login(req, res);
     }
+    if (req.method === "POST" && url.pathname === "/api/auth/logout") {
+      return await logout(req, res);
+    }
     if (req.method === "GET" && url.pathname === "/api/accounts") {
       return await listAccounts(req, res);
     }
@@ -1908,8 +2007,9 @@ async function routeApi(req, res, url) {
     }
     return notFound(req, res);
   } catch (error) {
-    console.error(error);
-    jsonResponse(req, res, error.statusCode || 500, { ok: false, error: publicErrorMessage(error) });
+    const statusCode = Number(error && error.statusCode) || 500;
+    if (statusCode >= 500) console.error(error);
+    jsonResponse(req, res, statusCode, { ok: false, error: publicErrorMessage(error) });
   }
 }
 
@@ -1945,11 +2045,24 @@ async function serveStatic(req, res, url) {
       return;
     }
     const ext = path.extname(filePath).toLowerCase();
+    const cacheControl = ext === ".html"
+      ? "no-store"
+      : [".js", ".css"].includes(ext)
+        ? "public, max-age=300, must-revalidate"
+        : "public, max-age=3600";
+    const shouldGzip = /\bgzip\b/i.test(String(req.headers["accept-encoding"] || ""))
+      && [".html", ".css", ".js", ".json", ".svg"].includes(ext);
     res.writeHead(200, responseHeaders({
       "Content-Type": MIME_TYPES[ext] || "application/octet-stream",
-      "Cache-Control": ext === ".html" ? "no-store" : "no-cache"
+      "Cache-Control": cacheControl,
+      ...(shouldGzip ? { "Content-Encoding": "gzip", Vary: "Accept-Encoding" } : {})
     }));
-    fsSync.createReadStream(filePath).pipe(res);
+    const stream = fsSync.createReadStream(filePath);
+    if (shouldGzip) {
+      stream.pipe(zlib.createGzip({ level: zlib.constants.Z_BEST_SPEED })).pipe(res);
+    } else {
+      stream.pipe(res);
+    }
   } catch (error) {
     if (error.code === "ENOENT") {
       res.writeHead(404, responseHeaders({ "Content-Type": "text/plain; charset=utf-8" }));

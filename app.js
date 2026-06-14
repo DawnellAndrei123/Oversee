@@ -275,6 +275,9 @@ const state = {
   cloudSyncApplying: false,
   cloudSyncTimer: null,
   cloudSyncLoaded: false,
+  cloudSyncSignature: "",
+  cloudSyncInFlight: null,
+  cloudSyncQueued: false,
   theme: readTheme()
 };
 
@@ -632,9 +635,11 @@ function collectCloudAppData() {
   return CLOUD_APP_DATA_KEYS.reduce((data, item) => {
     data[item.dataKey] = readJson(item.storageKey, item.fallback);
     return data;
-  }, {
-    savedAt: new Date().toISOString()
-  });
+  }, {});
+}
+
+function cloudDataSignature(data) {
+  return JSON.stringify(data);
 }
 
 function applyCloudAppData(data) {
@@ -663,6 +668,7 @@ function applyCloudAppData(data) {
   } finally {
     state.cloudSyncApplying = false;
   }
+  state.cloudSyncSignature = cloudDataSignature(collectCloudAppData());
 }
 
 async function initializeCloudAppData() {
@@ -690,28 +696,57 @@ function scheduleCloudAppDataSync() {
   window.clearTimeout(state.cloudSyncTimer);
   state.cloudSyncTimer = window.setTimeout(() => {
     saveCloudAppDataNow();
-  }, 800);
+  }, 1200);
 }
 
 async function saveCloudAppDataNow() {
   if (state.cloudSyncApplying || !sessionToken()) return false;
   window.clearTimeout(state.cloudSyncTimer);
   state.cloudSyncTimer = null;
+
+  if (state.cloudSyncInFlight) {
+    state.cloudSyncQueued = true;
+    await state.cloudSyncInFlight;
+    return saveCloudAppDataNow();
+  }
+
+  const data = collectCloudAppData();
+  const signature = cloudDataSignature(data);
+  if (signature === state.cloudSyncSignature) return true;
+
+  const operation = apiRequest("/app-data/save", { data }, { timeoutMs: 15000 });
+  state.cloudSyncInFlight = operation;
   try {
-    await apiRequest("/app-data/save", { data: collectCloudAppData() }, { timeoutMs: 15000 });
+    await operation;
+    state.cloudSyncSignature = signature;
     return true;
   } catch (error) {
     console.warn(error);
     return false;
+  } finally {
+    if (state.cloudSyncInFlight === operation) state.cloudSyncInFlight = null;
+    if (state.cloudSyncQueued) {
+      state.cloudSyncQueued = false;
+      scheduleCloudAppDataSync();
+    }
   }
 }
 
 async function handleLogout() {
-  if (sessionToken()) await saveCloudAppDataNow();
+  if (sessionToken()) {
+    await saveCloudAppDataNow();
+    try {
+      await apiRequest("/auth/logout", {});
+    } catch (error) {
+      console.warn("Unable to revoke backend session during logout.", error);
+    }
+  }
   localStorage.removeItem(STORAGE.session);
   clearLocalAppData();
   state.currentView = "welcome";
   state.cloudSyncLoaded = false;
+  state.cloudSyncSignature = "";
+  state.cloudSyncQueued = false;
   render();
 }
 
@@ -1032,8 +1067,7 @@ function canUsePrototypeFallback() {
   const host = window.location.hostname;
   return window.location.protocol === "file:"
     || host === "localhost"
-    || host === "127.0.0.1"
-    || host.startsWith("192.168.");
+    || host === "127.0.0.1";
 }
 
 function renderAuthScreen() {
@@ -1072,19 +1106,19 @@ function renderSignupForm(invite) {
     <form class="form-stack" id="signup-form">
       <div class="field">
         <label for="signup-name">Full Name</label>
-        <input id="signup-name" name="name" autocomplete="name" required>
+        <input id="signup-name" name="name" autocomplete="name" maxlength="120" required>
       </div>
       <div class="field">
         <label for="signup-email">Email</label>
-        <input id="signup-email" name="email" type="email" autocomplete="email" required>
+        <input id="signup-email" name="email" type="email" autocomplete="email" maxlength="254" required>
       </div>
       <div class="field">
         <label for="signup-password">Password</label>
-        <input id="signup-password" name="password" type="password" autocomplete="new-password" data-password-toggle-target required>
+        <input id="signup-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" data-password-toggle-target required>
       </div>
       <div class="field">
         <label for="signup-confirm-password">Confirm Password</label>
-        <input id="signup-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" data-password-toggle-target required>
+        <input id="signup-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" data-password-toggle-target required>
       </div>
       <label class="checkline">
         <input id="signup-show-password" type="checkbox" data-action="toggle-password-visibility">
@@ -1109,11 +1143,11 @@ function renderLoginForm() {
     <form class="form-stack" id="login-form">
       <div class="field">
         <label for="login-email">Email</label>
-        <input id="login-email" name="email" type="email" autocomplete="email" required>
+        <input id="login-email" name="email" type="email" autocomplete="email" maxlength="254" required>
       </div>
       <div class="field">
         <label for="login-password">Password</label>
-        <input id="login-password" name="password" type="password" autocomplete="current-password" data-password-toggle-target required>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" maxlength="128" data-password-toggle-target required>
       </div>
       <label class="checkline">
         <input id="login-show-password" type="checkbox" data-action="toggle-password-visibility">
@@ -4293,6 +4327,14 @@ function createLocalAccount(formData) {
   }
 
   const invite = getInviteByToken(state.inviteToken);
+  if (state.inviteToken && !invite) {
+    toast("This invitation is invalid, expired, or already used.");
+    return;
+  }
+  if (invite && invite.email && invite.email !== email) {
+    toast("This invitation was sent to a different email address.");
+    return;
+  }
   const isInvitedAccount = Boolean(invite);
   const access = isInvitedAccount ? invite.access : allAccess();
 
@@ -6816,6 +6858,7 @@ async function createInvite() {
     access,
     createdBy: account.id,
     createdAt: new Date().toISOString(),
+    expiresAt: addDays(new Date(), 7).toISOString(),
     acceptedBy: null
   };
   if (sessionToken()) {
@@ -7300,7 +7343,11 @@ function accessText(access) {
 
 function getInviteByToken(token) {
   if (!token) return null;
-  return getInvites().find((invite) => invite.token === token) || null;
+  return getInvites().find((invite) => {
+    return invite.token === token
+      && !invite.acceptedBy
+      && (!invite.expiresAt || new Date(invite.expiresAt) > new Date());
+  }) || null;
 }
 
 function inviteLink(token) {
