@@ -24,6 +24,8 @@ const MAX_JSON_BODY_BYTES = Number(process.env.MAX_JSON_BODY_BYTES || 65536);
 const MAX_APP_DATA_BODY_BYTES = Number(process.env.MAX_APP_DATA_BODY_BYTES || 2 * 1024 * 1024);
 const MAX_PDF_UPLOAD_BYTES = Number(process.env.MAX_PDF_UPLOAD_BYTES || 8 * 1024 * 1024);
 const MAX_PDF_JSON_BODY_BYTES = Math.ceil(MAX_PDF_UPLOAD_BYTES * 1.38) + 4096;
+const MAX_PLAN_PDF_BYTES = Number(process.env.MAX_PLAN_PDF_BYTES || 12 * 1024 * 1024);
+const MAX_PLAN_PDF_JSON_BODY_BYTES = Math.ceil(MAX_PLAN_PDF_BYTES * 1.38) + 4096;
 const PDF_TEXT_PREVIEW_LIMIT = 12000;
 const OPENAI_API_KEY = cleanEnvValue(process.env.OPENAI_API_KEY);
 const OPENAI_VISION_MODEL = cleanEnvValue(process.env.OPENAI_VISION_MODEL) || "gpt-4o";
@@ -31,6 +33,7 @@ const OPENAI_API_BASE_URL = String(cleanEnvValue(process.env.OPENAI_API_BASE_URL
 const SUPABASE_URL = normalizeSupabaseUrl(cleanEnvValue(process.env.SUPABASE_URL));
 const SUPABASE_SERVICE_ROLE_KEY = cleanEnvValue(process.env.SUPABASE_SERVICE_ROLE_KEY);
 const SUPABASE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+const SUPABASE_PLAN_BUCKET = cleanEnvValue(process.env.SUPABASE_PLAN_BUCKET) || "oversee-estimate-plans";
 const IS_PRODUCTION = process.env.NODE_ENV === "production" || Boolean(process.env.RENDER);
 
 const ACCESS_KEYS = ["engineering", "procurement", "accounting", "administrative"];
@@ -308,6 +311,69 @@ async function supabaseRequest(table, { method = "GET", query = "", body, prefer
   return text ? JSON.parse(text) : null;
 }
 
+async function supabaseStorageRequest(endpoint, { method = "GET", body, contentType, headers: extraHeaders = {} } = {}) {
+  if (!SUPABASE_ENABLED) throw httpError("Supabase Storage is not configured.", 503);
+  const headers = {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    ...extraHeaders
+  };
+  if (contentType) headers["Content-Type"] = contentType;
+
+  const response = await fetch(`${SUPABASE_URL}/storage/v1/${endpoint}`, {
+    method,
+    headers,
+    body
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    const error = new Error(`Supabase Storage ${method} failed: ${detail}`);
+    error.statusCode = response.status;
+    throw error;
+  }
+  return response;
+}
+
+async function ensureSupabasePlanBucket() {
+  try {
+    await supabaseStorageRequest(`bucket/${encodeURIComponent(SUPABASE_PLAN_BUCKET)}`);
+  } catch (error) {
+    const message = String(error && error.message || "");
+    const missingBucket = Number(error && error.statusCode) === 404
+      || (Number(error && error.statusCode) === 400 && /not found|does not exist|unknown/i.test(message));
+    if (!missingBucket) throw error;
+    await supabaseStorageRequest("bucket", {
+      method: "POST",
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: SUPABASE_PLAN_BUCKET,
+        name: SUPABASE_PLAN_BUCKET,
+        public: false,
+        file_size_limit: MAX_PLAN_PDF_BYTES,
+        allowed_mime_types: ["application/pdf"]
+      })
+    });
+  }
+}
+
+function storageObjectEndpoint(objectPath) {
+  const safePath = String(objectPath || "")
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  return `object/${encodeURIComponent(SUPABASE_PLAN_BUCKET)}/${safePath}`;
+}
+
+function assertWorkspacePlanPath(objectPath, workspaceAccount) {
+  const value = String(objectPath || "").trim();
+  const workspacePrefix = `${workspaceAccount && workspaceAccount.id || ""}/`;
+  if (!value || !workspacePrefix || !value.startsWith(workspacePrefix) || value.includes("..")) {
+    throw httpError("The stored PDF does not belong to this workspace.", 403);
+  }
+  return value;
+}
+
 async function readSupabaseStore() {
   const store = emptyStore();
   const collections = await Promise.all(
@@ -461,6 +527,16 @@ function jsonResponse(reqOrRes, resOrStatus, statusOrBody, maybeBody) {
     ...(req ? corsHeaders(req) : {})
   }));
   res.end(payload);
+}
+
+function binaryResponse(req, res, statusCode, body, extraHeaders = {}) {
+  res.writeHead(statusCode, responseHeaders({
+    "Content-Type": "application/octet-stream",
+    "Cache-Control": "no-store",
+    ...corsHeaders(req),
+    ...extraHeaders
+  }));
+  res.end(body);
 }
 
 function httpError(message, statusCode = 500) {
@@ -1728,7 +1804,9 @@ function summarizeAccountAppData(data) {
   const estimateTemplates = Array.isArray(source.estimateTemplates) ? source.estimateTemplates : [];
   const materialPrices = Array.isArray(source.materialPrices) ? source.materialPrices : [];
   const swa = source.swa && typeof source.swa === "object" ? source.swa : {};
+  const estimateDraft = source.estimateDraft && typeof source.estimateDraft === "object" ? source.estimateDraft : {};
   const estimateV2Draft = source.estimateV2Draft && typeof source.estimateV2Draft === "object" ? source.estimateV2Draft : {};
+  const estimateRows = Array.isArray(estimateDraft.rows) ? estimateDraft.rows : [];
   const takeoffRows = Array.isArray(estimateV2Draft.takeoffRows) ? estimateV2Draft.takeoffRows : [];
   const procurement = source.procurement && typeof source.procurement === "object" ? source.procurement : {};
   const accounting = source.accounting && typeof source.accounting === "object" ? source.accounting : {};
@@ -1745,7 +1823,10 @@ function summarizeAccountAppData(data) {
     swaSheetCount: swaSheets,
     estimateTemplateCount: estimateTemplates.length,
     materialStoreCount: materialPrices.length,
+    estimateRowCount: estimateRows.length,
     estimateV2TakeoffRowCount: takeoffRows.length,
+    estimateV2PlanFileName: String(estimateV2Draft.planFileName || ""),
+    estimateV2PlanStored: Boolean(estimateV2Draft.planStoragePath),
     purchaseRequestCount: Array.isArray(procurement.requests) ? procurement.requests.length : 0,
     purchaseOrderCount: Array.isArray(procurement.orders) ? procurement.orders.length : 0,
     supplierCount: Array.isArray(procurement.suppliers) ? procurement.suppliers.length : 0,
@@ -1865,6 +1946,71 @@ async function extractEstimateV2Ai(req, res) {
   });
 }
 
+async function uploadEstimateV2Plan(req, res) {
+  const { store, account } = await requireEngineeringAccount(req, res);
+  if (!account) return;
+  if (!hasPaidPlan(account)) return jsonResponse(req, res, 403, { ok: false, error: "Estimate v2 is available for subscribed accounts only." });
+  if (checkRateLimit(req, res, "estimate_v2_plan_upload", account.id, { limit: 20, windowMs: 15 * 60 * 1000 })) return;
+  if (!SUPABASE_ENABLED) return jsonResponse(req, res, 503, { ok: false, error: "Supabase Storage is required to save Estimate v2 PDFs." });
+
+  const body = await readJsonBody(req, MAX_PLAN_PDF_JSON_BODY_BYTES);
+  const upload = parseStoredPlanUpload(body);
+  if (upload.error) return jsonResponse(req, res, upload.statusCode || 400, { ok: false, error: upload.error });
+
+  const workspaceAccount = workspaceAccountFor(account, store);
+  const objectPath = `${workspaceAccount.id}/${randomId("plan")}.pdf`;
+  await ensureSupabasePlanBucket();
+  await supabaseStorageRequest(storageObjectEndpoint(objectPath), {
+    method: "POST",
+    contentType: "application/pdf",
+    headers: { "x-upsert": "false" },
+    body: upload.pdfBuffer
+  });
+
+  const uploadedAt = new Date().toISOString();
+  const event = audit(store, "estimate_v2_plan_uploaded", {
+    accountId: account.id,
+    workspaceAccountId: workspaceAccount.id,
+    fileName: upload.fileName,
+    objectPath,
+    size: upload.pdfBuffer.length,
+    meta: requestMeta(req)
+  });
+  await persistAuditEvent(store, event);
+  jsonResponse(req, res, 201, {
+    ok: true,
+    plan: {
+      path: objectPath,
+      fileName: upload.fileName,
+      size: upload.pdfBuffer.length,
+      uploadedAt,
+      uploadedByName: account.name || "",
+      uploadedByEmail: account.email || ""
+    }
+  });
+}
+
+async function downloadEstimateV2Plan(req, res) {
+  const { store, account } = await requireEngineeringAccount(req, res);
+  if (!account) return;
+  if (!hasPaidPlan(account)) return jsonResponse(req, res, 403, { ok: false, error: "Estimate v2 is available for subscribed accounts only." });
+  if (!SUPABASE_ENABLED) return jsonResponse(req, res, 503, { ok: false, error: "Supabase Storage is required to load Estimate v2 PDFs." });
+
+  const body = await readJsonBody(req);
+  const workspaceAccount = workspaceAccountFor(account, store);
+  const objectPath = assertWorkspacePlanPath(body.path, workspaceAccount);
+  const storageResponse = await supabaseStorageRequest(storageObjectEndpoint(objectPath));
+  const pdfBuffer = Buffer.from(await storageResponse.arrayBuffer());
+  if (!pdfBuffer.length || !pdfBuffer.slice(0, 5).toString("latin1").startsWith("%PDF")) {
+    throw httpError("The stored plan is not a valid PDF.", 500);
+  }
+  binaryResponse(req, res, 200, pdfBuffer, {
+    "Content-Type": "application/pdf",
+    "Content-Length": String(pdfBuffer.length),
+    "Content-Disposition": "inline"
+  });
+}
+
 async function requireEngineeringAccount(req, res) {
   const store = await readStore();
   const account = sessionAccountFromRequest(req, store);
@@ -1893,6 +2039,20 @@ function parseEstimatePdfUpload(body) {
     return { statusCode: 413, error: "PDF is too large for this extractor." };
   }
   return { fileName, planType, base64, pdfBuffer };
+}
+
+function parseStoredPlanUpload(body) {
+  const fileName = String(body.fileName || "Uploaded Plan.pdf").trim().slice(0, 180);
+  const base64 = String(body.data || "").replace(/^data:application\/pdf;base64,/i, "").trim();
+  if (!base64) return { error: "PDF data is required." };
+  const pdfBuffer = Buffer.from(base64, "base64");
+  if (!pdfBuffer.length || !pdfBuffer.slice(0, 5).toString("latin1").startsWith("%PDF")) {
+    return { error: "The uploaded file does not look like a PDF." };
+  }
+  if (pdfBuffer.length > MAX_PLAN_PDF_BYTES) {
+    return { statusCode: 413, error: `Use a PDF below ${Math.floor(MAX_PLAN_PDF_BYTES / 1024 / 1024)} MB.` };
+  }
+  return { fileName, pdfBuffer };
 }
 
 function hasEngineeringAccess(account) {
@@ -2263,6 +2423,7 @@ async function routeApi(req, res, url) {
         ok: true,
         service: "oversee-backend",
         storage: SUPABASE_ENABLED ? "supabase" : "local-json",
+        planStorage: SUPABASE_ENABLED ? SUPABASE_PLAN_BUCKET : null,
         email: configuredEmailMode(),
         dataDir: SUPABASE_ENABLED ? null : DATA_DIR
       });
@@ -2308,6 +2469,12 @@ async function routeApi(req, res, url) {
     }
     if (req.method === "POST" && url.pathname === "/api/estimate-v2/extract-ai") {
       return await extractEstimateV2Ai(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/estimate-v2/plan/upload") {
+      return await uploadEstimateV2Plan(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/estimate-v2/plan/download") {
+      return await downloadEstimateV2Plan(req, res);
     }
     return notFound(req, res);
   } catch (error) {

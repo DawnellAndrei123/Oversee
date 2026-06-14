@@ -399,6 +399,7 @@ document.addEventListener("click", (event) => {
     "edit-estimate-v2-takeoff": () => editEstimateV2Takeoff(id),
     "estimate-v2-prev-page": () => changeEstimateV2Page(-1),
     "estimate-v2-next-page": () => changeEstimateV2Page(1),
+    "load-estimate-v2-stored-pdf": loadEstimateV2StoredPdf,
     "use-estimate-template": () => useEstimateTemplate(id),
     "delete-estimate-row": () => deleteEstimateRow(id),
     "duplicate-price-store": duplicatePriceStore,
@@ -1062,6 +1063,32 @@ async function apiRequest(path, body, options = {}) {
       throw error;
     }
     return payload;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function apiBinaryRequest(path, body, options = {}) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), Number(options.timeoutMs) || 30000);
+  const token = sessionToken();
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  try {
+    const response = await fetch(`${API_ROOT}${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      const error = new Error(payload.error || "Backend request failed.");
+      error.fromBackend = true;
+      error.statusCode = response.status;
+      throw error;
+    }
+    return response.blob();
   } finally {
     window.clearTimeout(timeout);
   }
@@ -2759,6 +2786,11 @@ function renderEstimateV2TakeoffWorkspace(draft) {
           <strong>${draft.planFileName ? escapeHtml(draft.planFileName) : "No PDF loaded yet"}</strong>
         </div>
         <div>
+          <span class="eyebrow">Cloud PDF</span>
+          <strong>${draft.planStoragePath ? "Saved in Supabase" : "Not saved yet"}</strong>
+          ${draft.planStoragePath && !hasPage ? `<button class="secondary-btn compact-btn" data-action="load-estimate-v2-stored-pdf">Load Stored PDF</button>` : ""}
+        </div>
+        <div>
           <span class="eyebrow">Page</span>
           <strong>${draft.takeoffPageCount ? `${formatInteger(draft.takeoffPage)} / ${formatInteger(draft.takeoffPageCount)}` : "-"}</strong>
         </div>
@@ -2798,7 +2830,7 @@ function renderEstimateV2TakeoffWorkspace(draft) {
             </svg>
           </div>
         </div>
-      ` : `<div class="placeholder estimate-v2-plan-placeholder">Upload a floor plan PDF to begin takeoff.</div>`}
+      ` : `<div class="placeholder estimate-v2-plan-placeholder">${draft.planStoragePath ? "Load the stored PDF to continue takeoff on this device." : "Upload a floor plan PDF to begin takeoff."}</div>`}
     </section>
   `;
 }
@@ -5726,7 +5758,7 @@ function setEstimateV2TakeoffGroup(groupKey) {
   render();
 }
 
-async function loadEstimateV2TakeoffPdf(file) {
+async function loadEstimateV2TakeoffPdf(file, options = {}) {
   if (!file) return;
   if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") {
     toast("Estimate v2 accepts PDF files only.");
@@ -5749,19 +5781,80 @@ async function loadEstimateV2TakeoffPdf(file) {
     clearEstimateV2TakeoffHistory();
     const draft = collectEstimateV2DraftFromDom();
     draft.planFileName = file.name;
+    if (!options.skipUpload) {
+      draft.planStoragePath = "";
+      draft.planStorageFileName = "";
+      draft.planStorageSize = 0;
+      draft.planUploadedAt = "";
+      draft.planUploadedByName = "";
+      draft.planUploadedByEmail = "";
+    }
     draft.takeoffPage = 1;
     draft.takeoffPageCount = pdf.numPages || 1;
     await renderEstimateV2TakeoffPage(draft, 1);
-    toast("PDF loaded for takeoff.");
+    if (options.skipUpload) {
+      toast("Stored PDF loaded for takeoff.");
+      return;
+    }
+    await saveEstimateV2PlanToSupabase(file);
   } catch (error) {
     toast(error.message || "PDF takeoff preview failed.");
+  }
+}
+
+async function saveEstimateV2PlanToSupabase(file) {
+  toast("Saving PDF securely in Supabase...");
+  try {
+    const response = await apiRequest("/estimate-v2/plan/upload", {
+      fileName: file.name,
+      data: await fileToBase64(file)
+    }, { timeoutMs: 60000 });
+    const plan = response.plan || {};
+    saveEstimateV2Draft({
+      ...getEstimateV2Draft(),
+      planFileName: plan.fileName || file.name,
+      planStoragePath: plan.path || "",
+      planStorageFileName: plan.fileName || file.name,
+      planStorageSize: Number(plan.size) || file.size || 0,
+      planUploadedAt: plan.uploadedAt || new Date().toISOString(),
+      planUploadedByName: plan.uploadedByName || "",
+      planUploadedByEmail: plan.uploadedByEmail || ""
+    });
+    const synced = await saveCloudAppDataNow();
+    if (!synced) scheduleCloudAppDataSync();
+    render();
+    toast(synced
+      ? "PDF loaded and saved in Supabase."
+      : "PDF saved in Supabase. Its estimate reference will sync again shortly.");
+  } catch (error) {
+    console.warn(error);
+    toast(`${error.message || "Supabase PDF upload failed."} The PDF remains available on this device.`);
+  }
+}
+
+async function loadEstimateV2StoredPdf() {
+  const draft = getEstimateV2Draft();
+  if (!draft.planStoragePath) {
+    toast("No stored PDF is available for this estimate.");
+    return;
+  }
+  toast("Loading PDF from Supabase...");
+  try {
+    const blob = await apiBinaryRequest("/estimate-v2/plan/download", {
+      path: draft.planStoragePath
+    }, { timeoutMs: 60000 });
+    const fileName = draft.planStorageFileName || draft.planFileName || "Stored Plan.pdf";
+    const file = new File([blob], fileName, { type: "application/pdf" });
+    await loadEstimateV2TakeoffPdf(file, { skipUpload: true });
+  } catch (error) {
+    toast(error.message || "Stored PDF could not be loaded.");
   }
 }
 
 async function changeEstimateV2Page(delta) {
   const pdf = state.estimateV2Pdf;
   if (!pdf) {
-    toast("Re-upload the PDF to change pages.");
+    toast("Load or upload the PDF to change pages.");
     return;
   }
   const draft = collectEstimateV2DraftFromDom();
@@ -8167,6 +8260,12 @@ function defaultEstimateV2Draft() {
     steelWallHorizontalSpacing: STEEL_WALL_DEFAULTS.horizontalSpacing,
     steelWallDowelLength: STEEL_WALL_DEFAULTS.dowelLength,
     planFileName: "",
+    planStoragePath: "",
+    planStorageFileName: "",
+    planStorageSize: 0,
+    planUploadedAt: "",
+    planUploadedByName: "",
+    planUploadedByEmail: "",
     takeoffPage: 1,
     takeoffPageCount: 0,
     takeoffPageWidth: 0,
@@ -8273,6 +8372,12 @@ function normalizeEstimateV2Draft(draft) {
     steelWallHorizontalSpacing: Math.max(0, Number(source.steelWallHorizontalSpacing) || STEEL_WALL_DEFAULTS.horizontalSpacing),
     steelWallDowelLength: Math.max(0, Number(source.steelWallDowelLength) || STEEL_WALL_DEFAULTS.dowelLength),
     planFileName: String(source.planFileName || source.fileName || "").trim(),
+    planStoragePath: String(source.planStoragePath || "").trim(),
+    planStorageFileName: String(source.planStorageFileName || source.planFileName || source.fileName || "").trim(),
+    planStorageSize: Math.max(0, Number(source.planStorageSize) || 0),
+    planUploadedAt: String(source.planUploadedAt || "").trim(),
+    planUploadedByName: String(source.planUploadedByName || "").trim(),
+    planUploadedByEmail: String(source.planUploadedByEmail || "").trim(),
     takeoffPage: Math.max(1, Number(source.takeoffPage) || 1),
     takeoffPageCount: Math.max(0, Number(source.takeoffPageCount) || 0),
     takeoffPageWidth: Math.max(0, Number(source.takeoffPageWidth) || 0),

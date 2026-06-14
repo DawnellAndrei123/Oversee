@@ -82,9 +82,11 @@ Account data will appear in Supabase Table Editor under:
 - `oversee_app_data`
 - `oversee_gathered_app_data`
 
-`oversee_app_data` stores each signed-in account's shared app data, including projects, SWA data, estimate drafts, Estimate v2 takeoff rows, estimate templates, material price lists, and subscription state. This is what lets a user log in on another device and see the same project data.
+`oversee_app_data` stores each owner's shared workspace data, including projects, SWA data, Estimate v1 and Estimate v2 drafts, takeoff rows, estimate templates, material price lists, Procurement records, Accounting records, and subscription state. This is what lets authorized users log in on another device and see the same workspace data.
 
 `oversee_gathered_app_data` mirrors that saved app data with searchable owner columns: `account_email`, `account_name`, `saved_by_email`, and `saved_by_name`. Use this table in Supabase Table Editor when you want to see who entered the data.
+
+Estimate v2 PDF files are stored separately in the private Supabase Storage bucket named `oversee-estimate-plans`. The synced Estimate v2 draft stores only the secure object path and upload details. The backend creates the private bucket on the first upload when permitted, and `supabase/schema.sql` also creates it during setup.
 
 Most app details are stored in the `data` JSONB column. The tables also include searchable helper columns such as `email`, `account_id`, `account_email`, `account_name`, `expires_at`, and `at`.
 
