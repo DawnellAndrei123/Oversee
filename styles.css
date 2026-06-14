@@ -2390,6 +2390,150 @@ tfoot td {
   padding: 20px;
 }
 
+.operations-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.operations-kpi,
+.operations-panel,
+.operations-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.operations-kpi {
+  min-width: 0;
+  padding: 14px;
+}
+
+.operations-kpi span,
+.operations-card small {
+  color: var(--muted);
+}
+
+.operations-kpi strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--cyan);
+  font-size: 22px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.operations-kpi.good strong {
+  color: var(--green);
+}
+
+.operations-kpi.risk strong {
+  color: var(--red);
+}
+
+.operations-panel {
+  padding: 14px;
+  margin-top: 14px;
+}
+
+.operations-panel h3,
+.operations-card h3 {
+  margin: 4px 0;
+}
+
+.operations-panel-head,
+.operations-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.operations-panel-head {
+  margin-bottom: 12px;
+}
+
+.operations-table-wrap {
+  max-width: 100%;
+  overflow: auto;
+}
+
+.operations-table {
+  width: 100%;
+  min-width: 1080px;
+  border-collapse: collapse;
+}
+
+.operations-table th,
+.operations-table td {
+  padding: 11px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.operations-table th {
+  color: var(--cyan);
+  background: rgba(40, 244, 255, 0.08);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.operations-table td small,
+.operations-table td strong {
+  display: block;
+}
+
+.operations-table td small {
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.workflow-select {
+  min-width: 138px;
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.workflow-select.green {
+  color: var(--green);
+  background: rgba(49, 217, 130, 0.12);
+}
+
+.workflow-select.red {
+  color: var(--red);
+  background: rgba(255, 31, 63, 0.12);
+}
+
+.workflow-select.orange {
+  color: var(--orange);
+  background: rgba(255, 159, 50, 0.14);
+}
+
+.workflow-select.blue {
+  color: var(--blue);
+  background: rgba(56, 168, 255, 0.12);
+}
+
+.operations-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 12px;
+}
+
+.operations-card {
+  padding: 14px;
+}
+
+.operations-card p {
+  margin: 8px 0;
+}
+
 .dashboard-filters {
   display: flex;
   justify-content: flex-end;
@@ -2773,6 +2917,9 @@ body[data-theme="light"] .risk-item,
 body[data-theme="light"] .settings-panel,
 body[data-theme="light"] .account-row,
 body[data-theme="light"] .risk-row,
+body[data-theme="light"] .operations-kpi,
+body[data-theme="light"] .operations-panel,
+body[data-theme="light"] .operations-card,
 body[data-theme="light"] .sheet-tab {
   background: rgba(255, 255, 255, 0.68);
 }
@@ -2956,6 +3103,7 @@ body[data-theme="light"] .premium-access-notice {
   .dashboard-kpi-grid,
   .dashboard-layout,
   .status-chart-wrap,
+  .operations-kpi-grid,
   .estimate-v2-grid,
   .estimate-v2-takeoff-grid,
   .estimate-v2-structural-inputs,

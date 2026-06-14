@@ -119,6 +119,8 @@ function summarizeAccountAppData(data) {
   const swa = source.swa && typeof source.swa === "object" ? source.swa : {};
   const estimateV2Draft = source.estimateV2Draft && typeof source.estimateV2Draft === "object" ? source.estimateV2Draft : {};
   const takeoffRows = Array.isArray(estimateV2Draft.takeoffRows) ? estimateV2Draft.takeoffRows : [];
+  const procurement = source.procurement && typeof source.procurement === "object" ? source.procurement : {};
+  const accounting = source.accounting && typeof source.accounting === "object" ? source.accounting : {};
   const swaSheets = Object.values(swa).reduce((total, projectSwa) => {
     if (!projectSwa || typeof projectSwa !== "object") return total;
     if (Array.isArray(projectSwa.sheets)) return total + projectSwa.sheets.length;
@@ -133,6 +135,11 @@ function summarizeAccountAppData(data) {
     estimateTemplateCount: estimateTemplates.length,
     materialStoreCount: materialPrices.length,
     estimateV2TakeoffRowCount: takeoffRows.length,
+    purchaseRequestCount: Array.isArray(procurement.requests) ? procurement.requests.length : 0,
+    purchaseOrderCount: Array.isArray(procurement.orders) ? procurement.orders.length : 0,
+    supplierCount: Array.isArray(procurement.suppliers) ? procurement.suppliers.length : 0,
+    billingCount: Array.isArray(accounting.billings) ? accounting.billings.length : 0,
+    expenseCount: Array.isArray(accounting.expenses) ? accounting.expenses.length : 0,
     savedAt: String(source.savedAt || new Date().toISOString())
   };
 }
@@ -154,9 +161,9 @@ async function syncAppData(store) {
         account_id: String(record.accountId),
         account_email: account.email || record.accountEmail || null,
         account_name: account.name || record.accountName || null,
-        saved_by_account_id: String(record.accountId),
-        saved_by_email: account.email || record.accountEmail || null,
-        saved_by_name: account.name || record.accountName || null,
+        saved_by_account_id: record.savedByAccountId || String(record.accountId),
+        saved_by_email: record.savedByEmail || account.email || record.accountEmail || null,
+        saved_by_name: record.savedByName || account.name || record.accountName || null,
         data: record.data || {},
         data_summary: record.dataSummary || summarizeAccountAppData(record.data),
         saved_at: record.updatedAt || new Date().toISOString(),

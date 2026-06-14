@@ -9,6 +9,8 @@ const STORAGE = {
   estimateV2Draft: "oversee.estimateV2Draft",
   estimateTemplates: "oversee.estimateTemplates",
   materialPrices: "oversee.materialPrices",
+  procurement: "oversee.procurement",
+  accounting: "oversee.accounting",
   theme: "oversee.theme"
 };
 
@@ -19,6 +21,8 @@ const CLOUD_APP_DATA_KEYS = [
   { dataKey: "estimateV2Draft", storageKey: STORAGE.estimateV2Draft, fallback: null },
   { dataKey: "estimateTemplates", storageKey: STORAGE.estimateTemplates, fallback: [] },
   { dataKey: "materialPrices", storageKey: STORAGE.materialPrices, fallback: [] },
+  { dataKey: "procurement", storageKey: STORAGE.procurement, fallback: null },
+  { dataKey: "accounting", storageKey: STORAGE.accounting, fallback: null },
   { dataKey: "subscription", storageKey: STORAGE.subscription, fallback: null }
 ];
 
@@ -28,6 +32,11 @@ const ACCESS_KEYS = [
   { key: "accounting", label: "Accounting" },
   { key: "administrative", label: "Administrative" }
 ];
+const ASSIGNABLE_ACCESS_KEYS = ACCESS_KEYS.filter((item) => item.key !== "administrative");
+const PROCUREMENT_REQUEST_STATUSES = ["Pending", "Approved", "Ordered", "Received", "Cancelled"];
+const PROCUREMENT_ORDER_STATUSES = ["Draft", "Sent", "Partially Received", "Received", "Cancelled"];
+const ACCOUNTING_BILLING_STATUSES = ["Draft", "Submitted", "Approved", "Paid", "Rejected"];
+const ACCOUNTING_EXPENSE_STATUSES = ["Unpaid", "Partially Paid", "Paid"];
 
 const STATUS_OPTIONS = ["Not yet Started", "On-going", "On-Hold", "Completed"];
 const PLAN_TYPES = ["Architectural", "Structural", "Plumbing", "Electrical", "Mechanical", "Electronics", "Civil", "Fire Protection", "Other"];
@@ -236,6 +245,9 @@ const state = {
   authTab: "signup",
   currentView: "welcome",
   engineeringView: "gantt",
+  procurementView: "overview",
+  accountingView: "overview",
+  administrativeView: "accounts",
   ganttZoom: "year",
   selectedYear: new Date().getFullYear(),
   filter: { name: "", type: "" },
@@ -303,6 +315,18 @@ document.addEventListener("click", (event) => {
       render();
     },
     "main-view": () => openMainView(target.dataset.view),
+    "procurement-tab": () => {
+      state.procurementView = target.dataset.view || "overview";
+      render();
+    },
+    "accounting-tab": () => {
+      state.accountingView = target.dataset.view || "overview";
+      render();
+    },
+    "administrative-tab": () => {
+      state.administrativeView = target.dataset.view || "accounts";
+      render();
+    },
     "engineering-tab": () => {
       if (target.dataset.premiumLocked === "true") {
         showPremiumAccessNotice();
@@ -380,6 +404,22 @@ document.addEventListener("click", (event) => {
     "verify-otp": verifySignupOtp,
     "create-invite": createInvite,
     "update-access": () => updateAccess(id),
+    "refresh-admin-accounts": refreshOwnerAccounts,
+    "open-procurement-request": () => openProcurementRequestModal(id),
+    "save-procurement-request": saveProcurementRequest,
+    "delete-procurement-request": () => deleteProcurementRecord("requests", id),
+    "open-purchase-order": () => openPurchaseOrderModal(id),
+    "save-purchase-order": savePurchaseOrder,
+    "delete-purchase-order": () => deleteProcurementRecord("orders", id),
+    "open-supplier": () => openSupplierModal(id),
+    "save-supplier": saveSupplier,
+    "delete-supplier": () => deleteProcurementRecord("suppliers", id),
+    "open-accounting-billing": () => openAccountingBillingModal(id),
+    "save-accounting-billing": saveAccountingBilling,
+    "delete-accounting-billing": () => deleteAccountingRecord("billings", id),
+    "open-accounting-expense": () => openAccountingExpenseModal(id),
+    "save-accounting-expense": saveAccountingExpense,
+    "delete-accounting-expense": () => deleteAccountingRecord("expenses", id),
     "cancel-subscription": cancelSubscription,
     "link-gmail": linkGmail,
     "copy-invite": () => copyInvite(target.dataset.link),
@@ -541,6 +581,22 @@ document.addEventListener("change", (event) => {
     render();
     return;
   }
+  if (target && target.dataset.action === "procurement-request-status") {
+    updateProcurementStatus("requests", target.dataset.id, target.value);
+    return;
+  }
+  if (target && target.dataset.action === "purchase-order-status") {
+    updateProcurementStatus("orders", target.dataset.id, target.value);
+    return;
+  }
+  if (target && target.dataset.action === "accounting-billing-status") {
+    updateAccountingStatus("billings", target.dataset.id, target.value);
+    return;
+  }
+  if (target && target.dataset.action === "accounting-expense-status") {
+    updateAccountingStatus("expenses", target.dataset.id, target.value);
+    return;
+  }
   if (!target || target.dataset.action !== "gantt-year") return;
   state.selectedYear = Number(target.value) || new Date().getFullYear();
   render();
@@ -613,6 +669,7 @@ async function initializeCloudAppData() {
   if (!sessionToken()) return false;
   try {
     const response = await apiRequest("/app-data/load", {}, { timeoutMs: 10000 });
+    if (response.account) savePublicAccount(response.account);
     if (response.empty) {
       await saveCloudAppDataNow();
     } else {
@@ -685,6 +742,123 @@ function getProjects() {
 
 function saveProjects(projects) {
   setSyncedJson(STORAGE.projects, projects);
+}
+
+function normalizeOperationsRecord(record, defaults) {
+  const source = record && typeof record === "object" ? record : {};
+  const normalized = { ...source };
+  Object.entries(defaults).forEach(([key, fallback]) => {
+    const value = source[key];
+    if (value === undefined || value === null || (typeof fallback === "string" && !String(value).trim())) {
+      normalized[key] = fallback;
+    }
+  });
+  return normalized;
+}
+
+function getProcurementState() {
+  const source = readJson(STORAGE.procurement, null) || {};
+  return {
+    requests: Array.isArray(source.requests) ? source.requests.map((item) => normalizeOperationsRecord(item, {
+      item: "Untitled Request",
+      projectId: "",
+      quantity: 0,
+      unit: "",
+      estimatedUnitCost: 0,
+      neededBy: "",
+      priority: "Medium",
+      status: "Pending",
+      enteredByName: "",
+      enteredByEmail: ""
+    })) : [],
+    orders: Array.isArray(source.orders) ? source.orders.map((item) => normalizeOperationsRecord(item, {
+      poNumber: "Unnumbered PO",
+      projectId: "",
+      supplierId: "",
+      item: "Untitled Order",
+      quantity: 0,
+      unit: "",
+      unitCost: 0,
+      expectedDate: "",
+      status: "Draft",
+      enteredByName: "",
+      enteredByEmail: ""
+    })) : [],
+    suppliers: Array.isArray(source.suppliers) ? source.suppliers.map((item) => normalizeOperationsRecord(item, {
+      name: "Unnamed Supplier",
+      contactPerson: "",
+      email: "",
+      phone: "",
+      enteredByName: "",
+      enteredByEmail: ""
+    })) : []
+  };
+}
+
+function saveProcurementState(procurement) {
+  setSyncedJson(STORAGE.procurement, {
+    requests: Array.isArray(procurement.requests) ? procurement.requests : [],
+    orders: Array.isArray(procurement.orders) ? procurement.orders : [],
+    suppliers: Array.isArray(procurement.suppliers) ? procurement.suppliers : [],
+    updatedAt: new Date().toISOString()
+  });
+}
+
+function getAccountingState() {
+  const source = readJson(STORAGE.accounting, null) || {};
+  return {
+    billings: Array.isArray(source.billings) ? source.billings.map((item) => normalizeOperationsRecord(item, {
+      billingNumber: "Unnumbered Billing",
+      projectId: "",
+      description: "Billing",
+      amount: 0,
+      dueDate: "",
+      status: "Draft",
+      enteredByName: "",
+      enteredByEmail: ""
+    })) : [],
+    expenses: Array.isArray(source.expenses) ? source.expenses.map((item) => normalizeOperationsRecord(item, {
+      projectId: "",
+      date: "",
+      category: "Other",
+      description: "Expense",
+      payee: "",
+      amount: 0,
+      status: "Unpaid",
+      enteredByName: "",
+      enteredByEmail: ""
+    })) : []
+  };
+}
+
+function saveAccountingState(accounting) {
+  setSyncedJson(STORAGE.accounting, {
+    billings: Array.isArray(accounting.billings) ? accounting.billings : [],
+    expenses: Array.isArray(accounting.expenses) ? accounting.expenses : [],
+    updatedAt: new Date().toISOString()
+  });
+}
+
+function enteredByFields(existing = {}) {
+  const account = getSessionAccount() || {};
+  const now = new Date().toISOString();
+  return {
+    enteredById: existing.enteredById || account.id || "",
+    enteredByName: existing.enteredByName || account.name || "",
+    enteredByEmail: existing.enteredByEmail || account.email || "",
+    createdAt: existing.createdAt || now,
+    updatedById: account.id || "",
+    updatedByName: account.name || "",
+    updatedByEmail: account.email || "",
+    updatedAt: now
+  };
+}
+
+function projectSelectOptions(selectedProjectId = "") {
+  return `
+    <option value="" ${selectedProjectId ? "" : "selected"}>General / No project</option>
+    ${getProjects().map((project) => `<option value="${project.id}" ${selectedProjectId === project.id ? "selected" : ""}>${escapeHtml(project.name)}</option>`).join("")}
+  `;
 }
 
 function getInvites() {
@@ -827,12 +1001,13 @@ async function apiRequest(path, body, options = {}) {
   const timeout = window.setTimeout(() => controller.abort(), Number(options.timeoutMs) || 5000);
   const token = sessionToken();
   const headers = { "Content-Type": "application/json" };
+  const method = String(options.method || "POST").toUpperCase();
   if (token) headers.Authorization = `Bearer ${token}`;
   try {
     const response = await fetch(`${API_ROOT}${path}`, {
-      method: "POST",
+      method,
       headers,
-      body: JSON.stringify(body),
+      body: method === "GET" || method === "HEAD" ? undefined : JSON.stringify(body),
       signal: controller.signal
     });
     const payload = await response.json().catch(() => ({}));
@@ -966,11 +1141,19 @@ function renderAppShell(account) {
       <div class="app-layout ${state.sideDockCollapsed ? "side-dock-collapsed" : ""}">
         ${renderSideDock(account)}
         <section class="main-stage">
-          ${state.currentView === "engineering" ? renderEngineeringView(account) : renderWelcome(account)}
+          ${renderMainStage(account)}
         </section>
       </div>
     </main>
   `;
+}
+
+function renderMainStage(account) {
+  if (state.currentView === "engineering") return renderEngineeringView(account);
+  if (state.currentView === "procurement") return renderProcurementView(account);
+  if (state.currentView === "accounting") return renderAccountingView(account);
+  if (state.currentView === "administrative") return renderAdministrativeView(account);
+  return renderWelcome(account);
 }
 
 function iconSvg(name) {
@@ -1044,7 +1227,7 @@ function renderWelcome(account) {
     <section class="welcome-card">
       <span class="eyebrow">Project Command Center</span>
       <h1>Welcome, ${escapeHtml(account.name)}</h1>
-      <p>Choose an area from the left container. Engineering View is ready with a Gantt chart, project list, project risk view, filters, and editable construction project information.</p>
+      <p>Choose an area from the left container to manage engineering, procurement, accounting, and the modules assigned to your account.</p>
       <div class="dashboard-grid">
         <div class="mini-card"><span class="eyebrow">Projects</span><div class="value">${projects.length}</div></div>
         <div class="mini-card"><span class="eyebrow">Delayed</span><div class="value">${delayed}</div></div>
@@ -1065,7 +1248,7 @@ function renderSideDock(account) {
       </div>
       <div class="dock-actions">
         <button class="dock-btn" data-action="open-account" title="Account" aria-label="Account">${iconSvg("account")}<span class="dock-label">Account</span></button>
-        ${ACCESS_KEYS.map((item) => `
+        ${ACCESS_KEYS.filter((item) => item.key !== "administrative" || account.role === "owner").map((item) => `
           <button class="dock-btn" data-action="main-view" data-view="${item.key}" title="${escapeAttribute(item.label)}" aria-label="${escapeAttribute(item.label)}" ${hasAccess(account, item.key) ? "" : "disabled"}>
             ${iconSvg(accessIcon(item.key))}<span class="dock-label">${escapeHtml(item.label)}</span>
           </button>
@@ -1122,6 +1305,323 @@ function renderEngineeringVisual(account) {
     milestone: "Milestone"
   };
   return `<div class="placeholder">${titles[state.engineeringView]} will be built in the next module.</div>`;
+}
+
+function renderModuleToolbar(module, activeView, views) {
+  return `
+    <div class="toolbar-container" aria-label="${escapeAttribute(module)} toolbar">
+      ${views.map(([view, label]) => `
+        <button class="toolbar-btn ${activeView === view ? "active" : ""}" data-action="${module}-tab" data-view="${view}">${escapeHtml(label)}</button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderProcurementView(account) {
+  if (!hasAccess(account, "procurement")) {
+    return `<section class="visual-container"><div class="placeholder">Procurement access is not assigned to this account.</div></section>`;
+  }
+  return `
+    <section>
+      ${renderModuleToolbar("procurement", state.procurementView, [
+        ["overview", "Overview"],
+        ["requests", "Purchase Requests"],
+        ["orders", "Purchase Orders"],
+        ["suppliers", "Suppliers"]
+      ])}
+      <div class="visual-container">${renderProcurementVisual()}</div>
+    </section>
+  `;
+}
+
+function renderProcurementVisual() {
+  const procurement = getProcurementState();
+  if (state.procurementView === "requests") return renderProcurementRequests(procurement);
+  if (state.procurementView === "orders") return renderPurchaseOrders(procurement);
+  if (state.procurementView === "suppliers") return renderSuppliers(procurement);
+  return renderProcurementOverview(procurement);
+}
+
+function renderProcurementOverview(procurement) {
+  const activeRequests = procurement.requests.filter((item) => !["Received", "Cancelled"].includes(item.status));
+  const activeOrders = procurement.orders.filter((item) => !["Received", "Cancelled"].includes(item.status));
+  const committed = procurement.orders.filter((item) => item.status !== "Cancelled").reduce((total, item) => total + procurementOrderTotal(item), 0);
+  const received = procurement.orders.filter((item) => item.status === "Received").reduce((total, item) => total + procurementOrderTotal(item), 0);
+  return `
+    <div class="visual-head">
+      <div><span class="eyebrow">Procurement</span><h2>Procurement Overview</h2><p class="hint">Purchase requests, supplier records, and purchase-order delivery tracking.</p></div>
+      <button class="primary-btn" data-action="open-procurement-request">New Request</button>
+    </div>
+    <div class="operations-kpi-grid">
+      ${renderOperationsKpi("Open Requests", activeRequests.length)}
+      ${renderOperationsKpi("Active Orders", activeOrders.length)}
+      ${renderOperationsKpi("Committed", formatCurrencyCompact(committed), "money")}
+      ${renderOperationsKpi("Received Value", formatCurrencyCompact(received), "good")}
+      ${renderOperationsKpi("Suppliers", procurement.suppliers.length)}
+    </div>
+    <section class="operations-panel">
+      <div class="operations-panel-head"><div><span class="eyebrow">Recent</span><h3>Purchase Orders</h3></div><button class="secondary-btn" data-action="procurement-tab" data-view="orders">View Orders</button></div>
+      ${renderPurchaseOrderTable(procurement.orders.slice(-6).reverse(), procurement)}
+    </section>
+  `;
+}
+
+function renderProcurementRequests(procurement) {
+  return `
+    <div class="visual-head">
+      <div><span class="eyebrow">Procurement</span><h2>Purchase Requests</h2><p class="hint">Approve requested materials before creating purchase orders.</p></div>
+      <button class="primary-btn" data-action="open-procurement-request">Add Request</button>
+    </div>
+    <div class="table-wrap operations-table-wrap">
+      <table class="operations-table">
+        <thead><tr><th>Project / Item</th><th>Quantity</th><th>Estimated Cost</th><th>Needed By</th><th>Priority</th><th>Status</th><th>Entered By</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${procurement.requests.length ? procurement.requests.map((item) => `
+            <tr>
+              <td><strong>${escapeHtml(item.item)}</strong><small>${escapeHtml(projectName(item.projectId))}</small></td>
+              <td>${formatSwaNumber(item.quantity)} ${escapeHtml(item.unit)}</td>
+              <td>${formatCurrency((Number(item.quantity) || 0) * (Number(item.estimatedUnitCost) || 0))}</td>
+              <td>${item.neededBy ? formatDate(item.neededBy) : "-"}</td>
+              <td><span class="badge ${workflowStatusClass(item.priority)}">${escapeHtml(item.priority)}</span></td>
+              <td>${renderWorkflowSelect("procurement-request-status", item.id, item.status, PROCUREMENT_REQUEST_STATUSES)}</td>
+              <td>${renderEnteredBy(item)}</td>
+              <td class="operations-actions"><button class="ghost-btn compact-btn" data-action="open-procurement-request" data-id="${item.id}">Edit</button><button class="ghost-btn compact-btn danger" data-action="delete-procurement-request" data-id="${item.id}">Delete</button></td>
+            </tr>
+          `).join("") : `<tr><td colspan="8">No purchase requests yet.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderPurchaseOrders(procurement) {
+  return `
+    <div class="visual-head">
+      <div><span class="eyebrow">Procurement</span><h2>Purchase Orders</h2><p class="hint">Track ordered materials, suppliers, costs, and deliveries.</p></div>
+      <button class="primary-btn" data-action="open-purchase-order">Add Purchase Order</button>
+    </div>
+    ${renderPurchaseOrderTable(procurement.orders, procurement)}
+  `;
+}
+
+function renderPurchaseOrderTable(orders, procurement) {
+  return `
+    <div class="table-wrap operations-table-wrap">
+      <table class="operations-table">
+        <thead><tr><th>PO / Project</th><th>Supplier</th><th>Item</th><th>Total</th><th>Expected</th><th>Status</th><th>Entered By</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${orders.length ? orders.map((item) => `
+            <tr>
+              <td><strong>${escapeHtml(item.poNumber)}</strong><small>${escapeHtml(projectName(item.projectId))}</small></td>
+              <td>${escapeHtml(supplierName(procurement, item.supplierId))}</td>
+              <td><strong>${escapeHtml(item.item)}</strong><small>${formatSwaNumber(item.quantity)} ${escapeHtml(item.unit)} @ ${formatCurrency(item.unitCost)}</small></td>
+              <td>${formatCurrency(procurementOrderTotal(item))}</td>
+              <td>${item.expectedDate ? formatDate(item.expectedDate) : "-"}</td>
+              <td>${renderWorkflowSelect("purchase-order-status", item.id, item.status, PROCUREMENT_ORDER_STATUSES)}</td>
+              <td>${renderEnteredBy(item)}</td>
+              <td class="operations-actions"><button class="ghost-btn compact-btn" data-action="open-purchase-order" data-id="${item.id}">Edit</button><button class="ghost-btn compact-btn danger" data-action="delete-purchase-order" data-id="${item.id}">Delete</button></td>
+            </tr>
+          `).join("") : `<tr><td colspan="8">No purchase orders yet.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderSuppliers(procurement) {
+  return `
+    <div class="visual-head">
+      <div><span class="eyebrow">Procurement</span><h2>Suppliers</h2><p class="hint">Maintain supplier contact information for purchase orders.</p></div>
+      <button class="primary-btn" data-action="open-supplier">Add Supplier</button>
+    </div>
+    <div class="operations-card-grid">
+      ${procurement.suppliers.length ? procurement.suppliers.map((supplier) => `
+        <article class="operations-card">
+          <span class="eyebrow">Supplier</span><h3>${escapeHtml(supplier.name)}</h3>
+          <p>${escapeHtml(supplier.contactPerson || "No contact person")}</p>
+          <small>${escapeHtml(supplier.email || "No email")} | ${escapeHtml(supplier.phone || "No phone")}</small>
+          <div class="operations-actions"><button class="secondary-btn compact-btn" data-action="open-supplier" data-id="${supplier.id}">Edit</button><button class="ghost-btn compact-btn danger" data-action="delete-supplier" data-id="${supplier.id}">Delete</button></div>
+        </article>
+      `).join("") : `<div class="placeholder">No suppliers yet.</div>`}
+    </div>
+  `;
+}
+
+function renderAccountingView(account) {
+  if (!hasAccess(account, "accounting")) {
+    return `<section class="visual-container"><div class="placeholder">Accounting access is not assigned to this account.</div></section>`;
+  }
+  return `
+    <section>
+      ${renderModuleToolbar("accounting", state.accountingView, [
+        ["overview", "Overview"],
+        ["billings", "Billings"],
+        ["expenses", "Expenses"]
+      ])}
+      <div class="visual-container">${renderAccountingVisual()}</div>
+    </section>
+  `;
+}
+
+function renderAccountingVisual() {
+  const accounting = getAccountingState();
+  if (state.accountingView === "billings") return renderAccountingBillings(accounting);
+  if (state.accountingView === "expenses") return renderAccountingExpenses(accounting);
+  return renderAccountingOverview(accounting);
+}
+
+function renderAccountingOverview(accounting) {
+  const contractTotal = getProjects().reduce((total, item) => total + (Number(item.contractAmount) || 0), 0);
+  const billed = accounting.billings.reduce((total, item) => total + (Number(item.amount) || 0), 0);
+  const collected = accounting.billings.filter((item) => item.status === "Paid").reduce((total, item) => total + (Number(item.amount) || 0), 0);
+  const expenses = accounting.expenses.reduce((total, item) => total + (Number(item.amount) || 0), 0);
+  return `
+    <div class="visual-head">
+      <div><span class="eyebrow">Accounting</span><h2>Financial Overview</h2><p class="hint">Track progress billings, collections, expenses, and contract balances.</p></div>
+      <div class="operations-actions"><button class="secondary-btn" data-action="open-accounting-expense">Add Expense</button><button class="primary-btn" data-action="open-accounting-billing">Add Billing</button></div>
+    </div>
+    <div class="operations-kpi-grid">
+      ${renderOperationsKpi("Contract Amount", formatCurrencyCompact(contractTotal), "money")}
+      ${renderOperationsKpi("Total Billed", formatCurrencyCompact(billed), "money")}
+      ${renderOperationsKpi("Collected", formatCurrencyCompact(collected), "good")}
+      ${renderOperationsKpi("Expenses", formatCurrencyCompact(expenses), "risk")}
+      ${renderOperationsKpi("Net Cash", formatCurrencyCompact(collected - expenses), collected - expenses >= 0 ? "good" : "risk")}
+    </div>
+    <section class="operations-panel">
+      <div class="operations-panel-head"><div><span class="eyebrow">Recent</span><h3>Billings</h3></div><button class="secondary-btn" data-action="accounting-tab" data-view="billings">View Billings</button></div>
+      ${renderAccountingBillingTable(accounting.billings.slice(-6).reverse())}
+    </section>
+  `;
+}
+
+function renderAccountingBillings(accounting) {
+  return `
+    <div class="visual-head">
+      <div><span class="eyebrow">Accounting</span><h2>Billings</h2><p class="hint">Track billing submissions, approvals, and collections.</p></div>
+      <button class="primary-btn" data-action="open-accounting-billing">Add Billing</button>
+    </div>
+    ${renderAccountingBillingTable(accounting.billings)}
+  `;
+}
+
+function renderAccountingBillingTable(billings) {
+  return `
+    <div class="table-wrap operations-table-wrap">
+      <table class="operations-table">
+        <thead><tr><th>Billing / Project</th><th>Description</th><th>Amount</th><th>Due Date</th><th>Status</th><th>Entered By</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${billings.length ? billings.map((item) => `
+            <tr>
+              <td><strong>${escapeHtml(item.billingNumber)}</strong><small>${escapeHtml(projectName(item.projectId))}</small></td>
+              <td>${escapeHtml(item.description)}</td><td>${formatCurrency(item.amount)}</td><td>${item.dueDate ? formatDate(item.dueDate) : "-"}</td>
+              <td>${renderWorkflowSelect("accounting-billing-status", item.id, item.status, ACCOUNTING_BILLING_STATUSES)}</td>
+              <td>${renderEnteredBy(item)}</td>
+              <td class="operations-actions"><button class="ghost-btn compact-btn" data-action="open-accounting-billing" data-id="${item.id}">Edit</button><button class="ghost-btn compact-btn danger" data-action="delete-accounting-billing" data-id="${item.id}">Delete</button></td>
+            </tr>
+          `).join("") : `<tr><td colspan="7">No billing records yet.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderAccountingExpenses(accounting) {
+  return `
+    <div class="visual-head">
+      <div><span class="eyebrow">Accounting</span><h2>Expenses</h2><p class="hint">Record project expenses and payment status.</p></div>
+      <button class="primary-btn" data-action="open-accounting-expense">Add Expense</button>
+    </div>
+    <div class="table-wrap operations-table-wrap">
+      <table class="operations-table">
+        <thead><tr><th>Date / Project</th><th>Category</th><th>Description / Payee</th><th>Amount</th><th>Payment Status</th><th>Entered By</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${accounting.expenses.length ? accounting.expenses.map((item) => `
+            <tr>
+              <td><strong>${item.date ? formatDate(item.date) : "-"}</strong><small>${escapeHtml(projectName(item.projectId))}</small></td>
+              <td>${escapeHtml(item.category)}</td><td><strong>${escapeHtml(item.description)}</strong><small>${escapeHtml(item.payee || "")}</small></td><td>${formatCurrency(item.amount)}</td>
+              <td>${renderWorkflowSelect("accounting-expense-status", item.id, item.status, ACCOUNTING_EXPENSE_STATUSES)}</td>
+              <td>${renderEnteredBy(item)}</td>
+              <td class="operations-actions"><button class="ghost-btn compact-btn" data-action="open-accounting-expense" data-id="${item.id}">Edit</button><button class="ghost-btn compact-btn danger" data-action="delete-accounting-expense" data-id="${item.id}">Delete</button></td>
+            </tr>
+          `).join("") : `<tr><td colspan="7">No expense records yet.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderAdministrativeView(account) {
+  if (!account || account.role !== "owner") {
+    return `<section class="visual-container"><div class="placeholder">Administrative is restricted to the owner account.</div></section>`;
+  }
+  return `
+    <section>
+      ${renderModuleToolbar("administrative", state.administrativeView, [["accounts", "Accounts & Access"], ["workspace", "Workspace Data"]])}
+      <div class="visual-container">
+        ${state.administrativeView === "workspace" ? renderAdministrativeWorkspace() : renderAdministrativeAccounts(account)}
+      </div>
+    </section>
+  `;
+}
+
+function renderAdministrativeAccounts(owner) {
+  return `
+    <div class="visual-head">
+      <div><span class="eyebrow">Owner Only</span><h2>Accounts & Access</h2><p class="hint">Assign Engineering, Procurement, and Accounting access. Administrative access always remains owner-only.</p></div>
+      <button class="secondary-btn" data-action="refresh-admin-accounts">Refresh Accounts</button>
+    </div>
+    ${renderOwnerAccountTools(owner)}
+  `;
+}
+
+function renderAdministrativeWorkspace() {
+  const procurement = getProcurementState();
+  const accounting = getAccountingState();
+  return `
+    <div class="visual-head"><div><span class="eyebrow">Owner Only</span><h2>Workspace Data</h2><p class="hint">This shared workspace is synchronized through Supabase for the owner and invited accounts.</p></div></div>
+    <div class="operations-kpi-grid">
+      ${renderOperationsKpi("Projects", getProjects().length)}
+      ${renderOperationsKpi("Purchase Requests", procurement.requests.length)}
+      ${renderOperationsKpi("Purchase Orders", procurement.orders.length)}
+      ${renderOperationsKpi("Billings", accounting.billings.length)}
+      ${renderOperationsKpi("Expenses", accounting.expenses.length)}
+    </div>
+    <section class="operations-panel"><span class="eyebrow">Security</span><h3>Module Access Rules</h3><p class="hint">Engineering, Procurement, and Accounting permissions are assigned by the owner. Administrative remains restricted to the owner. Each saved record stores the full name and email of the user who entered it.</p></section>
+  `;
+}
+
+function renderOperationsKpi(label, value, className = "") {
+  return `<div class="operations-kpi ${className}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></div>`;
+}
+
+function renderWorkflowSelect(action, id, status, options) {
+  return `<select class="workflow-select ${workflowStatusClass(status)}" data-action="${action}" data-id="${id}" aria-label="Update status">${options.map((option) => `<option value="${escapeAttribute(option)}" ${status === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select>`;
+}
+
+function workflowStatusClass(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (/(received|paid|approved|completed|low)/.test(normalized)) return "green";
+  if (/(cancelled|rejected|high|unpaid)/.test(normalized)) return "red";
+  if (/(pending|sent|submitted|partially|medium)/.test(normalized)) return "orange";
+  return "blue";
+}
+
+function renderEnteredBy(item) {
+  return `<strong>${escapeHtml(item.enteredByName || "-")}</strong><small>${escapeHtml(item.enteredByEmail || "")}</small>`;
+}
+
+function projectName(projectId) {
+  const project = getProjects().find((item) => item.id === projectId);
+  return project ? project.name : "General / No project";
+}
+
+function supplierName(procurement, supplierId) {
+  const supplier = procurement.suppliers.find((item) => item.id === supplierId);
+  return supplier ? supplier.name : "No supplier";
+}
+
+function procurementOrderTotal(item) {
+  return (Number(item && item.quantity) || 0) * (Number(item && item.unitCost) || 0);
 }
 
 function renderPlanLockedView(view) {
@@ -3715,15 +4215,17 @@ function renderGanttRow(project, timeline) {
 }
 
 function openMainView(view) {
-  if (view === "engineering") {
-    state.currentView = "engineering";
-    state.engineeringView = "gantt";
-    render();
+  const account = getSessionAccount();
+  if (!account || !hasAccess(account, view)) {
+    toast(`${labelForAccess(view)} access is not assigned to this account.`);
     return;
   }
-  state.currentView = "welcome";
+  state.currentView = view;
+  if (view === "engineering") {
+    state.engineeringView = "gantt";
+  }
   render();
-  toast(`${labelForAccess(view)} is reserved for the next build.`);
+  if (view === "administrative") refreshOwnerAccounts();
 }
 
 async function handleSignup() {
@@ -5905,6 +6407,289 @@ function priceStoreNameFromDom() {
   return state.activePriceStore || selectedPriceStore(materialStoreOptions());
 }
 
+function openProcurementRequestModal(requestId = "") {
+  const request = getProcurementState().requests.find((item) => item.id === requestId) || {};
+  openModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>${request.id ? "Edit Purchase Request" : "New Purchase Request"}</h3><button class="ghost-btn" data-action="close-modal">Close</button></div>
+      <div class="modal-body">
+        <form id="procurement-request-form" class="form-grid">
+          <input type="hidden" name="id" value="${escapeAttribute(request.id || "")}">
+          <div class="field full"><label>Project</label><select name="projectId">${projectSelectOptions(request.projectId)}</select></div>
+          <div class="field full"><label>Material / Item</label><input name="item" value="${escapeAttribute(request.item || "")}" required></div>
+          <div class="field"><label>Quantity</label><input name="quantity" type="number" min="0" step="0.01" value="${numberInputValue(request.quantity)}" required></div>
+          <div class="field"><label>Unit</label><input name="unit" value="${escapeAttribute(request.unit || "")}" placeholder="pcs, bags, cu.m" required></div>
+          <div class="field"><label>Estimated Unit Cost</label><input name="estimatedUnitCost" type="number" min="0" step="0.01" value="${numberInputValue(request.estimatedUnitCost)}"></div>
+          <div class="field"><label>Needed By</label><input name="neededBy" type="date" value="${escapeAttribute(request.neededBy || "")}"></div>
+          <div class="field"><label>Priority</label><select name="priority">${["Low", "Medium", "High"].map((item) => `<option ${request.priority === item ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+          <div class="field"><label>Status</label><select name="status">${PROCUREMENT_REQUEST_STATUSES.map((item) => `<option ${request.status === item ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+          <div class="field full"><label>Notes</label><textarea name="notes">${escapeHtml(request.notes || "")}</textarea></div>
+        </form>
+      </div>
+      <div class="modal-foot"><button class="ghost-btn" data-action="close-modal">Cancel</button><button class="primary-btn" data-action="save-procurement-request">Save Request</button></div>
+    </div>
+  `);
+}
+
+function saveProcurementRequest() {
+  const form = document.getElementById("procurement-request-form");
+  if (!form || !form.reportValidity()) return;
+  const formData = new FormData(form);
+  const procurement = getProcurementState();
+  const id = String(formData.get("id") || "") || cryptoId();
+  const existing = procurement.requests.find((item) => item.id === id) || {};
+  const request = {
+    ...existing,
+    id,
+    projectId: String(formData.get("projectId") || ""),
+    item: String(formData.get("item") || "").trim(),
+    quantity: Math.max(0, Number(formData.get("quantity")) || 0),
+    unit: String(formData.get("unit") || "").trim(),
+    estimatedUnitCost: Math.max(0, Number(formData.get("estimatedUnitCost")) || 0),
+    neededBy: String(formData.get("neededBy") || ""),
+    priority: String(formData.get("priority") || "Medium"),
+    status: String(formData.get("status") || "Pending"),
+    notes: String(formData.get("notes") || "").trim(),
+    ...enteredByFields(existing)
+  };
+  procurement.requests = procurement.requests.some((item) => item.id === id) ? procurement.requests.map((item) => item.id === id ? request : item) : [...procurement.requests, request];
+  saveProcurementState(procurement);
+  closeModal();
+  render();
+  toast("Purchase request saved.");
+}
+
+function openPurchaseOrderModal(orderId = "") {
+  const procurement = getProcurementState();
+  const order = procurement.orders.find((item) => item.id === orderId) || {};
+  openModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>${order.id ? "Edit Purchase Order" : "New Purchase Order"}</h3><button class="ghost-btn" data-action="close-modal">Close</button></div>
+      <div class="modal-body">
+        <form id="purchase-order-form" class="form-grid">
+          <input type="hidden" name="id" value="${escapeAttribute(order.id || "")}">
+          <div class="field"><label>PO Number</label><input name="poNumber" value="${escapeAttribute(order.poNumber || nextPurchaseOrderNumber(procurement))}" required></div>
+          <div class="field"><label>Project</label><select name="projectId">${projectSelectOptions(order.projectId)}</select></div>
+          <div class="field full"><label>Supplier</label><select name="supplierId"><option value="">No supplier selected</option>${procurement.suppliers.map((supplier) => `<option value="${supplier.id}" ${order.supplierId === supplier.id ? "selected" : ""}>${escapeHtml(supplier.name)}</option>`).join("")}</select></div>
+          <div class="field full"><label>Material / Item</label><input name="item" value="${escapeAttribute(order.item || "")}" required></div>
+          <div class="field"><label>Quantity</label><input name="quantity" type="number" min="0" step="0.01" value="${numberInputValue(order.quantity)}" required></div>
+          <div class="field"><label>Unit</label><input name="unit" value="${escapeAttribute(order.unit || "")}" required></div>
+          <div class="field"><label>Unit Cost</label><input name="unitCost" type="number" min="0" step="0.01" value="${numberInputValue(order.unitCost)}" required></div>
+          <div class="field"><label>Expected Delivery</label><input name="expectedDate" type="date" value="${escapeAttribute(order.expectedDate || "")}"></div>
+          <div class="field"><label>Status</label><select name="status">${PROCUREMENT_ORDER_STATUSES.map((item) => `<option ${order.status === item ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+          <div class="field full"><label>Notes</label><textarea name="notes">${escapeHtml(order.notes || "")}</textarea></div>
+        </form>
+      </div>
+      <div class="modal-foot"><button class="ghost-btn" data-action="close-modal">Cancel</button><button class="primary-btn" data-action="save-purchase-order">Save Purchase Order</button></div>
+    </div>
+  `);
+}
+
+function savePurchaseOrder() {
+  const form = document.getElementById("purchase-order-form");
+  if (!form || !form.reportValidity()) return;
+  const formData = new FormData(form);
+  const procurement = getProcurementState();
+  const id = String(formData.get("id") || "") || cryptoId();
+  const existing = procurement.orders.find((item) => item.id === id) || {};
+  const order = {
+    ...existing,
+    id,
+    poNumber: String(formData.get("poNumber") || "").trim(),
+    projectId: String(formData.get("projectId") || ""),
+    supplierId: String(formData.get("supplierId") || ""),
+    item: String(formData.get("item") || "").trim(),
+    quantity: Math.max(0, Number(formData.get("quantity")) || 0),
+    unit: String(formData.get("unit") || "").trim(),
+    unitCost: Math.max(0, Number(formData.get("unitCost")) || 0),
+    expectedDate: String(formData.get("expectedDate") || ""),
+    status: String(formData.get("status") || "Draft"),
+    notes: String(formData.get("notes") || "").trim(),
+    ...enteredByFields(existing)
+  };
+  procurement.orders = procurement.orders.some((item) => item.id === id) ? procurement.orders.map((item) => item.id === id ? order : item) : [...procurement.orders, order];
+  saveProcurementState(procurement);
+  closeModal();
+  render();
+  toast("Purchase order saved.");
+}
+
+function nextPurchaseOrderNumber(procurement) {
+  return `PO-${new Date().getFullYear()}-${String(procurement.orders.length + 1).padStart(3, "0")}`;
+}
+
+function openSupplierModal(supplierId = "") {
+  const supplier = getProcurementState().suppliers.find((item) => item.id === supplierId) || {};
+  openModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>${supplier.id ? "Edit Supplier" : "Add Supplier"}</h3><button class="ghost-btn" data-action="close-modal">Close</button></div>
+      <div class="modal-body">
+        <form id="supplier-form" class="form-grid">
+          <input type="hidden" name="id" value="${escapeAttribute(supplier.id || "")}">
+          <div class="field full"><label>Store / Supplier Name</label><input name="name" value="${escapeAttribute(supplier.name || "")}" required></div>
+          <div class="field"><label>Contact Person</label><input name="contactPerson" value="${escapeAttribute(supplier.contactPerson || "")}"></div>
+          <div class="field"><label>Phone</label><input name="phone" value="${escapeAttribute(supplier.phone || "")}"></div>
+          <div class="field full"><label>Email</label><input name="email" type="email" value="${escapeAttribute(supplier.email || "")}"></div>
+          <div class="field full"><label>Address</label><textarea name="address">${escapeHtml(supplier.address || "")}</textarea></div>
+        </form>
+      </div>
+      <div class="modal-foot"><button class="ghost-btn" data-action="close-modal">Cancel</button><button class="primary-btn" data-action="save-supplier">Save Supplier</button></div>
+    </div>
+  `);
+}
+
+function saveSupplier() {
+  const form = document.getElementById("supplier-form");
+  if (!form || !form.reportValidity()) return;
+  const formData = new FormData(form);
+  const procurement = getProcurementState();
+  const id = String(formData.get("id") || "") || cryptoId();
+  const existing = procurement.suppliers.find((item) => item.id === id) || {};
+  const supplier = {
+    ...existing,
+    id,
+    name: String(formData.get("name") || "").trim(),
+    contactPerson: String(formData.get("contactPerson") || "").trim(),
+    phone: String(formData.get("phone") || "").trim(),
+    email: String(formData.get("email") || "").trim().toLowerCase(),
+    address: String(formData.get("address") || "").trim(),
+    ...enteredByFields(existing)
+  };
+  procurement.suppliers = procurement.suppliers.some((item) => item.id === id) ? procurement.suppliers.map((item) => item.id === id ? supplier : item) : [...procurement.suppliers, supplier];
+  saveProcurementState(procurement);
+  closeModal();
+  render();
+  toast("Supplier saved.");
+}
+
+function updateProcurementStatus(collection, id, status) {
+  const procurement = getProcurementState();
+  procurement[collection] = procurement[collection].map((item) => item.id === id ? { ...item, status, ...enteredByFields(item) } : item);
+  saveProcurementState(procurement);
+  render();
+}
+
+function deleteProcurementRecord(collection, id) {
+  const procurement = getProcurementState();
+  procurement[collection] = procurement[collection].filter((item) => item.id !== id);
+  saveProcurementState(procurement);
+  render();
+  toast("Procurement record deleted.");
+}
+
+function openAccountingBillingModal(billingId = "") {
+  const billing = getAccountingState().billings.find((item) => item.id === billingId) || {};
+  openModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>${billing.id ? "Edit Billing" : "Add Billing"}</h3><button class="ghost-btn" data-action="close-modal">Close</button></div>
+      <div class="modal-body">
+        <form id="accounting-billing-form" class="form-grid">
+          <input type="hidden" name="id" value="${escapeAttribute(billing.id || "")}">
+          <div class="field"><label>Billing Number</label><input name="billingNumber" value="${escapeAttribute(billing.billingNumber || "")}" placeholder="Progress Billing No. 1" required></div>
+          <div class="field"><label>Project</label><select name="projectId">${projectSelectOptions(billing.projectId)}</select></div>
+          <div class="field full"><label>Description</label><input name="description" value="${escapeAttribute(billing.description || "")}" required></div>
+          <div class="field"><label>Amount</label><input name="amount" type="number" min="0" step="0.01" value="${numberInputValue(billing.amount)}" required></div>
+          <div class="field"><label>Due Date</label><input name="dueDate" type="date" value="${escapeAttribute(billing.dueDate || "")}"></div>
+          <div class="field"><label>Status</label><select name="status">${ACCOUNTING_BILLING_STATUSES.map((item) => `<option ${billing.status === item ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+          <div class="field full"><label>Notes</label><textarea name="notes">${escapeHtml(billing.notes || "")}</textarea></div>
+        </form>
+      </div>
+      <div class="modal-foot"><button class="ghost-btn" data-action="close-modal">Cancel</button><button class="primary-btn" data-action="save-accounting-billing">Save Billing</button></div>
+    </div>
+  `);
+}
+
+function saveAccountingBilling() {
+  const form = document.getElementById("accounting-billing-form");
+  if (!form || !form.reportValidity()) return;
+  const formData = new FormData(form);
+  const accounting = getAccountingState();
+  const id = String(formData.get("id") || "") || cryptoId();
+  const existing = accounting.billings.find((item) => item.id === id) || {};
+  const billing = {
+    ...existing,
+    id,
+    billingNumber: String(formData.get("billingNumber") || "").trim(),
+    projectId: String(formData.get("projectId") || ""),
+    description: String(formData.get("description") || "").trim(),
+    amount: Math.max(0, Number(formData.get("amount")) || 0),
+    dueDate: String(formData.get("dueDate") || ""),
+    status: String(formData.get("status") || "Draft"),
+    notes: String(formData.get("notes") || "").trim(),
+    ...enteredByFields(existing)
+  };
+  accounting.billings = accounting.billings.some((item) => item.id === id) ? accounting.billings.map((item) => item.id === id ? billing : item) : [...accounting.billings, billing];
+  saveAccountingState(accounting);
+  closeModal();
+  render();
+  toast("Billing saved.");
+}
+
+function openAccountingExpenseModal(expenseId = "") {
+  const expense = getAccountingState().expenses.find((item) => item.id === expenseId) || {};
+  openModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>${expense.id ? "Edit Expense" : "Add Expense"}</h3><button class="ghost-btn" data-action="close-modal">Close</button></div>
+      <div class="modal-body">
+        <form id="accounting-expense-form" class="form-grid">
+          <input type="hidden" name="id" value="${escapeAttribute(expense.id || "")}">
+          <div class="field"><label>Project</label><select name="projectId">${projectSelectOptions(expense.projectId)}</select></div>
+          <div class="field"><label>Date</label><input name="date" type="date" value="${escapeAttribute(expense.date || new Date().toISOString().slice(0, 10))}"></div>
+          <div class="field"><label>Category</label><input name="category" value="${escapeAttribute(expense.category || "")}" placeholder="Materials, Labor, Equipment" required></div>
+          <div class="field"><label>Payee</label><input name="payee" value="${escapeAttribute(expense.payee || "")}"></div>
+          <div class="field full"><label>Description</label><input name="description" value="${escapeAttribute(expense.description || "")}" required></div>
+          <div class="field"><label>Amount</label><input name="amount" type="number" min="0" step="0.01" value="${numberInputValue(expense.amount)}" required></div>
+          <div class="field"><label>Payment Status</label><select name="status">${ACCOUNTING_EXPENSE_STATUSES.map((item) => `<option ${expense.status === item ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+          <div class="field full"><label>Notes</label><textarea name="notes">${escapeHtml(expense.notes || "")}</textarea></div>
+        </form>
+      </div>
+      <div class="modal-foot"><button class="ghost-btn" data-action="close-modal">Cancel</button><button class="primary-btn" data-action="save-accounting-expense">Save Expense</button></div>
+    </div>
+  `);
+}
+
+function saveAccountingExpense() {
+  const form = document.getElementById("accounting-expense-form");
+  if (!form || !form.reportValidity()) return;
+  const formData = new FormData(form);
+  const accounting = getAccountingState();
+  const id = String(formData.get("id") || "") || cryptoId();
+  const existing = accounting.expenses.find((item) => item.id === id) || {};
+  const expense = {
+    ...existing,
+    id,
+    projectId: String(formData.get("projectId") || ""),
+    date: String(formData.get("date") || ""),
+    category: String(formData.get("category") || "").trim(),
+    payee: String(formData.get("payee") || "").trim(),
+    description: String(formData.get("description") || "").trim(),
+    amount: Math.max(0, Number(formData.get("amount")) || 0),
+    status: String(formData.get("status") || "Unpaid"),
+    notes: String(formData.get("notes") || "").trim(),
+    ...enteredByFields(existing)
+  };
+  accounting.expenses = accounting.expenses.some((item) => item.id === id) ? accounting.expenses.map((item) => item.id === id ? expense : item) : [...accounting.expenses, expense];
+  saveAccountingState(accounting);
+  closeModal();
+  render();
+  toast("Expense saved.");
+}
+
+function updateAccountingStatus(collection, id, status) {
+  const accounting = getAccountingState();
+  accounting[collection] = accounting[collection].map((item) => item.id === id ? { ...item, status, ...enteredByFields(item) } : item);
+  saveAccountingState(accounting);
+  render();
+}
+
+function deleteAccountingRecord(collection, id) {
+  const accounting = getAccountingState();
+  accounting[collection] = accounting[collection].filter((item) => item.id !== id);
+  saveAccountingState(accounting);
+  render();
+  toast("Accounting record deleted.");
+}
+
 function openAccountModal() {
   const account = getSessionAccount();
   const subscription = getSubscription();
@@ -5950,7 +6735,7 @@ function renderOwnerAccountTools(owner) {
           <input id="invite-email" name="email" type="email" placeholder="name@example.com">
         </div>
         <div class="access-grid">
-          ${ACCESS_KEYS.map((item) => `
+          ${ASSIGNABLE_ACCESS_KEYS.map((item) => `
             <label class="checkline">
               <input type="checkbox" name="${item.key}" ${item.key === "engineering" ? "checked" : ""}>
               ${item.label}
@@ -6002,7 +6787,7 @@ function renderAccountRow(account, owner) {
         <strong>${escapeHtml(account.name)} ${account.role === "owner" ? "(Owner)" : ""}</strong>
         <p class="hint">${escapeHtml(account.email)} | Created ${formatDate(account.createdAt)}</p>
         <div class="access-grid">
-          ${ACCESS_KEYS.map((item) => `
+          ${ASSIGNABLE_ACCESS_KEYS.map((item) => `
             <label class="checkline">
               <input type="checkbox" data-access="${item.key}" data-account="${account.id}" ${hasAccess(account, item.key) ? "checked" : ""} ${account.id === owner.id ? "disabled" : ""}>
               ${item.label}
@@ -6015,14 +6800,16 @@ function renderAccountRow(account, owner) {
   `;
 }
 
-function createInvite() {
+async function createInvite() {
   const form = document.getElementById("invite-form");
+  if (!form || !form.reportValidity()) return;
   const formData = new FormData(form);
   const account = getSessionAccount();
   const access = {};
-  ACCESS_KEYS.forEach((item) => {
+  ASSIGNABLE_ACCESS_KEYS.forEach((item) => {
     access[item.key] = formData.get(item.key) === "on";
   });
+  access.administrative = false;
   const invite = {
     token: cryptoId(),
     email: String(formData.get("email")).trim().toLowerCase(),
@@ -6031,6 +6818,18 @@ function createInvite() {
     createdAt: new Date().toISOString(),
     acceptedBy: null
   };
+  if (sessionToken()) {
+    try {
+      const response = await apiRequest("/invites/create", { email: invite.email, access });
+      saveInvites([response.invite, ...getInvites().filter((item) => item.token !== response.invite.token)]);
+      render();
+      toast("Invitation link created.");
+      return;
+    } catch (error) {
+      toast(error.message || "Invitation could not be created.");
+      return;
+    }
+  }
   const invites = getInvites();
   invites.push(invite);
   saveInvites(invites);
@@ -6038,20 +6837,47 @@ function createInvite() {
   toast("Invitation link created.");
 }
 
-function updateAccess(accountId) {
+async function updateAccess(accountId) {
   const accounts = getAccounts();
   const account = accounts.find((item) => item.id === accountId);
   if (!account || account.role === "owner") return;
   const access = {};
-  ACCESS_KEYS.forEach((item) => {
+  ASSIGNABLE_ACCESS_KEYS.forEach((item) => {
     const checkbox = document.querySelector(`input[data-account="${accountId}"][data-access="${item.key}"]`);
     access[item.key] = Boolean(checkbox && checkbox.checked);
   });
+  access.administrative = false;
+  if (sessionToken()) {
+    try {
+      const response = await apiRequest("/accounts/access", { accountId, access });
+      savePublicAccount(response.account);
+      await refreshOwnerAccounts(false);
+      toast("Access updated.");
+      return;
+    } catch (error) {
+      toast(error.message || "Access could not be updated.");
+      return;
+    }
+  }
   account.access = access;
   saveAccounts(accounts);
   toast("Access updated.");
   render();
   openAccountModal();
+}
+
+async function refreshOwnerAccounts(showNotice = true) {
+  const account = getSessionAccount();
+  if (!account || account.role !== "owner" || !sessionToken()) return;
+  try {
+    const response = await apiRequest("/accounts", null, { method: "GET", timeoutMs: 10000 });
+    saveAccounts(Array.isArray(response.accounts) ? response.accounts : []);
+    if (Array.isArray(response.invites)) saveInvites(response.invites);
+    render();
+    if (showNotice) toast("Accounts refreshed.");
+  } catch (error) {
+    if (showNotice) toast(error.message || "Accounts could not be refreshed.");
+  }
 }
 
 function cancelSubscription() {
@@ -6414,6 +7240,7 @@ function statusClass(status) {
 }
 
 function hasAccess(account, key) {
+  if (key === "administrative") return account.role === "owner";
   return account.role === "owner" || Boolean(account.access && account.access[key]);
 }
 

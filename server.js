@@ -30,6 +30,7 @@ const SUPABASE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
 const IS_PRODUCTION = process.env.NODE_ENV === "production" || Boolean(process.env.RENDER);
 
 const ACCESS_KEYS = ["engineering", "procurement", "accounting", "administrative"];
+const ASSIGNABLE_ACCESS_KEYS = ACCESS_KEYS.filter((key) => key !== "administrative");
 const PLAN_TYPES = ["Architectural", "Structural", "Plumbing", "Electrical", "Mechanical", "Electronics", "Civil", "Fire Protection", "Other"];
 const MATERIAL_TAKEOFF_TERMS = [
   { description: "Concrete", category: "Structural", planTypes: ["Structural", "Civil", "Architectural"], terms: ["concrete", "conc.", "ready mix", "pcc", "reinforced concrete", "r.c.", "rc concrete", "f'c", "fc=", "class a concrete", "lean concrete"] },
@@ -116,8 +117,13 @@ const APP_DATA_KEYS = [
   "estimateV2Draft",
   "estimateTemplates",
   "materialPrices",
+  "procurement",
+  "accounting",
   "subscription"
 ];
+const ENGINEERING_APP_DATA_KEYS = ["projects", "swa", "estimateDraft", "estimateV2Draft", "estimateTemplates", "materialPrices"];
+const PROCUREMENT_APP_DATA_KEYS = ["projects", "materialPrices", "procurement"];
+const ACCOUNTING_APP_DATA_KEYS = ["projects", "swa", "accounting"];
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -500,6 +506,56 @@ function allAccess() {
 
 function noAccess() {
   return ACCESS_KEYS.reduce((acc, key) => ({ ...acc, [key]: false }), {});
+}
+
+function memberAccess(access) {
+  const normalized = noAccess();
+  ASSIGNABLE_ACCESS_KEYS.forEach((key) => {
+    normalized[key] = Boolean(access && access[key]);
+  });
+  normalized.administrative = false;
+  return normalized;
+}
+
+function workspaceAccountFor(account, store) {
+  if (!account || account.role === "owner" || !account.invitedBy) return account;
+  return store.accounts.find((item) => item.id === account.invitedBy && item.role === "owner") || account;
+}
+
+function appDataReadKeysForAccount(account) {
+  if (!account || account.role === "owner") return APP_DATA_KEYS;
+  const keys = new Set();
+  if (account.access && account.access.engineering) ENGINEERING_APP_DATA_KEYS.forEach((key) => keys.add(key));
+  if (account.access && account.access.procurement) PROCUREMENT_APP_DATA_KEYS.forEach((key) => keys.add(key));
+  if (account.access && account.access.accounting) ACCOUNTING_APP_DATA_KEYS.forEach((key) => keys.add(key));
+  return [...keys];
+}
+
+function appDataWriteKeysForAccount(account) {
+  if (!account || account.role === "owner") return APP_DATA_KEYS;
+  const keys = new Set();
+  if (account.access && account.access.engineering) ENGINEERING_APP_DATA_KEYS.forEach((key) => keys.add(key));
+  if (account.access && account.access.procurement) keys.add("procurement");
+  if (account.access && account.access.accounting) keys.add("accounting");
+  return [...keys];
+}
+
+function filterAppDataForAccount(data, account) {
+  const source = data && typeof data === "object" ? data : {};
+  return appDataReadKeysForAccount(account).reduce((result, key) => {
+    if (Object.prototype.hasOwnProperty.call(source, key)) result[key] = source[key];
+    return result;
+  }, { savedAt: source.savedAt || new Date().toISOString() });
+}
+
+function mergeAppDataForAccount(existingData, submittedData, account) {
+  const existing = normalizeAccountAppData(existingData);
+  const submitted = normalizeAccountAppData(submittedData);
+  const merged = { ...existing, savedAt: new Date().toISOString() };
+  appDataWriteKeysForAccount(account).forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(submitted, key)) merged[key] = submitted[key];
+  });
+  return merged;
 }
 
 function publicAccount(account) {
@@ -1039,7 +1095,7 @@ function addAccountToStore(store, signup) {
     passwordSalt: signup.passwordSalt,
     gmailLinked: signup.gmailLinked,
     role: isInvitedAccount ? "member" : "owner",
-    access: isInvitedAccount ? invite.access : allAccess(),
+    access: isInvitedAccount ? memberAccess(invite.access) : allAccess(),
     plan: signup.plan || "free",
     invitedBy: invite ? invite.createdBy : null,
     createdAt: now,
@@ -1103,7 +1159,52 @@ async function listAccounts(req, res) {
   if (!owner) return;
   audit(store, "accounts_listed", { accountId: owner.id, meta: requestMeta(req) });
   await writeStore(store);
-  jsonResponse(req, res, 200, { ok: true, accounts: store.accounts.map(publicAccount) });
+  jsonResponse(req, res, 200, {
+    ok: true,
+    accounts: store.accounts.filter((account) => account.id === owner.id || account.invitedBy === owner.id).map(publicAccount),
+    invites: store.invites.filter((invite) => invite.createdBy === owner.id)
+  });
+}
+
+async function updateAccountAccess(req, res) {
+  const store = await readStore();
+  const owner = requireOwner(req, res, store);
+  if (!owner) return;
+  const body = await readJsonBody(req);
+  const accountId = String(body.accountId || "").trim();
+  const account = store.accounts.find((item) => item.id === accountId && item.invitedBy === owner.id);
+  if (!account || account.role === "owner") {
+    return jsonResponse(req, res, 404, { ok: false, error: "Invited account was not found." });
+  }
+  account.access = memberAccess(body.access);
+  account.updatedAt = new Date().toISOString();
+  audit(store, "account_access_updated", { accountId, ownerId: owner.id, access: account.access, meta: requestMeta(req) });
+  await writeStore(store);
+  jsonResponse(req, res, 200, { ok: true, account: publicAccount(account) });
+}
+
+async function createOwnerInvite(req, res) {
+  const store = await readStore();
+  const owner = requireOwner(req, res, store);
+  if (!owner) return;
+  const body = await readJsonBody(req);
+  const email = normalizeEmail(body.email);
+  if (email && !validateEmail(email)) return jsonResponse(req, res, 400, { ok: false, error: "A valid invite email is required." });
+  if (email && store.accounts.some((account) => account.email === email)) {
+    return jsonResponse(req, res, 409, { ok: false, error: "An account already exists with that email." });
+  }
+  const invite = {
+    token: randomId("invite"),
+    email,
+    access: memberAccess(body.access),
+    createdBy: owner.id,
+    createdAt: new Date().toISOString(),
+    acceptedBy: null
+  };
+  store.invites.push(invite);
+  audit(store, "invite_created", { ownerId: owner.id, email, access: invite.access, meta: requestMeta(req) });
+  await writeStore(store);
+  jsonResponse(req, res, 201, { ok: true, invite });
 }
 
 async function loadAccountAppData(req, res) {
@@ -1111,14 +1212,17 @@ async function loadAccountAppData(req, res) {
   const account = sessionAccountFromRequest(req, store);
   if (!account) return jsonResponse(req, res, 401, { ok: false, error: "Sign in is required." });
 
-  const record = await readAccountAppData(account.id, store);
-  audit(store, "app_data_loaded", { accountId: account.id, hasData: Boolean(record), meta: requestMeta(req) });
+  const workspaceAccount = workspaceAccountFor(account, store);
+  const record = await readAccountAppData(workspaceAccount.id, store);
+  audit(store, "app_data_loaded", { accountId: account.id, workspaceAccountId: workspaceAccount.id, hasData: Boolean(record), meta: requestMeta(req) });
   await writeStore(store);
   jsonResponse(req, res, 200, {
     ok: true,
     empty: !record,
-    data: record ? record.data : {},
-    updatedAt: record ? record.updatedAt : null
+    data: record ? filterAppDataForAccount(record.data, account) : {},
+    updatedAt: record ? record.updatedAt : null,
+    account: publicAccount(account),
+    workspaceAccountId: workspaceAccount.id
   });
 }
 
@@ -1128,12 +1232,14 @@ async function saveAccountAppData(req, res) {
   if (!account) return jsonResponse(req, res, 401, { ok: false, error: "Sign in is required." });
 
   const body = await readJsonBody(req, MAX_APP_DATA_BODY_BYTES);
-  const data = normalizeAccountAppData(body.data);
+  const workspaceAccount = workspaceAccountFor(account, store);
+  const existing = await readAccountAppData(workspaceAccount.id, store);
+  const data = mergeAppDataForAccount(existing && existing.data, body.data, account);
   const updatedAt = new Date().toISOString();
-  await writeAccountAppData(account, data, updatedAt, store);
-  audit(store, "app_data_saved", { accountId: account.id, keys: Object.keys(data), meta: requestMeta(req) });
+  await writeAccountAppData(workspaceAccount, account, data, updatedAt, store);
+  audit(store, "app_data_saved", { accountId: account.id, workspaceAccountId: workspaceAccount.id, keys: appDataWriteKeysForAccount(account), meta: requestMeta(req) });
   await writeStore(store);
-  jsonResponse(req, res, 200, { ok: true, updatedAt });
+  jsonResponse(req, res, 200, { ok: true, updatedAt, account: publicAccount(account), workspaceAccountId: workspaceAccount.id });
 }
 
 async function readAccountAppData(accountId, store) {
@@ -1154,8 +1260,8 @@ async function readAccountAppData(accountId, store) {
   return record ? { data: normalizeAccountAppData(record.data), updatedAt: record.updatedAt || null } : null;
 }
 
-async function writeAccountAppData(account, data, updatedAt, store) {
-  const accountId = account && account.id;
+async function writeAccountAppData(workspaceAccount, savedByAccount, data, updatedAt, store) {
+  const accountId = workspaceAccount && workspaceAccount.id;
   if (SUPABASE_ENABLED) {
     try {
       await supabaseRequest("oversee_app_data", {
@@ -1168,7 +1274,7 @@ async function writeAccountAppData(account, data, updatedAt, store) {
         }],
         prefer: "resolution=merge-duplicates,return=minimal"
       });
-      await writeGatheredAppData(account, data, updatedAt);
+      await writeGatheredAppData(workspaceAccount, savedByAccount, data, updatedAt);
       return;
     } catch (error) {
       throw appDataStorageError(error);
@@ -1178,8 +1284,11 @@ async function writeAccountAppData(account, data, updatedAt, store) {
   const records = Array.isArray(store.appData) ? store.appData : [];
   const record = {
     accountId,
-    accountEmail: account && account.email || null,
-    accountName: account && account.name || null,
+    accountEmail: workspaceAccount && workspaceAccount.email || null,
+    accountName: workspaceAccount && workspaceAccount.name || null,
+    savedByAccountId: savedByAccount && savedByAccount.id || null,
+    savedByEmail: savedByAccount && savedByAccount.email || null,
+    savedByName: savedByAccount && savedByAccount.name || null,
     data,
     dataSummary: summarizeAccountAppData(data),
     updatedAt
@@ -1189,19 +1298,19 @@ async function writeAccountAppData(account, data, updatedAt, store) {
     : [...records, record];
 }
 
-async function writeGatheredAppData(account, data, updatedAt) {
-  if (!SUPABASE_ENABLED || !account || !account.id) return;
+async function writeGatheredAppData(workspaceAccount, savedByAccount, data, updatedAt) {
+  if (!SUPABASE_ENABLED || !workspaceAccount || !workspaceAccount.id || !savedByAccount) return;
   try {
     await supabaseRequest("oversee_gathered_app_data", {
       method: "POST",
       query: "?on_conflict=account_id",
       body: [{
-        account_id: account.id,
-        account_email: account.email || null,
-        account_name: account.name || null,
-        saved_by_account_id: account.id,
-        saved_by_email: account.email || null,
-        saved_by_name: account.name || null,
+        account_id: workspaceAccount.id,
+        account_email: workspaceAccount.email || null,
+        account_name: workspaceAccount.name || null,
+        saved_by_account_id: savedByAccount.id,
+        saved_by_email: savedByAccount.email || null,
+        saved_by_name: savedByAccount.name || null,
         data,
         data_summary: summarizeAccountAppData(data),
         saved_at: updatedAt,
@@ -1227,6 +1336,8 @@ function summarizeAccountAppData(data) {
   const swa = source.swa && typeof source.swa === "object" ? source.swa : {};
   const estimateV2Draft = source.estimateV2Draft && typeof source.estimateV2Draft === "object" ? source.estimateV2Draft : {};
   const takeoffRows = Array.isArray(estimateV2Draft.takeoffRows) ? estimateV2Draft.takeoffRows : [];
+  const procurement = source.procurement && typeof source.procurement === "object" ? source.procurement : {};
+  const accounting = source.accounting && typeof source.accounting === "object" ? source.accounting : {};
   const swaSheets = Object.values(swa).reduce((total, projectSwa) => {
     if (!projectSwa || typeof projectSwa !== "object") return total;
     if (Array.isArray(projectSwa.sheets)) return total + projectSwa.sheets.length;
@@ -1241,6 +1352,11 @@ function summarizeAccountAppData(data) {
     estimateTemplateCount: estimateTemplates.length,
     materialStoreCount: materialPrices.length,
     estimateV2TakeoffRowCount: takeoffRows.length,
+    purchaseRequestCount: Array.isArray(procurement.requests) ? procurement.requests.length : 0,
+    purchaseOrderCount: Array.isArray(procurement.orders) ? procurement.orders.length : 0,
+    supplierCount: Array.isArray(procurement.suppliers) ? procurement.suppliers.length : 0,
+    billingCount: Array.isArray(accounting.billings) ? accounting.billings.length : 0,
+    expenseCount: Array.isArray(accounting.expenses) ? accounting.expenses.length : 0,
     savedAt: String(source.savedAt || new Date().toISOString())
   };
 }
@@ -1771,6 +1887,12 @@ async function routeApi(req, res, url) {
     }
     if (req.method === "GET" && url.pathname === "/api/accounts") {
       return await listAccounts(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/accounts/access") {
+      return await updateAccountAccess(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/invites/create") {
+      return await createOwnerInvite(req, res);
     }
     if (req.method === "POST" && url.pathname === "/api/app-data/load") {
       return await loadAccountAppData(req, res);
