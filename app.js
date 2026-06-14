@@ -1358,7 +1358,7 @@ function renderProcurementView(account) {
   return `
     <section>
       ${renderModuleToolbar("procurement", state.procurementView, [
-        ["overview", "Overview"],
+        ["overview", "Dashboard"],
         ["requests", "Purchase Requests"],
         ["orders", "Purchase Orders"],
         ["suppliers", "Suppliers"]
@@ -1381,22 +1381,57 @@ function renderProcurementOverview(procurement) {
   const activeOrders = procurement.orders.filter((item) => !["Received", "Cancelled"].includes(item.status));
   const committed = procurement.orders.filter((item) => item.status !== "Cancelled").reduce((total, item) => total + procurementOrderTotal(item), 0);
   const received = procurement.orders.filter((item) => item.status === "Received").reduce((total, item) => total + procurementOrderTotal(item), 0);
+  const overdueOrders = procurement.orders.filter((item) => isOverdueProcurementOrder(item));
+  const year = analyticsLatestYear(procurement.orders, ["expectedDate", "createdAt"]);
+  const monthlySpend = analyticsMonthlySeries(procurement.orders.filter((item) => item.status !== "Cancelled"), ["expectedDate", "createdAt"], procurementOrderTotal, year);
+  const supplierSpend = analyticsRankedTotals(
+    procurement.orders.filter((item) => item.status !== "Cancelled"),
+    (item) => supplierName(procurement, item.supplierId),
+    procurementOrderTotal
+  );
+  const orderStatuses = analyticsStatusCounts(procurement.orders, PROCUREMENT_ORDER_STATUSES);
+  const requestStatuses = analyticsStatusCounts(procurement.requests, PROCUREMENT_REQUEST_STATUSES);
+  const upcoming = procurement.orders
+    .filter((item) => item.expectedDate && !["Received", "Cancelled"].includes(item.status))
+    .sort((first, second) => String(first.expectedDate).localeCompare(String(second.expectedDate)))
+    .slice(0, 6);
   return `
-    <div class="visual-head">
-      <div><span class="eyebrow">Procurement</span><h2>Procurement Overview</h2><p class="hint">Purchase requests, supplier records, and purchase-order delivery tracking.</p></div>
+    <div class="visual-head analytics-title-row">
+      <div><span class="eyebrow">Procurement Intelligence</span><h2>Procurement Dashboard</h2><p class="hint">Purchasing activity, supplier concentration, and delivery performance.</p></div>
       <button class="primary-btn" data-action="open-procurement-request">New Request</button>
     </div>
-    <div class="operations-kpi-grid">
-      ${renderOperationsKpi("Open Requests", activeRequests.length)}
-      ${renderOperationsKpi("Active Orders", activeOrders.length)}
-      ${renderOperationsKpi("Committed", formatCurrencyCompact(committed), "money")}
-      ${renderOperationsKpi("Received Value", formatCurrencyCompact(received), "good")}
-      ${renderOperationsKpi("Suppliers", procurement.suppliers.length)}
+    <div class="analytics-kpi-grid">
+      ${renderAnalyticsKpi("Open Requests", activeRequests.length, "Awaiting procurement action")}
+      ${renderAnalyticsKpi("Active Orders", activeOrders.length, `${overdueOrders.length} overdue`, overdueOrders.length ? "risk" : "good")}
+      ${renderAnalyticsKpi("Committed Spend", formatCurrencyCompact(committed), "All non-cancelled POs", "money")}
+      ${renderAnalyticsKpi("Received Value", formatCurrencyCompact(received), `${formatAnalyticsPercent(safeDivide(received, committed))} of committed`, "good")}
+      ${renderAnalyticsKpi("Suppliers", procurement.suppliers.length, "Registered vendors")}
     </div>
-    <section class="operations-panel">
-      <div class="operations-panel-head"><div><span class="eyebrow">Recent</span><h3>Purchase Orders</h3></div><button class="secondary-btn" data-action="procurement-tab" data-view="orders">View Orders</button></div>
-      ${renderPurchaseOrderTable(procurement.orders.slice(-6).reverse(), procurement)}
-    </section>
+    <div class="analytics-dashboard-grid">
+      <section class="analytics-panel analytics-panel-wide">
+        ${renderAnalyticsPanelHead("Purchase Spend", `Monthly PO value | ${year}`)}
+        ${renderAnalyticsVerticalBars(monthlySpend, { currency: true })}
+      </section>
+      <section class="analytics-panel">
+        ${renderAnalyticsPanelHead("Order Status", `${procurement.orders.length} purchase orders`)}
+        ${renderAnalyticsDonut(orderStatuses, procurement.orders.length)}
+      </section>
+      <section class="analytics-panel">
+        ${renderAnalyticsPanelHead("Spend by Supplier", "Highest committed suppliers")}
+        ${renderAnalyticsRankedBars(supplierSpend, { currency: true })}
+      </section>
+      <section class="analytics-panel">
+        ${renderAnalyticsPanelHead("Request Pipeline", `${procurement.requests.length} total requests`)}
+        ${renderAnalyticsRankedBars(requestStatuses)}
+      </section>
+      <section class="analytics-panel analytics-panel-wide">
+        <div class="analytics-panel-head">
+          <div><span class="eyebrow">Delivery Watch</span><h3>Upcoming & Overdue Orders</h3></div>
+          <button class="secondary-btn compact-btn" data-action="procurement-tab" data-view="orders">View Orders</button>
+        </div>
+        ${renderProcurementDeliveryWatch(upcoming)}
+      </section>
+    </div>
   `;
 }
 
@@ -1488,7 +1523,7 @@ function renderAccountingView(account) {
   return `
     <section>
       ${renderModuleToolbar("accounting", state.accountingView, [
-        ["overview", "Overview"],
+        ["overview", "Sales Dashboard"],
         ["billings", "Billings"],
         ["expenses", "Expenses"]
       ])}
@@ -1509,22 +1544,50 @@ function renderAccountingOverview(accounting) {
   const billed = accounting.billings.reduce((total, item) => total + (Number(item.amount) || 0), 0);
   const collected = accounting.billings.filter((item) => item.status === "Paid").reduce((total, item) => total + (Number(item.amount) || 0), 0);
   const expenses = accounting.expenses.reduce((total, item) => total + (Number(item.amount) || 0), 0);
+  const outstanding = Math.max(0, billed - collected);
+  const year = analyticsLatestYear([...accounting.billings, ...accounting.expenses], ["dueDate", "date", "createdAt"]);
+  const monthlyBillings = analyticsMonthlySeries(accounting.billings, ["dueDate", "createdAt"], (item) => Number(item.amount) || 0, year);
+  const monthlyCollections = analyticsMonthlySeries(accounting.billings.filter((item) => item.status === "Paid"), ["dueDate", "createdAt"], (item) => Number(item.amount) || 0, year);
+  const monthlyExpenses = analyticsMonthlySeries(accounting.expenses, ["date", "createdAt"], (item) => Number(item.amount) || 0, year);
+  const projectRevenue = analyticsRankedTotals(accounting.billings, (item) => projectName(item.projectId), (item) => Number(item.amount) || 0);
+  const billingStatuses = analyticsStatusCounts(accounting.billings, ACCOUNTING_BILLING_STATUSES);
   return `
-    <div class="visual-head">
-      <div><span class="eyebrow">Accounting</span><h2>Financial Overview</h2><p class="hint">Track progress billings, collections, expenses, and contract balances.</p></div>
+    <div class="visual-head analytics-title-row">
+      <div><span class="eyebrow">Commercial Analysis</span><h2>Sales Dashboard</h2><p class="hint">Progress billing revenue, collections, project performance, and cash movement.</p></div>
       <div class="operations-actions"><button class="secondary-btn" data-action="open-accounting-expense">Add Expense</button><button class="primary-btn" data-action="open-accounting-billing">Add Billing</button></div>
     </div>
-    <div class="operations-kpi-grid">
-      ${renderOperationsKpi("Contract Amount", formatCurrencyCompact(contractTotal), "money")}
-      ${renderOperationsKpi("Total Billed", formatCurrencyCompact(billed), "money")}
-      ${renderOperationsKpi("Collected", formatCurrencyCompact(collected), "good")}
-      ${renderOperationsKpi("Expenses", formatCurrencyCompact(expenses), "risk")}
-      ${renderOperationsKpi("Net Cash", formatCurrencyCompact(collected - expenses), collected - expenses >= 0 ? "good" : "risk")}
+    <div class="analytics-kpi-grid">
+      ${renderAnalyticsKpi("Contract Portfolio", formatCurrencyCompact(contractTotal), `${getProjects().length} projects`, "money")}
+      ${renderAnalyticsKpi("Total Billed", formatCurrencyCompact(billed), `${accounting.billings.length} billings`, "money")}
+      ${renderAnalyticsKpi("Collected", formatCurrencyCompact(collected), `${formatAnalyticsPercent(safeDivide(collected, billed))} collection rate`, "good")}
+      ${renderAnalyticsKpi("Outstanding", formatCurrencyCompact(outstanding), "Billed but not yet paid", outstanding ? "risk" : "good")}
+      ${renderAnalyticsKpi("Net Cash", formatCurrencyCompact(collected - expenses), `${formatCurrencyCompact(expenses)} expenses`, collected - expenses >= 0 ? "good" : "risk")}
     </div>
-    <section class="operations-panel">
-      <div class="operations-panel-head"><div><span class="eyebrow">Recent</span><h3>Billings</h3></div><button class="secondary-btn" data-action="accounting-tab" data-view="billings">View Billings</button></div>
-      ${renderAccountingBillingTable(accounting.billings.slice(-6).reverse())}
-    </section>
+    <div class="analytics-dashboard-grid">
+      <section class="analytics-panel analytics-panel-wide">
+        ${renderAnalyticsPanelHead("Revenue Evolution", `Monthly billings and collections | ${year}`)}
+        ${renderAnalyticsGroupedBars(monthlyBillings, monthlyCollections, "Billed", "Collected")}
+      </section>
+      <section class="analytics-panel">
+        ${renderAnalyticsPanelHead("Billing Status", `${accounting.billings.length} billing records`)}
+        ${renderAnalyticsDonut(billingStatuses, accounting.billings.length)}
+      </section>
+      <section class="analytics-panel">
+        ${renderAnalyticsPanelHead("Revenue by Project", "Highest billed projects")}
+        ${renderAnalyticsRankedBars(projectRevenue, { currency: true })}
+      </section>
+      <section class="analytics-panel">
+        ${renderAnalyticsPanelHead("Expense Movement", `Monthly expenses | ${year}`)}
+        ${renderAnalyticsVerticalBars(monthlyExpenses, { currency: true, risk: true })}
+      </section>
+      <section class="analytics-panel analytics-panel-wide">
+        <div class="analytics-panel-head">
+          <div><span class="eyebrow">Recent Activity</span><h3>Latest Billings</h3></div>
+          <button class="secondary-btn compact-btn" data-action="accounting-tab" data-view="billings">View Billings</button>
+        </div>
+        ${renderSalesBillingWatch(accounting.billings.slice(-6).reverse())}
+      </section>
+    </div>
   `;
 }
 
@@ -1626,6 +1689,199 @@ function renderAdministrativeWorkspace() {
 
 function renderOperationsKpi(label, value, className = "") {
   return `<div class="operations-kpi ${className}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></div>`;
+}
+
+function renderAnalyticsKpi(label, value, detail, className = "") {
+  return `
+    <article class="analytics-kpi ${className}">
+      <span>${escapeHtml(label)}</span>
+      <strong title="${escapeAttribute(String(value))}">${escapeHtml(String(value))}</strong>
+      <small>${escapeHtml(detail)}</small>
+    </article>
+  `;
+}
+
+function renderAnalyticsPanelHead(title, detail) {
+  return `
+    <div class="analytics-panel-head">
+      <div><span class="eyebrow">${escapeHtml(detail)}</span><h3>${escapeHtml(title)}</h3></div>
+    </div>
+  `;
+}
+
+function analyticsRecordDate(record, dateKeys) {
+  const value = dateKeys.map((key) => record && record[key]).find(Boolean);
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function analyticsLatestYear(records, dateKeys) {
+  const years = records
+    .map((record) => analyticsRecordDate(record, dateKeys))
+    .filter(Boolean)
+    .map((date) => date.getFullYear());
+  return years.length ? Math.max(...years) : new Date().getFullYear();
+}
+
+function analyticsMonthlySeries(records, dateKeys, valueForRecord, year) {
+  const monthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const values = Array(12).fill(0);
+  records.forEach((record) => {
+    const date = analyticsRecordDate(record, dateKeys);
+    if (!date || date.getFullYear() !== year) return;
+    values[date.getMonth()] += Number(valueForRecord(record)) || 0;
+  });
+  return monthLabels.map((label, index) => ({ label, value: values[index] }));
+}
+
+function analyticsRankedTotals(records, labelForRecord, valueForRecord) {
+  const totals = new Map();
+  records.forEach((record) => {
+    const label = String(labelForRecord(record) || "Unassigned").trim() || "Unassigned";
+    totals.set(label, (totals.get(label) || 0) + (Number(valueForRecord(record)) || 0));
+  });
+  return [...totals.entries()]
+    .map(([label, value]) => ({ label, value }))
+    .filter((item) => item.value > 0)
+    .sort((first, second) => second.value - first.value);
+}
+
+function analyticsStatusCounts(records, statuses) {
+  return statuses.map((status) => ({
+    label: status,
+    value: records.filter((record) => record.status === status).length,
+    color: analyticsStatusColor(status)
+  })).filter((item) => item.value > 0);
+}
+
+function analyticsStatusColor(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (/(received|paid|approved|completed)/.test(normalized)) return "#31d982";
+  if (/(cancelled|rejected|overdue|unpaid)/.test(normalized)) return "#ff3155";
+  if (/(pending|sent|submitted|partially)/.test(normalized)) return "#ffad42";
+  return "#48a8ff";
+}
+
+function renderAnalyticsVerticalBars(series, options = {}) {
+  const max = Math.max(0, ...series.map((item) => item.value));
+  if (!max) return `<div class="analytics-empty">No dated records are available for this chart.</div>`;
+  return `
+    <div class="analytics-vertical-chart ${options.risk ? "risk" : ""}">
+      ${series.map((item) => {
+        const height = max ? Math.max(item.value ? 4 : 0, (item.value / max) * 100) : 0;
+        const value = options.currency ? formatCurrencyCompact(item.value) : formatInteger(item.value);
+        return `
+          <div class="analytics-column" title="${escapeAttribute(`${item.label}: ${value}`)}">
+            <span class="analytics-column-value">${item.value ? escapeHtml(value) : ""}</span>
+            <span class="analytics-column-bar" style="--bar-height:${height.toFixed(2)}%"></span>
+            <small>${escapeHtml(item.label)}</small>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderAnalyticsGroupedBars(firstSeries, secondSeries, firstLabel, secondLabel) {
+  const max = Math.max(0, ...firstSeries.map((item) => item.value), ...secondSeries.map((item) => item.value));
+  if (!max) return `<div class="analytics-empty">No dated billing records are available for this chart.</div>`;
+  return `
+    <div class="analytics-chart-legend"><span><i class="billed"></i>${escapeHtml(firstLabel)}</span><span><i class="collected"></i>${escapeHtml(secondLabel)}</span></div>
+    <div class="analytics-grouped-chart">
+      ${firstSeries.map((item, index) => {
+        const second = secondSeries[index] || { value: 0 };
+        const firstHeight = Math.max(item.value ? 4 : 0, safeDivide(item.value, max) * 100);
+        const secondHeight = Math.max(second.value ? 4 : 0, safeDivide(second.value, max) * 100);
+        return `
+          <div class="analytics-group">
+            <div class="analytics-group-bars">
+              <span class="analytics-group-bar billed" style="--bar-height:${firstHeight.toFixed(2)}%" title="${escapeAttribute(`${firstLabel}: ${formatCurrency(item.value)}`)}"></span>
+              <span class="analytics-group-bar collected" style="--bar-height:${secondHeight.toFixed(2)}%" title="${escapeAttribute(`${secondLabel}: ${formatCurrency(second.value)}`)}"></span>
+            </div>
+            <small>${escapeHtml(item.label)}</small>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderAnalyticsRankedBars(rows, options = {}) {
+  const visible = rows.slice(0, 6);
+  const max = Math.max(0, ...visible.map((item) => item.value));
+  if (!visible.length || !max) return `<div class="analytics-empty">No data is available for this ranking.</div>`;
+  return `
+    <div class="analytics-ranked-list">
+      ${visible.map((item) => {
+        const value = options.currency ? formatCurrencyCompact(item.value) : formatInteger(item.value);
+        return `
+          <div class="analytics-ranked-item">
+            <div class="analytics-ranked-meta"><span title="${escapeAttribute(item.label)}">${escapeHtml(item.label)}</span><strong>${escapeHtml(value)}</strong></div>
+            <div class="analytics-ranked-track"><span style="--rank-width:${(item.value / max * 100).toFixed(2)}%"></span></div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderAnalyticsDonut(rows, total) {
+  if (!rows.length || !total) return `<div class="analytics-empty">No status data is available yet.</div>`;
+  let cursor = 0;
+  const gradient = rows.map((item) => {
+    const start = cursor;
+    cursor += safeDivide(item.value, total) * 360;
+    return `${item.color} ${start.toFixed(2)}deg ${cursor.toFixed(2)}deg`;
+  }).join(", ");
+  return `
+    <div class="analytics-donut-wrap">
+      <div class="analytics-donut" style="--analytics-donut:conic-gradient(${gradient})"><span>${formatInteger(total)}<small>Total</small></span></div>
+      <div class="analytics-donut-legend">
+        ${rows.map((item) => `<div><i style="--legend-color:${item.color}"></i><span>${escapeHtml(item.label)}</span><strong>${formatInteger(item.value)}</strong></div>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderProcurementDeliveryWatch(orders) {
+  if (!orders.length) return `<div class="analytics-empty">No active purchase-order deliveries are scheduled.</div>`;
+  return `
+    <div class="analytics-watch-list">
+      ${orders.map((order) => {
+        const overdue = isOverdueProcurementOrder(order);
+        return `
+          <article class="analytics-watch-item ${overdue ? "risk" : ""}">
+            <div><strong>${escapeHtml(order.poNumber)}</strong><span>${escapeHtml(order.item)} | ${escapeHtml(projectName(order.projectId))}</span></div>
+            <div><strong>${formatCurrencyCompact(procurementOrderTotal(order))}</strong><span>${overdue ? "Overdue" : formatDate(order.expectedDate)}</span></div>
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderSalesBillingWatch(billings) {
+  if (!billings.length) return `<div class="analytics-empty">No billing activity is available yet.</div>`;
+  return `
+    <div class="analytics-watch-list">
+      ${billings.map((billing) => `
+        <article class="analytics-watch-item">
+          <div><strong>${escapeHtml(billing.billingNumber)}</strong><span>${escapeHtml(projectName(billing.projectId))} | ${escapeHtml(billing.description)}</span></div>
+          <div><strong>${formatCurrencyCompact(billing.amount)}</strong><span class="analytics-status-text ${workflowStatusClass(billing.status)}">${escapeHtml(billing.status)}</span></div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function isOverdueProcurementOrder(order) {
+  if (!order || !order.expectedDate || ["Received", "Cancelled"].includes(order.status)) return false;
+  return new Date(order.expectedDate) < startOfDay(new Date());
+}
+
+function formatAnalyticsPercent(value) {
+  return `${(Math.max(0, Number(value) || 0) * 100).toFixed(1)}%`;
 }
 
 function renderWorkflowSelect(action, id, status, options) {
