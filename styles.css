@@ -605,9 +605,22 @@ button {
   border-radius: 8px;
   padding: 12px;
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 14px;
+}
+
+.module-toolbar-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.module-instruction-btn {
+  flex: 0 0 auto;
+  color: var(--cyan);
 }
 
 .toolbar-btn {
@@ -2294,6 +2307,52 @@ tfoot td {
   margin: 0;
   color: var(--muted);
   line-height: 1.55;
+}
+
+.operations-instruction-modal {
+  width: min(860px, 100%);
+}
+
+.instruction-flow {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(40, 244, 255, 0.06);
+}
+
+.instruction-flow > strong {
+  color: var(--cyan);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.instruction-flow > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.instruction-flow span {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid rgba(40, 244, 255, 0.3);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--cyan-soft);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.instruction-flow i {
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 900;
 }
 
 .form-grid {

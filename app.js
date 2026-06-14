@@ -322,10 +322,12 @@ document.addEventListener("click", (event) => {
       state.procurementView = target.dataset.view || "overview";
       render();
     },
+    "open-procurement-instructions": openProcurementInstructionModal,
     "accounting-tab": () => {
       state.accountingView = target.dataset.view || "overview";
       render();
     },
+    "open-accounting-instructions": openAccountingInstructionModal,
     "administrative-tab": () => {
       state.administrativeView = target.dataset.view || "accounts";
       render();
@@ -1341,12 +1343,15 @@ function renderEngineeringVisual(account) {
   return `<div class="placeholder">${titles[state.engineeringView]} will be built in the next module.</div>`;
 }
 
-function renderModuleToolbar(module, activeView, views) {
+function renderModuleToolbar(module, activeView, views, instructionAction = "") {
   return `
     <div class="toolbar-container" aria-label="${escapeAttribute(module)} toolbar">
-      ${views.map(([view, label]) => `
-        <button class="toolbar-btn ${activeView === view ? "active" : ""}" data-action="${module}-tab" data-view="${view}">${escapeHtml(label)}</button>
-      `).join("")}
+      <div class="module-toolbar-tabs">
+        ${views.map(([view, label]) => `
+          <button class="toolbar-btn ${activeView === view ? "active" : ""}" data-action="${module}-tab" data-view="${view}">${escapeHtml(label)}</button>
+        `).join("")}
+      </div>
+      ${instructionAction ? iconButton(`${module} instructions`, "info", "ghost-btn module-instruction-btn", `data-action="${instructionAction}"`) : ""}
     </div>
   `;
 }
@@ -1362,7 +1367,7 @@ function renderProcurementView(account) {
         ["requests", "Purchase Requests"],
         ["orders", "Purchase Orders"],
         ["suppliers", "Suppliers"]
-      ])}
+      ], "open-procurement-instructions")}
       <div class="visual-container">${renderProcurementVisual()}</div>
     </section>
   `;
@@ -1526,7 +1531,7 @@ function renderAccountingView(account) {
         ["overview", "Sales Dashboard"],
         ["billings", "Billings"],
         ["expenses", "Expenses"]
-      ])}
+      ], "open-accounting-instructions")}
       <div class="visual-container">${renderAccountingVisual()}</div>
     </section>
   `;
@@ -4706,6 +4711,100 @@ function openEstimateV2InstructionModal() {
             <strong>6. Manage Layers</strong>
             <p>Use bundled Layers to hide or show measurements by group while keeping the takeoff table saved below.</p>
           </article>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="primary-btn" data-action="close-modal">Got it</button>
+      </div>
+    </div>
+  `);
+}
+
+function openProcurementInstructionModal() {
+  openOperationsInstructionModal({
+    title: "Procurement Instructions",
+    cards: [
+      {
+        title: "1. Register Suppliers",
+        text: "Open Suppliers and add each store or vendor before creating purchase orders. Supplier names are used in spend rankings and purchase-order records."
+      },
+      {
+        title: "2. Create Purchase Requests",
+        text: "Use Purchase Requests to record the project, material, quantity, estimated unit cost, priority, needed-by date, and notes before purchasing."
+      },
+      {
+        title: "3. Approve the Request",
+        text: "Update the request status as it moves through review. Use Pending, Approved, Ordered, Received, or Cancelled so the request pipeline remains accurate."
+      },
+      {
+        title: "4. Create Purchase Orders",
+        text: "After approval, open Purchase Orders and enter the supplier, PO number, actual quantity, unit cost, expected delivery date, and current order status."
+      },
+      {
+        title: "5. Track Deliveries",
+        text: "Keep expected delivery dates and statuses updated. Active orders past their expected date automatically appear as overdue in Delivery Watch."
+      },
+      {
+        title: "6. Read the Dashboard",
+        text: "The dashboard summarizes committed spend, received value, supplier concentration, request status, order status, and monthly purchase activity from saved records."
+      }
+    ],
+    flow: ["Pending", "Approved", "Ordered", "Received"]
+  });
+}
+
+function openAccountingInstructionModal() {
+  openOperationsInstructionModal({
+    title: "Accounting Instructions",
+    cards: [
+      {
+        title: "1. Add Progress Billings",
+        text: "Open Billings and record the billing number, related project, description, amount, due date, and status. These records power the Sales Dashboard."
+      },
+      {
+        title: "2. Update Billing Status",
+        text: "Move each billing through Draft, Submitted, Approved, and Paid. Paid billings are counted as collected revenue; all other billed amounts remain outstanding."
+      },
+      {
+        title: "3. Record Expenses",
+        text: "Open Expenses and enter the project, date, category, payee, description, amount, and payment status for every construction cost."
+      },
+      {
+        title: "4. Maintain Payment Status",
+        text: "Use Unpaid, Partially Paid, or Paid to show the current payment condition. Keep the expense date accurate for monthly expense reporting."
+      },
+      {
+        title: "5. Review Commercial Results",
+        text: "The Sales Dashboard compares contract portfolio, total billed, collected revenue, outstanding billings, expenses, and net cash."
+      },
+      {
+        title: "6. Keep Records Current",
+        text: "Edit existing billings and expenses instead of duplicating them. Every saved record keeps the name and email of the user who entered it."
+      }
+    ],
+    flow: ["Draft", "Submitted", "Approved", "Paid"]
+  });
+}
+
+function openOperationsInstructionModal({ title, cards, flow }) {
+  openModal(`
+    <div class="modal operations-instruction-modal">
+      <div class="modal-head">
+        <h3>${iconSvg("info")} ${escapeHtml(title)}</h3>
+        ${iconButton("Close", "clear", "ghost-btn", 'data-action="close-modal"')}
+      </div>
+      <div class="modal-body">
+        <div class="instruction-flow" aria-label="Recommended status flow">
+          <strong>Recommended Flow</strong>
+          <div>${flow.map((step, index) => `<span>${escapeHtml(step)}</span>${index < flow.length - 1 ? `<i aria-hidden="true">&rarr;</i>` : ""}`).join("")}</div>
+        </div>
+        <div class="instruction-grid">
+          ${cards.map((card) => `
+            <article class="instruction-card">
+              <strong>${escapeHtml(card.title)}</strong>
+              <p>${escapeHtml(card.text)}</p>
+            </article>
+          `).join("")}
         </div>
       </div>
       <div class="modal-foot">
