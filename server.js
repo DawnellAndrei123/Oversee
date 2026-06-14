@@ -1338,6 +1338,129 @@ async function saveAccountAppData(req, res) {
   jsonResponse(req, res, 200, { ok: true, updatedAt, account: publicAccount(account), workspaceAccountId: workspaceAccount.id });
 }
 
+async function submitSwaToAccounting(req, res) {
+  const store = await readStore();
+  const account = sessionAccountFromRequest(req, store);
+  if (!account) return jsonResponse(req, res, 401, { ok: false, error: "Sign in is required." });
+  if (!hasEngineeringAccess(account)) {
+    return jsonResponse(req, res, 403, { ok: false, error: "Engineering access is required to submit an SWA." });
+  }
+
+  const body = await readJsonBody(req);
+  const sheetId = String(body.sheetId || "").trim();
+  if (!sheetId || sheetId.length > 180) {
+    return jsonResponse(req, res, 400, { ok: false, error: "A valid saved SWA sheet is required." });
+  }
+
+  const workspaceAccount = workspaceAccountFor(account, store);
+  const result = await withKeyedLock(appDataSaveLocks, workspaceAccount.id, async () => {
+    const record = await readAccountAppData(workspaceAccount.id, store);
+    const data = normalizeAccountAppData(record && record.data);
+    const swa = data.swa && typeof data.swa === "object" ? data.swa : {};
+    const sheets = Array.isArray(swa.sheets) ? swa.sheets : [];
+    const sheet = sheets.find((item) => item && item.id === sheetId);
+    if (!sheet) throw httpError("Save and sync the SWA before submitting it to Accounting.", 404);
+
+    const amount = serverSwaSheetThisPeriodTotal(sheet);
+    if (amount <= 0) throw httpError("This SWA has no payment-period amount to submit.", 400);
+
+    const accounting = data.accounting && typeof data.accounting === "object" ? data.accounting : {};
+    const billings = Array.isArray(accounting.billings) ? accounting.billings : [];
+    const expenses = Array.isArray(accounting.expenses) ? accounting.expenses : [];
+    const existing = billings.find((item) => item && item.sourceType === "swa" && item.sourceSwaSheetId === sheet.id) || null;
+    if (existing && ["Approved", "Paid"].includes(existing.status)) {
+      throw httpError(`This billing is already ${String(existing.status).toLowerCase()} in Accounting and cannot be resubmitted.`, 409);
+    }
+
+    const submittedAt = new Date().toISOString();
+    const billing = {
+      ...(existing || {}),
+      id: existing && existing.id || randomId("billing"),
+      billingNumber: String(sheet.name || "Progress Billing").slice(0, 180),
+      projectId: String(sheet.projectId || "").slice(0, 180),
+      description: `Statement of Work Accomplished - ${String(sheet.name || "Progress Billing")}`.slice(0, 300),
+      amount,
+      dueDate: existing && existing.dueDate || "",
+      status: "Submitted",
+      notes: existing && existing.notes || "Submitted directly from the SWA Chart.",
+      sourceType: "swa",
+      sourceSwaSheetId: sheet.id,
+      sourceSwaProjectId: String(sheet.projectId || "").slice(0, 180),
+      submittedAt,
+      submittedById: account.id,
+      submittedByName: account.name || "",
+      submittedByEmail: account.email || "",
+      enteredById: existing && existing.enteredById || account.id,
+      enteredByName: existing && existing.enteredByName || account.name || "",
+      enteredByEmail: existing && existing.enteredByEmail || account.email || "",
+      createdAt: existing && existing.createdAt || submittedAt,
+      updatedById: account.id,
+      updatedByName: account.name || "",
+      updatedByEmail: account.email || "",
+      updatedAt: submittedAt
+    };
+    const action = existing ? "updated" : "created";
+    const nextSheets = sheets.map((item) => item.id === sheet.id ? {
+      ...item,
+      accountingBillingId: billing.id,
+      accountingStatus: billing.status,
+      submittedToAccountingAt: submittedAt,
+      submittedToAccountingByName: account.name || "",
+      submittedToAccountingByEmail: account.email || ""
+    } : item);
+    const nextAccounting = {
+      ...accounting,
+      billings: existing
+        ? billings.map((item) => item.id === existing.id ? billing : item)
+        : [...billings, billing],
+      expenses,
+      updatedAt: submittedAt
+    };
+    const nextData = {
+      ...data,
+      swa: { ...swa, sheets: nextSheets },
+      accounting: nextAccounting,
+      savedAt: submittedAt
+    };
+
+    await writeAccountAppData(workspaceAccount, account, nextData, submittedAt, store);
+    const event = audit(store, "swa_submitted_to_accounting", {
+      accountId: account.id,
+      workspaceAccountId: workspaceAccount.id,
+      sheetId: sheet.id,
+      billingId: billing.id,
+      projectId: billing.projectId,
+      amount,
+      action,
+      meta: requestMeta(req)
+    });
+    await persistAuditEvent(store, event);
+    return {
+      action,
+      accounting: appDataReadKeysForAccount(account).includes("accounting") ? nextAccounting : null,
+      submission: {
+        billingId: billing.id,
+        status: billing.status,
+        submittedAt,
+        submittedByName: account.name || "",
+        submittedByEmail: account.email || ""
+      }
+    };
+  });
+
+  jsonResponse(req, res, 200, { ok: true, ...result });
+}
+
+function serverSwaSheetThisPeriodTotal(sheet) {
+  const rows = Array.isArray(sheet && sheet.rows) ? sheet.rows : [];
+  const amount = rows.reduce((total, row) => {
+    const quantity = Math.max(0, Number(row && row.thisQty) || 0);
+    const unitCost = Math.max(0, Number(row && row.unitCost) || 0);
+    return total + (quantity * unitCost);
+  }, 0);
+  return Math.round(amount * 100) / 100;
+}
+
 async function readAccountAppData(accountId, store) {
   if (SUPABASE_ENABLED) {
     try {
@@ -1998,6 +2121,9 @@ async function routeApi(req, res, url) {
     }
     if (req.method === "POST" && url.pathname === "/api/app-data/save") {
       return await saveAccountAppData(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/swa/submit-accounting") {
+      return await submitSwaToAccounting(req, res);
     }
     if (req.method === "POST" && url.pathname === "/api/estimate-v2/extract-pdf") {
       return await extractEstimateV2Pdf(req, res);

@@ -368,6 +368,7 @@ document.addEventListener("click", (event) => {
     "save-filter": saveFilter,
     "save-swa": saveSwa,
     "update-swa": updateSwa,
+    "submit-swa-accounting": submitSwaToAccounting,
     "add-estimate-row": addEstimateRow,
     "save-estimate-template": saveEstimateTemplate,
     "extract-estimate-v2-pdf": extractEstimateV2Pdf,
@@ -4293,6 +4294,16 @@ function renderSwaView() {
   const originalTotal = swaOriginalTotal(rows);
   const selectedProjectId = activeSheet ? activeSheet.projectId : swa.selectedProjectId;
   const selectedProject = projects.find((project) => project.id === selectedProjectId) || null;
+  const linkedBilling = activeSheet
+    ? getAccountingState().billings.find((billing) => billing.sourceType === "swa" && billing.sourceSwaSheetId === activeSheet.id) || null
+    : null;
+  const accountingStatus = linkedBilling ? linkedBilling.status : activeSheet && activeSheet.accountingStatus || "";
+  const accountingSubmissionLocked = ["Approved", "Paid"].includes(accountingStatus);
+  const accountingSubmitLabel = accountingSubmissionLocked
+    ? `${accountingStatus} in Accounting`
+    : accountingStatus
+      ? "Update Accounting Submission"
+      : "Submit to Accounting";
   projectSheets = activeSheet
     ? swa.sheets.filter((sheet) => sameSwaProject(sheet.projectId, activeSheet.projectId))
     : projectSheets;
@@ -4307,6 +4318,7 @@ function renderSwaView() {
       <div class="swa-actions">
         <button class="primary-btn" data-action="save-swa" ${editable && swa.updated ? "" : "disabled"}>Save SWA</button>
         <button class="secondary-btn" data-action="update-swa" ${editable ? "" : "disabled"}>Update SWA</button>
+        <button class="secondary-btn" data-action="submit-swa-accounting" ${activeSheet && !accountingSubmissionLocked ? "" : "disabled"}>${escapeHtml(accountingSubmitLabel)}</button>
       </div>
     </div>
     <div class="swa-project-bar">
@@ -5076,6 +5088,110 @@ function saveSwa() {
   state.activeSwaSheetId = sheet.id;
   render();
   toast(`${sheet.name} saved.`);
+}
+
+async function submitSwaToAccounting() {
+  if (state.activeSwaSheetId === "draft") {
+    toast("Save the SWA before submitting it to Accounting.");
+    return;
+  }
+
+  const swa = getSwaState();
+  const sheet = swa.sheets.find((item) => item.id === state.activeSwaSheetId);
+  if (!sheet) {
+    toast("The saved SWA sheet could not be found.");
+    return;
+  }
+
+  const amount = dashboardSheetThisPeriodTotal(sheet);
+  if (amount <= 0) {
+    toast("This SWA has no payment-period amount to submit.");
+    return;
+  }
+
+  const accounting = getAccountingState();
+  const existing = accounting.billings.find((item) => item.sourceType === "swa" && item.sourceSwaSheetId === sheet.id) || null;
+  if (existing && ["Approved", "Paid"].includes(existing.status)) {
+    toast(`This billing is already ${existing.status.toLowerCase()} in Accounting and cannot be resubmitted.`);
+    return;
+  }
+
+  if (sessionToken()) {
+    try {
+      await saveCloudAppDataNow();
+      const response = await apiRequest("/swa/submit-accounting", { sheetId: sheet.id }, { timeoutMs: 15000 });
+      if (response.accounting) saveAccountingState(response.accounting);
+      if (response.submission) {
+        const latestSwa = getSwaState();
+        latestSwa.sheets = latestSwa.sheets.map((item) => item.id === sheet.id ? {
+          ...item,
+          accountingBillingId: response.submission.billingId,
+          accountingStatus: response.submission.status,
+          submittedToAccountingAt: response.submission.submittedAt,
+          submittedToAccountingByName: response.submission.submittedByName,
+          submittedToAccountingByEmail: response.submission.submittedByEmail
+        } : item);
+        saveSwaState(latestSwa);
+      }
+      render();
+      toast(response.action === "updated" ? "Accounting submission updated." : "SWA submitted to Accounting.");
+      return;
+    } catch (error) {
+      toast(error.message || "SWA could not be submitted to Accounting.");
+      return;
+    }
+  }
+
+  const result = upsertSwaAccountingBilling(accounting, sheet);
+  if (result.locked) {
+    toast(`This billing is already ${result.billing.status.toLowerCase()} in Accounting and cannot be resubmitted.`);
+    return;
+  }
+  saveAccountingState(accounting);
+  swa.sheets = swa.sheets.map((item) => item.id === sheet.id ? {
+    ...item,
+    accountingBillingId: result.billing.id,
+    accountingStatus: result.billing.status,
+    submittedToAccountingAt: result.billing.submittedAt,
+    submittedToAccountingByName: result.billing.submittedByName,
+    submittedToAccountingByEmail: result.billing.submittedByEmail
+  } : item);
+  saveSwaState(swa);
+  render();
+  toast(result.action === "updated" ? "Accounting submission updated." : "SWA submitted to Accounting.");
+}
+
+function upsertSwaAccountingBilling(accounting, sheet) {
+  const existing = accounting.billings.find((item) => item.sourceType === "swa" && item.sourceSwaSheetId === sheet.id) || null;
+  if (existing && ["Approved", "Paid"].includes(existing.status)) {
+    return { action: "locked", billing: existing, locked: true };
+  }
+
+  const account = getSessionAccount() || {};
+  const submittedAt = new Date().toISOString();
+  const billing = {
+    ...(existing || {}),
+    id: existing ? existing.id : cryptoId(),
+    billingNumber: sheet.name || "Progress Billing",
+    projectId: sheet.projectId || "",
+    description: `Statement of Work Accomplished - ${sheet.name || "Progress Billing"}`,
+    amount: dashboardSheetThisPeriodTotal(sheet),
+    dueDate: existing && existing.dueDate || "",
+    status: "Submitted",
+    notes: existing && existing.notes || "Submitted directly from the SWA Chart.",
+    sourceType: "swa",
+    sourceSwaSheetId: sheet.id,
+    sourceSwaProjectId: sheet.projectId || "",
+    submittedAt,
+    submittedById: account.id || "",
+    submittedByName: account.name || "",
+    submittedByEmail: account.email || "",
+    ...enteredByFields(existing || {})
+  };
+  accounting.billings = existing
+    ? accounting.billings.map((item) => item.id === existing.id ? billing : item)
+    : [...accounting.billings, billing];
+  return { action: existing ? "updated" : "created", billing, locked: false };
 }
 
 function deleteSwaSheet(sheetId) {
