@@ -369,6 +369,8 @@ document.addEventListener("click", (event) => {
     "save-swa": saveSwa,
     "update-swa": updateSwa,
     "submit-swa-accounting": submitSwaToAccounting,
+    "submit-estimate-procurement": () => submitEstimateToProcurement("v1"),
+    "submit-estimate-v2-procurement": () => submitEstimateToProcurement("v2"),
     "add-estimate-row": addEstimateRow,
     "save-estimate-template": saveEstimateTemplate,
     "extract-estimate-v2-pdf": extractEstimateV2Pdf,
@@ -572,6 +574,10 @@ document.addEventListener("change", (event) => {
   }
   if (target && target.dataset.action === "select-estimate-store") {
     updateEstimateStore(target.value);
+    return;
+  }
+  if (target && target.dataset.action === "select-estimate-project") {
+    updateEstimateProject(target.value);
     return;
   }
   if (target && target.dataset.action === "estimate-v2-plan-type") {
@@ -1453,7 +1459,11 @@ function renderProcurementRequests(procurement) {
         <tbody>
           ${procurement.requests.length ? procurement.requests.map((item) => `
             <tr>
-              <td><strong>${escapeHtml(item.item)}</strong><small>${escapeHtml(projectName(item.projectId))}</small></td>
+              <td>
+                <strong>${escapeHtml(item.item)}</strong>
+                <small>${escapeHtml(projectName(item.projectId))}</small>
+                ${item.sourceType === "estimate" ? `<small>Submitted from Estimate ${escapeHtml(String(item.sourceEstimateVersion || "").toUpperCase())}</small>` : ""}
+              </td>
               <td>${formatSwaNumber(item.quantity)} ${escapeHtml(item.unit)}</td>
               <td>${formatCurrency((Number(item.quantity) || 0) * (Number(item.estimatedUnitCost) || 0))}</td>
               <td>${item.neededBy ? formatDate(item.neededBy) : "-"}</td>
@@ -2066,6 +2076,9 @@ function renderEstimateView() {
       </div>
       <div class="estimate-actions">
         <button class="secondary-btn" data-action="add-estimate-row">Add Material</button>
+        <button class="secondary-btn" data-action="submit-estimate-procurement" ${estimateProcurementRows("v1", draft).length ? "" : "disabled"}>
+          ${draft.submittedToProcurementAt ? "Update Procurement Submission" : "Submit to Procurement"}
+        </button>
         <button class="primary-btn" data-action="save-estimate-template">Save as Template</button>
       </div>
     </div>
@@ -2083,6 +2096,12 @@ function renderEstimateView() {
         <select data-action="select-estimate-store" aria-label="Select estimate store">
           <option value="" ${selectedStore ? "" : "selected"}>All Stores</option>
           ${stores.map((store) => `<option value="${escapeAttribute(store)}" ${sameStore(store, selectedStore) ? "selected" : ""}>${escapeHtml(store)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="estimate-store-filter">
+        <span>Project</span>
+        <select data-action="select-estimate-project" aria-label="Select estimate project">
+          ${projectSelectOptions(draft.selectedProjectId)}
         </select>
       </label>
       <div class="estimate-summary">
@@ -2179,6 +2198,12 @@ function renderEstimateV2View() {
       </div>
       <div class="estimate-actions">
         ${iconButton("Estimate v2 Instructions", "info", "secondary-btn", 'data-action="open-estimate-v2-instructions"')}
+        ${iconButton(
+          draft.submittedToProcurementAt ? "Update Procurement Submission" : "Submit to Procurement",
+          "procurement",
+          "secondary-btn",
+          `data-action="submit-estimate-v2-procurement" ${estimateProcurementRows("v2", draft).length ? "" : "disabled"}`
+        )}
         ${iconButton("Save Template", "save", "secondary-btn", 'data-action="save-estimate-v2-template"')}
         ${iconButton("Clear Estimate v2", "clear", "ghost-btn danger", 'data-action="clear-estimate-v2"')}
       </div>
@@ -5194,6 +5219,160 @@ function upsertSwaAccountingBilling(accounting, sheet) {
   return { action: existing ? "updated" : "created", billing, locked: false };
 }
 
+async function submitEstimateToProcurement(version) {
+  const draft = version === "v2" ? collectEstimateV2DraftFromDom() : collectEstimateDraftFromDom();
+  const rows = estimateProcurementRows(version, draft);
+  if (!rows.length) {
+    toast("Add at least one material with a quantity before submitting to Procurement.");
+    return;
+  }
+
+  if (version === "v2") saveEstimateV2Draft(draft);
+  else saveEstimateDraft(draft);
+
+  if (sessionToken()) {
+    try {
+      const synced = await saveCloudAppDataNow();
+      if (!synced) throw new Error("The estimate could not be synced before submission.");
+      const response = await apiRequest("/estimate/submit-procurement", {
+        version,
+        submissionId: draft.submissionId
+      }, { timeoutMs: 15000 });
+      if (response.procurement) saveProcurementState(response.procurement);
+      applyEstimateProcurementSubmission(version, response.submission);
+      render();
+      toast(estimateProcurementSubmissionMessage(response.submission));
+      return;
+    } catch (error) {
+      toast(error.message || "The estimate could not be submitted to Procurement.");
+      return;
+    }
+  }
+
+  const procurement = getProcurementState();
+  const result = upsertEstimateProcurementRequests(procurement, version, draft, rows);
+  saveProcurementState(procurement);
+  applyEstimateProcurementSubmission(version, result.submission);
+  render();
+  toast(estimateProcurementSubmissionMessage(result.submission));
+}
+
+function estimateProcurementRows(version, draft) {
+  if (version === "v2") {
+    const projectId = draft && draft.selectedProjectId || "";
+    const takeoffRows = estimateV2ProjectRows(draft).map((row) => ({
+      id: `takeoff:${row.id}`,
+      description: row.description,
+      projectId: row.projectId || projectId,
+      quantity: Math.max(0, Number(row.quantity) || 0),
+      unit: row.unit || "unit",
+      costPerUnit: estimateV2RowHasComputedMaterialCost(row)
+        ? estimateV2ComputedRowCostPerUnit(row)
+        : Math.max(0, Number(row.costPerUnit) || 0)
+    }));
+    const materialRows = (Array.isArray(draft && draft.materials) ? draft.materials : []).map((row) => ({
+      id: `material:${row.id}`,
+      description: row.description,
+      projectId,
+      quantity: Math.max(0, Number(row.quantity) || 0),
+      unit: row.unit || "unit",
+      costPerUnit: Math.max(0, Number(row.costPerUnit) || 0)
+    }));
+    return [...takeoffRows, ...materialRows].filter(isUsableEstimateProcurementRow);
+  }
+
+  return (Array.isArray(draft && draft.rows) ? draft.rows : []).map((row) => ({
+    id: row.id,
+    description: row.description,
+    projectId: draft.selectedProjectId || "",
+    quantity: Math.max(0, Number(row.quantity) || 0),
+    unit: row.unit || "unit",
+    costPerUnit: Math.max(0, Number(row.costPerUnit) || 0)
+  })).filter(isUsableEstimateProcurementRow);
+}
+
+function isUsableEstimateProcurementRow(row) {
+  return Boolean(String(row && row.description || "").trim()) && Number(row && row.quantity) > 0;
+}
+
+function upsertEstimateProcurementRequests(procurement, version, draft, rows) {
+  const account = getSessionAccount() || {};
+  const submittedAt = new Date().toISOString();
+  let createdCount = 0;
+  let updatedCount = 0;
+  let lockedCount = 0;
+
+  rows.forEach((row) => {
+    const existing = procurement.requests.find((item) => item.sourceType === "estimate"
+      && item.sourceEstimateVersion === version
+      && item.sourceEstimateId === draft.submissionId
+      && item.sourceEstimateRowId === row.id) || null;
+    if (existing && ["Approved", "Ordered", "Received"].includes(existing.status)) {
+      lockedCount += 1;
+      return;
+    }
+    const request = {
+      ...(existing || {}),
+      id: existing ? existing.id : cryptoId(),
+      projectId: row.projectId || "",
+      item: String(row.description || "").trim(),
+      quantity: Math.max(0, Number(row.quantity) || 0),
+      unit: String(row.unit || "unit").trim() || "unit",
+      estimatedUnitCost: Math.max(0, Number(row.costPerUnit) || 0),
+      neededBy: existing && existing.neededBy || "",
+      priority: existing && existing.priority || "Medium",
+      status: "Pending",
+      notes: existing && existing.notes || `Submitted directly from Estimate ${version.toUpperCase()}.`,
+      sourceType: "estimate",
+      sourceEstimateVersion: version,
+      sourceEstimateId: draft.submissionId,
+      sourceEstimateRowId: row.id,
+      submittedAt,
+      submittedById: account.id || "",
+      submittedByName: account.name || "",
+      submittedByEmail: account.email || "",
+      ...enteredByFields(existing || {})
+    };
+    procurement.requests = existing
+      ? procurement.requests.map((item) => item.id === existing.id ? request : item)
+      : [...procurement.requests, request];
+    if (existing) updatedCount += 1;
+    else createdCount += 1;
+  });
+
+  return {
+    submission: {
+      submittedAt,
+      submittedByName: account.name || "",
+      submittedByEmail: account.email || "",
+      requestCount: rows.length,
+      createdCount,
+      updatedCount,
+      lockedCount
+    }
+  };
+}
+
+function applyEstimateProcurementSubmission(version, submission = {}) {
+  const draft = version === "v2" ? getEstimateV2Draft() : getEstimateDraft();
+  Object.assign(draft, {
+    submittedToProcurementAt: submission.submittedAt || new Date().toISOString(),
+    submittedToProcurementByName: submission.submittedByName || "",
+    submittedToProcurementByEmail: submission.submittedByEmail || "",
+    submittedRequestCount: Math.max(0, Number(submission.requestCount) || 0)
+  });
+  if (version === "v2") saveEstimateV2Draft(draft);
+  else saveEstimateDraft(draft);
+}
+
+function estimateProcurementSubmissionMessage(submission = {}) {
+  const locked = Math.max(0, Number(submission.lockedCount) || 0);
+  const changed = Math.max(0, Number(submission.createdCount) || 0) + Math.max(0, Number(submission.updatedCount) || 0);
+  if (locked && !changed) return "Procurement has already processed these estimate requests.";
+  if (locked) return `Estimate submitted to Procurement. ${locked} processed request${locked === 1 ? " was" : "s were"} left unchanged.`;
+  return "Estimate submitted to Procurement.";
+}
+
 function deleteSwaSheet(sheetId) {
   if (!sheetId || sheetId === "draft") return;
   const swa = getSwaState();
@@ -5312,6 +5491,13 @@ function updateEstimateStore(store) {
   render();
 }
 
+function updateEstimateProject(projectId) {
+  const draft = collectEstimateDraftFromDom();
+  draft.selectedProjectId = projectId || "";
+  saveEstimateDraft(draft);
+  render();
+}
+
 function deleteEstimateRow(rowId) {
   if (!rowId) return;
   const draft = collectEstimateDraftFromDom();
@@ -5331,8 +5517,10 @@ function useEstimateTemplate(templateId) {
   const template = getEstimateTemplates().find((item) => item.id === templateId);
   if (!template) return;
   saveEstimateDraft({
+    submissionId: cryptoId(),
     title: template.title,
     selectedStore: template.selectedStore || "",
+    selectedProjectId: "",
     rows: template.rows.map((row) => normalizeEstimateRow({ ...row, id: cryptoId() })),
     updatedAt: new Date().toISOString()
   });
@@ -6586,8 +6774,10 @@ function collectEstimateDraftFromDom() {
   const current = getEstimateDraft();
   const titleInput = document.querySelector("[data-estimate-title]");
   return {
+    ...current,
     title: titleInput ? titleInput.value.trim() : current.title,
     selectedStore: estimateSelectedStoreFromDom(),
+    selectedProjectId: estimateSelectedProjectFromDom(),
     rows: collectEstimateRowsFromDom(),
     updatedAt: new Date().toISOString()
   };
@@ -6911,6 +7101,11 @@ function getRowInputNumber(rowNode, field) {
 function estimateSelectedStoreFromDom() {
   const select = document.querySelector('[data-action="select-estimate-store"]');
   return select ? String(select.value || "").trim() : getEstimateDraft().selectedStore || "";
+}
+
+function estimateSelectedProjectFromDom() {
+  const select = document.querySelector('[data-action="select-estimate-project"]');
+  return select ? String(select.value || "").trim() : getEstimateDraft().selectedProjectId || "";
 }
 
 function priceStoreNameFromDom() {
@@ -7856,9 +8051,15 @@ function getEstimateDraft() {
   const saved = readJson(STORAGE.estimateDraft, null);
   if (saved && Array.isArray(saved.rows)) {
     return {
+      submissionId: saved.submissionId || cryptoId(),
       title: saved.title || "Untitled Estimate",
       selectedStore: saved.selectedStore || "",
+      selectedProjectId: saved.selectedProjectId || "",
       rows: saved.rows.map(normalizeEstimateRow).filter(hasEstimateRowData),
+      submittedToProcurementAt: saved.submittedToProcurementAt || "",
+      submittedToProcurementByName: saved.submittedToProcurementByName || "",
+      submittedToProcurementByEmail: saved.submittedToProcurementByEmail || "",
+      submittedRequestCount: Math.max(0, Number(saved.submittedRequestCount) || 0),
       updatedAt: saved.updatedAt || new Date().toISOString()
     };
   }
@@ -7869,18 +8070,30 @@ function getEstimateDraft() {
 
 function saveEstimateDraft(draft) {
   setSyncedJson(STORAGE.estimateDraft, {
+    submissionId: draft.submissionId || cryptoId(),
     title: draft.title || "Untitled Estimate",
     selectedStore: draft.selectedStore || "",
+    selectedProjectId: draft.selectedProjectId || "",
     rows: Array.isArray(draft.rows) ? draft.rows.map(normalizeEstimateRow).filter(hasEstimateRowData) : [],
+    submittedToProcurementAt: draft.submittedToProcurementAt || "",
+    submittedToProcurementByName: draft.submittedToProcurementByName || "",
+    submittedToProcurementByEmail: draft.submittedToProcurementByEmail || "",
+    submittedRequestCount: Math.max(0, Number(draft.submittedRequestCount) || 0),
     updatedAt: draft.updatedAt || new Date().toISOString()
   });
 }
 
 function defaultEstimateDraft() {
   return {
+    submissionId: cryptoId(),
     title: "Untitled Estimate",
     selectedStore: "",
+    selectedProjectId: "",
     rows: [],
+    submittedToProcurementAt: "",
+    submittedToProcurementByName: "",
+    submittedToProcurementByEmail: "",
+    submittedRequestCount: 0,
     updatedAt: new Date().toISOString()
   };
 }
@@ -7895,7 +8108,12 @@ function saveEstimateV2Draft(draft) {
 
 function defaultEstimateV2Draft() {
   return {
+    submissionId: cryptoId(),
     selectedProjectId: "",
+    submittedToProcurementAt: "",
+    submittedToProcurementByName: "",
+    submittedToProcurementByEmail: "",
+    submittedRequestCount: 0,
     planType: PLAN_TYPES[0],
     drawingScale: "1:100",
     structuralElevation: 0,
@@ -7996,7 +8214,12 @@ function normalizeEstimateV2Draft(draft) {
   const steelSlabCover = Number(source.steelSlabCover);
   const steelSlabWastePercent = Number(source.steelSlabWastePercent);
   return {
+    submissionId: String(source.submissionId || cryptoId()).trim(),
     selectedProjectId: String(source.selectedProjectId || "").trim(),
+    submittedToProcurementAt: String(source.submittedToProcurementAt || "").trim(),
+    submittedToProcurementByName: String(source.submittedToProcurementByName || "").trim(),
+    submittedToProcurementByEmail: String(source.submittedToProcurementByEmail || "").trim(),
+    submittedRequestCount: Math.max(0, Number(source.submittedRequestCount) || 0),
     planType: PLAN_TYPES.includes(source.planType) ? source.planType : PLAN_TYPES[0],
     drawingScale: DRAWING_SCALES.includes(source.drawingScale) ? source.drawingScale : "1:100",
     structuralElevation: Math.max(0, Number(source.structuralElevation) || 0),

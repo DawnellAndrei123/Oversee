@@ -1354,7 +1354,8 @@ async function submitSwaToAccounting(req, res) {
 
   const workspaceAccount = workspaceAccountFor(account, store);
   const result = await withKeyedLock(appDataSaveLocks, workspaceAccount.id, async () => {
-    const record = await readAccountAppData(workspaceAccount.id, store);
+    const activeStore = SUPABASE_ENABLED ? store : await readStore();
+    const record = await readAccountAppData(workspaceAccount.id, activeStore);
     const data = normalizeAccountAppData(record && record.data);
     const swa = data.swa && typeof data.swa === "object" ? data.swa : {};
     const sheets = Array.isArray(swa.sheets) ? swa.sheets : [];
@@ -1423,8 +1424,8 @@ async function submitSwaToAccounting(req, res) {
       savedAt: submittedAt
     };
 
-    await writeAccountAppData(workspaceAccount, account, nextData, submittedAt, store);
-    const event = audit(store, "swa_submitted_to_accounting", {
+    await writeAccountAppData(workspaceAccount, account, nextData, submittedAt, activeStore);
+    const event = audit(activeStore, "swa_submitted_to_accounting", {
       accountId: account.id,
       workspaceAccountId: workspaceAccount.id,
       sheetId: sheet.id,
@@ -1434,7 +1435,7 @@ async function submitSwaToAccounting(req, res) {
       action,
       meta: requestMeta(req)
     });
-    await persistAuditEvent(store, event);
+    await persistAuditEvent(activeStore, event);
     return {
       action,
       accounting: appDataReadKeysForAccount(account).includes("accounting") ? nextAccounting : null,
@@ -1449,6 +1450,180 @@ async function submitSwaToAccounting(req, res) {
   });
 
   jsonResponse(req, res, 200, { ok: true, ...result });
+}
+
+async function submitEstimateToProcurement(req, res) {
+  const store = await readStore();
+  const account = sessionAccountFromRequest(req, store);
+  if (!account) return jsonResponse(req, res, 401, { ok: false, error: "Sign in is required." });
+  if (!hasEngineeringAccess(account)) {
+    return jsonResponse(req, res, 403, { ok: false, error: "Engineering access is required to submit an estimate." });
+  }
+
+  const body = await readJsonBody(req);
+  const version = body.version === "v2" ? "v2" : body.version === "v1" ? "v1" : "";
+  const submissionId = String(body.submissionId || "").trim();
+  if (!version || !submissionId || submissionId.length > 180) {
+    return jsonResponse(req, res, 400, { ok: false, error: "A valid Estimate v1 or v2 submission is required." });
+  }
+
+  const workspaceAccount = workspaceAccountFor(account, store);
+  const result = await withKeyedLock(appDataSaveLocks, workspaceAccount.id, async () => {
+    const activeStore = SUPABASE_ENABLED ? store : await readStore();
+    const record = await readAccountAppData(workspaceAccount.id, activeStore);
+    const data = normalizeAccountAppData(record && record.data);
+    const draftKey = version === "v2" ? "estimateV2Draft" : "estimateDraft";
+    const draft = data[draftKey] && typeof data[draftKey] === "object" ? data[draftKey] : {};
+    if (String(draft.submissionId || "") !== submissionId) {
+      throw httpError("Save and sync the estimate before submitting it to Procurement.", 404);
+    }
+
+    const rows = serverEstimateProcurementRows(version, draft);
+    if (!rows.length) throw httpError("Add at least one material with a quantity before submitting to Procurement.", 400);
+
+    const procurement = data.procurement && typeof data.procurement === "object" ? data.procurement : {};
+    let requests = Array.isArray(procurement.requests) ? [...procurement.requests] : [];
+    const orders = Array.isArray(procurement.orders) ? procurement.orders : [];
+    const suppliers = Array.isArray(procurement.suppliers) ? procurement.suppliers : [];
+    const submittedAt = new Date().toISOString();
+    let createdCount = 0;
+    let updatedCount = 0;
+    let lockedCount = 0;
+
+    rows.forEach((row) => {
+      const existing = requests.find((item) => item
+        && item.sourceType === "estimate"
+        && item.sourceEstimateVersion === version
+        && item.sourceEstimateId === submissionId
+        && item.sourceEstimateRowId === row.id) || null;
+      if (existing && ["Approved", "Ordered", "Received"].includes(existing.status)) {
+        lockedCount += 1;
+        return;
+      }
+
+      const request = {
+        ...(existing || {}),
+        id: existing && existing.id || randomId("request"),
+        projectId: row.projectId,
+        item: row.description,
+        quantity: row.quantity,
+        unit: row.unit,
+        estimatedUnitCost: row.costPerUnit,
+        neededBy: existing && existing.neededBy || "",
+        priority: existing && existing.priority || "Medium",
+        status: "Pending",
+        notes: existing && existing.notes || `Submitted directly from Estimate ${version.toUpperCase()}.`,
+        sourceType: "estimate",
+        sourceEstimateVersion: version,
+        sourceEstimateId: submissionId,
+        sourceEstimateRowId: row.id,
+        submittedAt,
+        submittedById: account.id,
+        submittedByName: account.name || "",
+        submittedByEmail: account.email || "",
+        enteredById: existing && existing.enteredById || account.id,
+        enteredByName: existing && existing.enteredByName || account.name || "",
+        enteredByEmail: existing && existing.enteredByEmail || account.email || "",
+        createdAt: existing && existing.createdAt || submittedAt,
+        updatedById: account.id,
+        updatedByName: account.name || "",
+        updatedByEmail: account.email || "",
+        updatedAt: submittedAt
+      };
+      requests = existing
+        ? requests.map((item) => item.id === existing.id ? request : item)
+        : [...requests, request];
+      if (existing) updatedCount += 1;
+      else createdCount += 1;
+    });
+
+    const nextDraft = {
+      ...draft,
+      submittedToProcurementAt: submittedAt,
+      submittedToProcurementByName: account.name || "",
+      submittedToProcurementByEmail: account.email || "",
+      submittedRequestCount: rows.length
+    };
+    const nextProcurement = {
+      ...procurement,
+      requests,
+      orders,
+      suppliers,
+      updatedAt: submittedAt
+    };
+    const nextData = {
+      ...data,
+      [draftKey]: nextDraft,
+      procurement: nextProcurement,
+      savedAt: submittedAt
+    };
+
+    await writeAccountAppData(workspaceAccount, account, nextData, submittedAt, activeStore);
+    const event = audit(activeStore, "estimate_submitted_to_procurement", {
+      accountId: account.id,
+      workspaceAccountId: workspaceAccount.id,
+      version,
+      submissionId,
+      requestCount: rows.length,
+      createdCount,
+      updatedCount,
+      lockedCount,
+      meta: requestMeta(req)
+    });
+    await persistAuditEvent(activeStore, event);
+    return {
+      procurement: appDataReadKeysForAccount(account).includes("procurement") ? nextProcurement : null,
+      submission: {
+        submittedAt,
+        submittedByName: account.name || "",
+        submittedByEmail: account.email || "",
+        requestCount: rows.length,
+        createdCount,
+        updatedCount,
+        lockedCount
+      }
+    };
+  });
+
+  jsonResponse(req, res, 200, { ok: true, ...result });
+}
+
+function serverEstimateProcurementRows(version, draft) {
+  const projectId = serverEstimateText(draft && draft.selectedProjectId, 180);
+  if (version === "v2") {
+    const takeoffRows = Array.isArray(draft && draft.takeoffRows) ? draft.takeoffRows : [];
+    const materialRows = Array.isArray(draft && draft.materials) ? draft.materials : [];
+    return [
+      ...takeoffRows
+        .filter((row) => serverSameEstimateProject(row && row.projectId, projectId))
+        .map((row) => serverEstimateProcurementRow(`takeoff:${row && row.id || ""}`, row, projectId)),
+      ...materialRows.map((row) => serverEstimateProcurementRow(`material:${row && row.id || ""}`, row, projectId))
+    ].filter(Boolean);
+  }
+  const rows = Array.isArray(draft && draft.rows) ? draft.rows : [];
+  return rows.map((row) => serverEstimateProcurementRow(row && row.id, row, projectId)).filter(Boolean);
+}
+
+function serverEstimateProcurementRow(id, row, projectId) {
+  const description = serverEstimateText(row && row.description, 300);
+  const quantity = Math.round(Math.max(0, Number(row && row.quantity) || 0) * 10000) / 10000;
+  if (!description || quantity <= 0) return null;
+  return {
+    id: serverEstimateText(id, 220) || randomId("estimate_row"),
+    description,
+    projectId: serverEstimateText(row && row.projectId, 180) || projectId,
+    quantity,
+    unit: serverEstimateText(row && row.unit, 80) || "unit",
+    costPerUnit: Math.round(Math.max(0, Number(row && row.costPerUnit) || 0) * 100) / 100
+  };
+}
+
+function serverEstimateText(value, maxLength) {
+  return String(value || "").trim().slice(0, maxLength);
+}
+
+function serverSameEstimateProject(firstProjectId, secondProjectId) {
+  return String(firstProjectId || "") === String(secondProjectId || "");
 }
 
 function serverSwaSheetThisPeriodTotal(sheet) {
@@ -2124,6 +2299,9 @@ async function routeApi(req, res, url) {
     }
     if (req.method === "POST" && url.pathname === "/api/swa/submit-accounting") {
       return await submitSwaToAccounting(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/estimate/submit-procurement") {
+      return await submitEstimateToProcurement(req, res);
     }
     if (req.method === "POST" && url.pathname === "/api/estimate-v2/extract-pdf") {
       return await extractEstimateV2Pdf(req, res);
