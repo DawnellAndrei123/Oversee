@@ -246,6 +246,7 @@ const state = {
   currentView: "welcome",
   engineeringView: "gantt",
   procurementView: "overview",
+  procurementProjectSearch: "",
   accountingView: "overview",
   administrativeView: "accounts",
   ganttZoom: "year",
@@ -415,6 +416,7 @@ document.addEventListener("click", (event) => {
     "update-access": () => updateAccess(id),
     "refresh-admin-accounts": refreshOwnerAccounts,
     "open-procurement-request": () => openProcurementRequestModal(id),
+    "clear-procurement-project-filter": clearProcurementProjectFilter,
     "save-procurement-request": saveProcurementRequest,
     "delete-procurement-request": () => deleteProcurementRecord("requests", id),
     "open-purchase-order": () => openPurchaseOrderModal(id),
@@ -490,6 +492,11 @@ document.addEventListener("pointerup", handleEstimateV2PointPointerUp);
 document.addEventListener("pointercancel", handleEstimateV2PointPointerUp);
 
 document.addEventListener("input", (event) => {
+  const procurementProjectFilter = event.target.closest("[data-procurement-project-filter]");
+  if (procurementProjectFilter) {
+    updateProcurementProjectFilter(procurementProjectFilter.value);
+    return;
+  }
   const estimateTitle = event.target.closest("[data-estimate-title]");
   if (estimateTitle) {
     saveEstimateDraft(collectEstimateDraftFromDom());
@@ -1476,17 +1483,42 @@ function renderProcurementOverview(procurement) {
 
 function renderProcurementRequests(procurement) {
   const projectGroups = procurementRequestProjectGroups(procurement.requests);
+  const search = String(state.procurementProjectSearch || "").trim();
+  const visibleGroups = projectGroups.filter((group) => procurementProjectGroupMatches(group, search));
+  const visibleMaterials = visibleGroups.reduce((total, group) => total + group.requests.length, 0);
   return `
     <div class="visual-head">
       <div><span class="eyebrow">Procurement</span><h2>Purchase Requests</h2><p class="hint">Materials are bundled by project with their submission dates.</p></div>
       <button class="primary-btn" data-action="open-procurement-request">Add Request</button>
     </div>
+    <div class="procurement-project-filter">
+      <label>
+        <span>Search Project</span>
+        <input
+          type="search"
+          role="combobox"
+          list="procurement-project-options"
+          data-procurement-project-filter
+          value="${escapeAttribute(search)}"
+          placeholder="All projects"
+          autocomplete="off"
+          aria-label="Search project materials"
+        >
+        <datalist id="procurement-project-options">
+          ${projectGroups.map((group) => `<option value="${escapeAttribute(group.projectName)}">${formatInteger(group.requests.length)} materials</option>`).join("")}
+        </datalist>
+      </label>
+      <div class="procurement-project-filter-result" data-procurement-filter-status>
+        <strong>${formatInteger(visibleGroups.length)} project${visibleGroups.length === 1 ? "" : "s"}</strong>
+        <span>${formatInteger(visibleMaterials)} material${visibleMaterials === 1 ? "" : "s"} shown</span>
+      </div>
+      <button class="ghost-btn compact-btn" data-action="clear-procurement-project-filter" ${search ? "" : "disabled"}>Clear</button>
+    </div>
     <div class="table-wrap operations-table-wrap">
       <table class="operations-table procurement-request-table">
         <thead><tr><th>Material / Item</th><th>Quantity</th><th>Estimated Cost</th><th>Submitted</th><th>Needed By</th><th>Priority</th><th>Status</th><th>Entered By</th><th>Actions</th></tr></thead>
-        <tbody>
-          ${projectGroups.length ? projectGroups.map(renderProcurementRequestProjectGroup).join("") : `<tr><td colspan="9">No purchase requests yet.</td></tr>`}
-        </tbody>
+        ${projectGroups.length ? projectGroups.map((group) => renderProcurementRequestProjectGroup(group, search)).join("") : `<tbody><tr><td colspan="9">No purchase requests yet.</td></tr></tbody>`}
+        <tbody data-procurement-no-matches ${visibleGroups.length || !projectGroups.length ? "hidden" : ""}><tr><td colspan="9">No project materials match this search.</td></tr></tbody>
       </table>
     </div>
   `;
@@ -1523,25 +1555,62 @@ function procurementRequestProjectGroups(requests) {
     });
 }
 
-function renderProcurementRequestProjectGroup(group) {
+function renderProcurementRequestProjectGroup(group, search = "") {
   const submittedCount = group.requests.filter((item) => item.sourceType === "estimate").length;
+  const hidden = procurementProjectGroupMatches(group, search) ? "" : "hidden";
   return `
-    <tr class="procurement-project-group">
-      <td colspan="9">
-        <div class="procurement-project-summary">
-          <div>
-            <span class="eyebrow">Project Bundle</span>
-            <strong>${escapeHtml(group.projectName)}</strong>
+    <tbody data-procurement-project-group data-project-search="${escapeAttribute(group.projectName.toLowerCase())}" ${hidden}>
+      <tr class="procurement-project-group">
+        <td colspan="9">
+          <div class="procurement-project-summary">
+            <div>
+              <span class="eyebrow">Project Bundle</span>
+              <strong>${escapeHtml(group.projectName)}</strong>
+            </div>
+            <div><span>Materials</span><strong>${formatInteger(group.requests.length)}</strong></div>
+            <div><span>From Estimates</span><strong>${formatInteger(submittedCount)}</strong></div>
+            <div><span>Estimated Total</span><strong>${formatCurrency(group.estimatedTotal)}</strong></div>
+            <div><span>Latest Submission</span><strong>${group.latestSubmittedAt ? formatDateTime(group.latestSubmittedAt) : "-"}</strong></div>
           </div>
-          <div><span>Materials</span><strong>${formatInteger(group.requests.length)}</strong></div>
-          <div><span>From Estimates</span><strong>${formatInteger(submittedCount)}</strong></div>
-          <div><span>Estimated Total</span><strong>${formatCurrency(group.estimatedTotal)}</strong></div>
-          <div><span>Latest Submission</span><strong>${group.latestSubmittedAt ? formatDateTime(group.latestSubmittedAt) : "-"}</strong></div>
-        </div>
-      </td>
-    </tr>
-    ${group.requests.map(renderProcurementRequestRow).join("")}
+        </td>
+      </tr>
+      ${group.requests.map(renderProcurementRequestRow).join("")}
+    </tbody>
   `;
+}
+
+function procurementProjectGroupMatches(group, search) {
+  const query = String(search || "").trim().toLowerCase();
+  return !query || String(group && group.projectName || "").toLowerCase().includes(query);
+}
+
+function updateProcurementProjectFilter(value) {
+  const search = String(value || "").trim();
+  state.procurementProjectSearch = search;
+  const query = search.toLowerCase();
+  const groups = [...document.querySelectorAll("[data-procurement-project-group]")];
+  let visibleGroups = 0;
+  let visibleMaterials = 0;
+  groups.forEach((group) => {
+    const matches = !query || String(group.dataset.projectSearch || "").includes(query);
+    group.hidden = !matches;
+    if (!matches) return;
+    visibleGroups += 1;
+    visibleMaterials += Math.max(0, group.querySelectorAll("tr").length - 1);
+  });
+  const noMatches = document.querySelector("[data-procurement-no-matches]");
+  if (noMatches) noMatches.hidden = visibleGroups > 0 || groups.length === 0;
+  const status = document.querySelector("[data-procurement-filter-status]");
+  if (status) {
+    status.innerHTML = `<strong>${formatInteger(visibleGroups)} project${visibleGroups === 1 ? "" : "s"}</strong><span>${formatInteger(visibleMaterials)} material${visibleMaterials === 1 ? "" : "s"} shown</span>`;
+  }
+  const clearButton = document.querySelector('[data-action="clear-procurement-project-filter"]');
+  if (clearButton) clearButton.disabled = !search;
+}
+
+function clearProcurementProjectFilter() {
+  state.procurementProjectSearch = "";
+  render();
 }
 
 function renderProcurementRequestRow(item) {
@@ -4868,7 +4937,7 @@ function openProcurementInstructionModal() {
       },
       {
         title: "2. Create Purchase Requests",
-        text: "Use Purchase Requests to record materials before purchasing. Requests submitted from Estimate v1 or Estimate v2 are automatically bundled by project and retain their submission date, time, and submitting user."
+        text: "Use Purchase Requests to record materials before purchasing. Estimate submissions are automatically bundled by project; use Search Project to select or type a project name and show only its materials."
       },
       {
         title: "3. Approve the Request",

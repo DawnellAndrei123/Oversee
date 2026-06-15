@@ -2557,6 +2557,45 @@ tfoot td {
   min-width: 1320px;
 }
 
+.procurement-project-filter {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) auto auto;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.procurement-project-filter label,
+.procurement-project-filter-result {
+  display: grid;
+  gap: 5px;
+}
+
+.procurement-project-filter label > span,
+.procurement-project-filter-result span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.procurement-project-filter input {
+  width: 100%;
+  min-height: 42px;
+}
+
+.procurement-project-filter-result {
+  min-width: 150px;
+}
+
+.procurement-project-filter-result strong {
+  color: var(--cyan);
+}
+
 .operations-table .procurement-project-group td {
   padding: 10px 12px;
   background: linear-gradient(135deg, rgba(40, 244, 255, 0.14), rgba(81, 246, 181, 0.08));
@@ -3437,6 +3476,7 @@ body[data-theme="light"] .risk-row,
 body[data-theme="light"] .operations-kpi,
 body[data-theme="light"] .operations-panel,
 body[data-theme="light"] .operations-card,
+body[data-theme="light"] .procurement-project-filter,
 body[data-theme="light"] .analytics-kpi,
 body[data-theme="light"] .analytics-panel,
 body[data-theme="light"] .analytics-watch-item,
@@ -3706,6 +3746,15 @@ body[data-theme="light"] .premium-access-notice {
 
   .procurement-project-summary {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .procurement-project-filter {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .procurement-project-filter-result {
+    min-width: 0;
   }
 
   .estimate-v2-plan-shell.full-pdf-ui {
