@@ -1475,35 +1475,104 @@ function renderProcurementOverview(procurement) {
 }
 
 function renderProcurementRequests(procurement) {
+  const projectGroups = procurementRequestProjectGroups(procurement.requests);
   return `
     <div class="visual-head">
-      <div><span class="eyebrow">Procurement</span><h2>Purchase Requests</h2><p class="hint">Approve requested materials before creating purchase orders.</p></div>
+      <div><span class="eyebrow">Procurement</span><h2>Purchase Requests</h2><p class="hint">Materials are bundled by project with their submission dates.</p></div>
       <button class="primary-btn" data-action="open-procurement-request">Add Request</button>
     </div>
     <div class="table-wrap operations-table-wrap">
-      <table class="operations-table">
-        <thead><tr><th>Project / Item</th><th>Quantity</th><th>Estimated Cost</th><th>Needed By</th><th>Priority</th><th>Status</th><th>Entered By</th><th>Actions</th></tr></thead>
+      <table class="operations-table procurement-request-table">
+        <thead><tr><th>Material / Item</th><th>Quantity</th><th>Estimated Cost</th><th>Submitted</th><th>Needed By</th><th>Priority</th><th>Status</th><th>Entered By</th><th>Actions</th></tr></thead>
         <tbody>
-          ${procurement.requests.length ? procurement.requests.map((item) => `
-            <tr>
-              <td>
-                <strong>${escapeHtml(item.item)}</strong>
-                <small>${escapeHtml(projectName(item.projectId))}</small>
-                ${item.sourceType === "estimate" ? `<small>Submitted from Estimate ${escapeHtml(String(item.sourceEstimateVersion || "").toUpperCase())}</small>` : ""}
-              </td>
-              <td>${formatSwaNumber(item.quantity)} ${escapeHtml(item.unit)}</td>
-              <td>${formatCurrency((Number(item.quantity) || 0) * (Number(item.estimatedUnitCost) || 0))}</td>
-              <td>${item.neededBy ? formatDate(item.neededBy) : "-"}</td>
-              <td><span class="badge ${workflowStatusClass(item.priority)}">${escapeHtml(item.priority)}</span></td>
-              <td>${renderWorkflowSelect("procurement-request-status", item.id, item.status, PROCUREMENT_REQUEST_STATUSES)}</td>
-              <td>${renderEnteredBy(item)}</td>
-              <td class="operations-actions"><button class="ghost-btn compact-btn" data-action="open-procurement-request" data-id="${item.id}">Edit</button><button class="ghost-btn compact-btn danger" data-action="delete-procurement-request" data-id="${item.id}">Delete</button></td>
-            </tr>
-          `).join("") : `<tr><td colspan="8">No purchase requests yet.</td></tr>`}
+          ${projectGroups.length ? projectGroups.map(renderProcurementRequestProjectGroup).join("") : `<tr><td colspan="9">No purchase requests yet.</td></tr>`}
         </tbody>
       </table>
     </div>
   `;
+}
+
+function procurementRequestProjectGroups(requests) {
+  const groups = new Map();
+  (Array.isArray(requests) ? requests : []).forEach((item) => {
+    const projectId = String(item.projectId || "");
+    const key = projectId || "__general__";
+    if (!groups.has(key)) groups.set(key, { projectId, projectName: projectName(projectId), requests: [] });
+    groups.get(key).requests.push(item);
+  });
+  return [...groups.values()]
+    .map((group) => {
+      const requests = [...group.requests].sort((first, second) => {
+        const dateOrder = procurementRequestTimestamp(second).localeCompare(procurementRequestTimestamp(first));
+        return dateOrder || String(first.item || "").localeCompare(String(second.item || ""));
+      });
+      return {
+        ...group,
+        requests,
+        estimatedTotal: requests.reduce((total, item) => total + procurementRequestEstimatedTotal(item), 0),
+        latestSubmittedAt: requests.reduce((latest, item) => {
+          const timestamp = procurementRequestTimestamp(item);
+          return timestamp > latest ? timestamp : latest;
+        }, "")
+      };
+    })
+    .sort((first, second) => {
+      if (!first.projectId) return 1;
+      if (!second.projectId) return -1;
+      return first.projectName.localeCompare(second.projectName);
+    });
+}
+
+function renderProcurementRequestProjectGroup(group) {
+  const submittedCount = group.requests.filter((item) => item.sourceType === "estimate").length;
+  return `
+    <tr class="procurement-project-group">
+      <td colspan="9">
+        <div class="procurement-project-summary">
+          <div>
+            <span class="eyebrow">Project Bundle</span>
+            <strong>${escapeHtml(group.projectName)}</strong>
+          </div>
+          <div><span>Materials</span><strong>${formatInteger(group.requests.length)}</strong></div>
+          <div><span>From Estimates</span><strong>${formatInteger(submittedCount)}</strong></div>
+          <div><span>Estimated Total</span><strong>${formatCurrency(group.estimatedTotal)}</strong></div>
+          <div><span>Latest Submission</span><strong>${group.latestSubmittedAt ? formatDateTime(group.latestSubmittedAt) : "-"}</strong></div>
+        </div>
+      </td>
+    </tr>
+    ${group.requests.map(renderProcurementRequestRow).join("")}
+  `;
+}
+
+function renderProcurementRequestRow(item) {
+  const timestamp = procurementRequestTimestamp(item);
+  const sourceLabel = item.sourceType === "estimate"
+    ? `Estimate ${String(item.sourceEstimateVersion || "").toUpperCase()}`
+    : "Manual Request";
+  return `
+    <tr>
+      <td>
+        <strong>${escapeHtml(item.item)}</strong>
+        <small>${escapeHtml(sourceLabel)}</small>
+      </td>
+      <td>${formatSwaNumber(item.quantity)} ${escapeHtml(item.unit)}</td>
+      <td>${formatCurrency(procurementRequestEstimatedTotal(item))}</td>
+      <td><strong>${timestamp ? formatDateTime(timestamp) : "-"}</strong>${item.submittedByName ? `<small>${escapeHtml(item.submittedByName)}</small>` : ""}</td>
+      <td>${item.neededBy ? formatDate(item.neededBy) : "-"}</td>
+      <td><span class="badge ${workflowStatusClass(item.priority)}">${escapeHtml(item.priority)}</span></td>
+      <td>${renderWorkflowSelect("procurement-request-status", item.id, item.status, PROCUREMENT_REQUEST_STATUSES)}</td>
+      <td>${renderEnteredBy(item)}</td>
+      <td class="operations-actions"><button class="ghost-btn compact-btn" data-action="open-procurement-request" data-id="${item.id}">Edit</button><button class="ghost-btn compact-btn danger" data-action="delete-procurement-request" data-id="${item.id}">Delete</button></td>
+    </tr>
+  `;
+}
+
+function procurementRequestTimestamp(item) {
+  return String(item && (item.submittedAt || item.createdAt || item.updatedAt) || "");
+}
+
+function procurementRequestEstimatedTotal(item) {
+  return (Number(item && item.quantity) || 0) * (Number(item && item.estimatedUnitCost) || 0);
 }
 
 function renderPurchaseOrders(procurement) {
@@ -4799,7 +4868,7 @@ function openProcurementInstructionModal() {
       },
       {
         title: "2. Create Purchase Requests",
-        text: "Use Purchase Requests to record the project, material, quantity, estimated unit cost, priority, needed-by date, and notes before purchasing."
+        text: "Use Purchase Requests to record materials before purchasing. Requests submitted from Estimate v1 or Estimate v2 are automatically bundled by project and retain their submission date, time, and submitting user."
       },
       {
         title: "3. Approve the Request",

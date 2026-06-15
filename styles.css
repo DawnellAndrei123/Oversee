@@ -2553,6 +2553,44 @@ tfoot td {
   color: var(--muted);
 }
 
+.procurement-request-table {
+  min-width: 1320px;
+}
+
+.operations-table .procurement-project-group td {
+  padding: 10px 12px;
+  background: linear-gradient(135deg, rgba(40, 244, 255, 0.14), rgba(81, 246, 181, 0.08));
+}
+
+.procurement-project-summary {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.5fr) repeat(4, minmax(130px, 1fr));
+  align-items: center;
+  gap: 12px;
+}
+
+.procurement-project-summary > div {
+  min-width: 0;
+}
+
+.procurement-project-summary span,
+.procurement-project-summary strong {
+  display: block;
+}
+
+.procurement-project-summary span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.procurement-project-summary strong {
+  margin-top: 3px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
 .workflow-select {
   min-width: 138px;
   border-color: var(--border);
@@ -3402,6 +3440,7 @@ body[data-theme="light"] .operations-card,
 body[data-theme="light"] .analytics-kpi,
 body[data-theme="light"] .analytics-panel,
 body[data-theme="light"] .analytics-watch-item,
+body[data-theme="light"] .operations-table .procurement-project-group td,
 body[data-theme="light"] .sheet-tab {
   background: rgba(255, 255, 255, 0.68);
 }
@@ -3663,6 +3702,10 @@ body[data-theme="light"] .premium-access-notice {
   .estimate-v2-plan-control-row {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .procurement-project-summary {
+    grid-template-columns: 1fr 1fr;
   }
 
   .estimate-v2-plan-shell.full-pdf-ui {
