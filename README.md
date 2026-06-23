@@ -1,6 +1,6 @@
 # Oversee Construction Monitoring
 
-Oversee is a construction project monitoring app prototype built with HTML, CSS, JavaScript, and a small Node backend.
+Oversee is a construction project monitoring app prototype built with HTML, CSS, JavaScript, and a small backend. It can run online with the Node/Supabase backend, or locally with Python and SQLite.
 
 ## Current Build
 
@@ -26,6 +26,16 @@ The browser-only fallback still stores accounts, projects, invites, and subscrip
 See `BACKEND.md` for data storage, OTP email, and production deployment notes.
 
 ## Run
+
+For the PyCharm-friendly local app with SQLite storage:
+
+```bash
+python3 oversee_local_app.py
+```
+
+Then open `http://127.0.0.1:8010/`.
+
+The local SQLite database is created at `local_data/oversee_local.db`, and uploaded Estimate v2 PDFs are stored in `local_data/estimate_plans/`. See `LOCAL_APP.md` for the PyCharm steps and local data notes.
 
 For backend account storage and OTP verification:
 

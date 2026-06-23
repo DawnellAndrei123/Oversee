@@ -1,3 +1,6 @@
 backend/data/
+local_data/
+__pycache__/
+*.pyc
 .env
 .DS_Store

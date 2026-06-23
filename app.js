@@ -1856,7 +1856,7 @@ function renderAdministrativeWorkspace() {
   const procurement = getProcurementState();
   const accounting = getAccountingState();
   return `
-    <div class="visual-head"><div><span class="eyebrow">Owner Only</span><h2>Workspace Data</h2><p class="hint">This shared workspace is synchronized through Supabase for the owner and invited accounts.</p></div></div>
+    <div class="visual-head"><div><span class="eyebrow">Owner Only</span><h2>Workspace Data</h2><p class="hint">This shared workspace is synchronized through the active backend storage for the owner and invited accounts.</p></div></div>
     <div class="operations-kpi-grid">
       ${renderOperationsKpi("Projects", getProjects().length)}
       ${renderOperationsKpi("Purchase Requests", procurement.requests.length)}
@@ -2925,7 +2925,7 @@ function renderEstimateV2TakeoffWorkspace(draft) {
         </div>
         <div>
           <span class="eyebrow">Cloud PDF</span>
-          <strong>${draft.planStoragePath ? "Saved in Supabase" : "Not saved yet"}</strong>
+          <strong>${draft.planStoragePath ? "Saved in secure storage" : "Not saved yet"}</strong>
           ${draft.planStoragePath && !hasPage ? `<button class="secondary-btn compact-btn" data-action="load-estimate-v2-stored-pdf">Load Stored PDF</button>` : ""}
         </div>
         <div>
@@ -5941,7 +5941,7 @@ async function loadEstimateV2TakeoffPdf(file, options = {}) {
 }
 
 async function saveEstimateV2PlanToSupabase(file) {
-  toast("Saving PDF securely in Supabase...");
+  toast("Saving PDF in secure storage...");
   try {
     const response = await apiRequest("/estimate-v2/plan/upload", {
       fileName: file.name,
@@ -5962,11 +5962,11 @@ async function saveEstimateV2PlanToSupabase(file) {
     if (!synced) scheduleCloudAppDataSync();
     render();
     toast(synced
-      ? "PDF loaded and saved in Supabase."
-      : "PDF saved in Supabase. Its estimate reference will sync again shortly.");
+      ? "PDF loaded and saved in secure storage."
+      : "PDF saved in secure storage. Its estimate reference will sync again shortly.");
   } catch (error) {
     console.warn(error);
-    toast(`${error.message || "Supabase PDF upload failed."} The PDF remains available on this device.`);
+    toast(`${error.message || "Secure PDF upload failed."} The PDF remains available on this device.`);
   }
 }
 
@@ -5976,7 +5976,7 @@ async function loadEstimateV2StoredPdf() {
     toast("No stored PDF is available for this estimate.");
     return;
   }
-  toast("Loading PDF from Supabase...");
+  toast("Loading PDF from secure storage...");
   try {
     const blob = await apiBinaryRequest("/estimate-v2/plan/download", {
       path: draft.planStoragePath
