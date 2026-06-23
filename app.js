@@ -438,7 +438,6 @@ document.addEventListener("click", (event) => {
     "save-accounting-expense": saveAccountingExpense,
     "delete-accounting-expense": () => deleteAccountingRecord("expenses", id),
     "cancel-subscription": cancelSubscription,
-    "link-gmail": linkGmail,
     "copy-invite": () => copyInvite(target.dataset.link),
     "delete-project": () => deleteProject(id)
   };
@@ -2232,7 +2231,6 @@ function renderSettingsView() {
           </button>
         </div>
       </section>
-      ${renderGoogleDrivePanel()}
     </div>
   `;
 }
@@ -2246,7 +2244,7 @@ function renderGoogleDrivePanel() {
     <section class="settings-panel google-drive-panel">
       <div class="settings-panel-headline">
         <span class="eyebrow">Customer Storage</span>
-        <h3>Google Drive Excel Sync</h3>
+        <h3>Google Drive / Gmail Sync</h3>
         <p class="hint">Project, estimate, procurement, accounting, and SWA data can be saved into the signed-in user's Google Drive as an Excel-style Google Sheet.</p>
       </div>
       <div class="google-drive-status ${connected ? "connected" : ""}">
@@ -7758,6 +7756,7 @@ function openAccountModal() {
   const account = getSessionAccount();
   const subscription = getSubscription();
   const isOwner = account.role === "owner";
+  const drive = googleDriveStatus(account);
   openModal(`
     <div class="modal">
       <div class="modal-head">
@@ -7769,9 +7768,9 @@ function openAccountModal() {
           <div class="mini-card">
             <span class="eyebrow">Signed In</span>
             <h3>${escapeHtml(account.name)}</h3>
-            <p class="hint">${escapeHtml(account.email)} | ${account.gmailLinked ? "Gmail linked" : "Gmail not linked"}</p>
-            ${account.gmailLinked ? "" : `<button class="secondary-btn" data-action="link-gmail">Link Gmail</button>`}
+            <p class="hint">${escapeHtml(account.email)} | ${drive.connected ? `Google Drive connected to ${escapeHtml(drive.email || account.email)}` : "Google Drive not connected"}</p>
           </div>
+          ${renderGoogleDrivePanel()}
           <div class="mini-card">
             <span class="eyebrow">Plan</span>
             <h3>${accountPlanLabel(account, subscription)}</h3>
@@ -7950,13 +7949,6 @@ function cancelSubscription() {
   subscription.status = "cancelled";
   subscription.cancelledAt = new Date().toISOString();
   saveSubscription(subscription);
-  openAccountModal();
-}
-
-function linkGmail() {
-  const account = getSessionAccount();
-  const accounts = getAccounts().map((item) => item.id === account.id ? { ...item, gmailLinked: true } : item);
-  saveAccounts(accounts);
   openAccountModal();
 }
 
