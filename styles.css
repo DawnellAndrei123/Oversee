@@ -261,6 +261,7 @@ button {
 .dock-btn,
 .primary-btn,
 .secondary-btn,
+.danger-btn,
 .ghost-btn {
   min-height: 42px;
   border-radius: 8px;
@@ -276,6 +277,7 @@ button {
 .dock-btn:hover,
 .primary-btn:hover,
 .secondary-btn:hover,
+.danger-btn:hover,
 .ghost-btn:hover {
   transform: translateY(-1px);
   border-color: rgba(40, 244, 255, 0.48);
@@ -345,6 +347,11 @@ button {
 
 .secondary-btn {
   background: rgba(40, 244, 255, 0.13);
+}
+
+.danger-btn {
+  background: rgba(255, 49, 85, 0.12);
+  border-color: rgba(255, 49, 85, 0.32);
 }
 
 .ghost-btn {
@@ -597,6 +604,7 @@ button {
 
 .primary-btn[disabled],
 .secondary-btn[disabled],
+.danger-btn[disabled],
 .ghost-btn[disabled] {
   opacity: 0.42;
   cursor: not-allowed;
@@ -3348,6 +3356,65 @@ tfoot td {
 
 .settings-panel h3 {
   margin: 8px 0 0;
+}
+
+.settings-panel-headline {
+  display: grid;
+  gap: 6px;
+}
+
+.google-drive-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.google-drive-status {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.055);
+  padding: 14px;
+}
+
+.google-drive-status span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.google-drive-status strong {
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.google-drive-status small {
+  color: var(--muted);
+}
+
+.google-drive-status.connected {
+  border-color: rgba(47, 222, 121, 0.45);
+  box-shadow: 0 0 0 3px rgba(47, 222, 121, 0.08);
+}
+
+.google-drive-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.google-drive-actions a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  padding: 0 14px;
+}
+
+.danger-text {
+  color: var(--red) !important;
 }
 
 .theme-options {

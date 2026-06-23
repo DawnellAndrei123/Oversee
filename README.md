@@ -7,6 +7,7 @@ Oversee is a construction project monitoring app prototype built with HTML, CSS,
 - Account creation and login screen
 - Backend account storage with email OTP verification when served from `server.js`
 - Optional Supabase Postgres storage for accounts, pending OTP signups, sessions, invites, and audit logs
+- Optional Google Drive / Google Sheets sync so customer workspace data can live in the customer's Google account
 - First account becomes the owner
 - Owner-only account list and access invitation links
 - Gmail and Outlook invitation link generation

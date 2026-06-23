@@ -34,6 +34,21 @@ const SUPABASE_URL = normalizeSupabaseUrl(cleanEnvValue(process.env.SUPABASE_URL
 const SUPABASE_SERVICE_ROLE_KEY = cleanEnvValue(process.env.SUPABASE_SERVICE_ROLE_KEY);
 const SUPABASE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
 const SUPABASE_PLAN_BUCKET = cleanEnvValue(process.env.SUPABASE_PLAN_BUCKET) || "oversee-estimate-plans";
+const GOOGLE_CLIENT_ID = cleanEnvValue(process.env.GOOGLE_CLIENT_ID);
+const GOOGLE_CLIENT_SECRET = cleanEnvValue(process.env.GOOGLE_CLIENT_SECRET);
+const GOOGLE_REDIRECT_URI = cleanEnvValue(process.env.GOOGLE_REDIRECT_URI);
+const GOOGLE_TOKEN_SECRET = cleanEnvValue(process.env.GOOGLE_TOKEN_SECRET)
+  || SUPABASE_SERVICE_ROLE_KEY
+  || cleanEnvValue(process.env.SESSION_SECRET)
+  || "oversee-local-google-token-secret";
+const GOOGLE_DRIVE_FOLDER_NAME = cleanEnvValue(process.env.GOOGLE_DRIVE_FOLDER_NAME) || "Oversee Construction Data";
+const GOOGLE_SHEETS_SCOPE = [
+  "openid",
+  "email",
+  "profile",
+  "https://www.googleapis.com/auth/drive.file",
+  "https://www.googleapis.com/auth/spreadsheets"
+].join(" ");
 const IS_PRODUCTION = process.env.NODE_ENV === "production" || Boolean(process.env.RENDER);
 
 const ACCESS_KEYS = ["engineering", "procurement", "accounting", "administrative"];
@@ -156,6 +171,7 @@ const PUBLIC_STATIC_FILES = new Set([
 const rateLimitBuckets = new Map();
 const appDataSaveLocks = new Map();
 const signupLocks = new Map();
+const googleOAuthStates = new Map();
 const MAX_RATE_LIMIT_BUCKETS = 5000;
 
 const SUPABASE_COLLECTIONS = [
@@ -671,10 +687,41 @@ function mergeAppDataForAccount(existingData, submittedData, account) {
 }
 
 function publicAccount(account) {
-  return PUBLIC_ACCOUNT_FIELDS.reduce((result, field) => {
-    result[field] = account[field];
-    return result;
+  const result = PUBLIC_ACCOUNT_FIELDS.reduce((fields, field) => {
+    fields[field] = account[field];
+    return fields;
   }, {});
+  result.googleDrive = publicGoogleDrive(account);
+  return result;
+}
+
+function publicGoogleDrive(account) {
+  const drive = account && account.googleDrive && typeof account.googleDrive === "object" ? account.googleDrive : null;
+  return {
+    connected: Boolean(drive && drive.refreshTokenSecret),
+    email: drive && drive.email || "",
+    folderId: drive && drive.folderId || "",
+    spreadsheetId: drive && drive.spreadsheetId || "",
+    spreadsheetUrl: drive && drive.spreadsheetUrl || "",
+    connectedAt: drive && drive.connectedAt || "",
+    lastSyncedAt: drive && drive.lastSyncedAt || "",
+    lastError: drive && drive.lastError || ""
+  };
+}
+
+function accountWithGoogleDrive(account, googleDrive) {
+  return {
+    ...account,
+    googleDrive: {
+      ...(account.googleDrive && typeof account.googleDrive === "object" ? account.googleDrive : {}),
+      ...googleDrive
+    }
+  };
+}
+
+function updateStoreAccount(store, account) {
+  store.accounts = store.accounts.map((item) => item.id === account.id ? account : item);
+  return account;
 }
 
 function randomId(prefix) {
@@ -759,6 +806,405 @@ function safeTokenMatches(first, second) {
   const firstBuffer = Buffer.from(String(first));
   const secondBuffer = Buffer.from(String(second));
   return firstBuffer.length === secondBuffer.length && crypto.timingSafeEqual(firstBuffer, secondBuffer);
+}
+
+function googleDriveConfigured() {
+  return Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
+}
+
+function googleTokenKey() {
+  return crypto.createHash("sha256").update(String(GOOGLE_TOKEN_SECRET)).digest();
+}
+
+function protectGoogleSecret(value) {
+  if (!value) return "";
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", googleTokenKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(String(value), "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `v1:${iv.toString("base64url")}:${tag.toString("base64url")}:${encrypted.toString("base64url")}`;
+}
+
+function unprotectGoogleSecret(value) {
+  const secret = String(value || "");
+  if (!secret) return "";
+  if (!secret.startsWith("v1:")) return secret;
+  const [, ivText, tagText, encryptedText] = secret.split(":");
+  const decipher = crypto.createDecipheriv("aes-256-gcm", googleTokenKey(), Buffer.from(ivText, "base64url"));
+  decipher.setAuthTag(Buffer.from(tagText, "base64url"));
+  return Buffer.concat([
+    decipher.update(Buffer.from(encryptedText, "base64url")),
+    decipher.final()
+  ]).toString("utf8");
+}
+
+function requestOrigin(req) {
+  const host = req.headers["x-forwarded-host"] || req.headers.host || "127.0.0.1:8010";
+  const proto = req.headers["x-forwarded-proto"] || (IS_PRODUCTION ? "https" : "http");
+  return `${proto}://${host}`;
+}
+
+function googleRedirectUri(req) {
+  return GOOGLE_REDIRECT_URI || `${requestOrigin(req)}/api/google/oauth/callback`;
+}
+
+function googleReturnUrl(req, status, message = "") {
+  const url = new URL("/", requestOrigin(req));
+  url.searchParams.set("googleDrive", status);
+  if (message) url.searchParams.set("message", message.slice(0, 180));
+  return url.toString();
+}
+
+function redirectResponse(req, res, location) {
+  res.writeHead(302, responseHeaders({
+    ...corsHeaders(req),
+    Location: location,
+    "Cache-Control": "no-store"
+  }));
+  res.end();
+}
+
+function googleAuthUrl(req, state) {
+  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  url.searchParams.set("client_id", GOOGLE_CLIENT_ID);
+  url.searchParams.set("redirect_uri", googleRedirectUri(req));
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", GOOGLE_SHEETS_SCOPE);
+  url.searchParams.set("access_type", "offline");
+  url.searchParams.set("prompt", "consent");
+  url.searchParams.set("state", state);
+  return url.toString();
+}
+
+async function googleTokenRequest(body) {
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(body)
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw httpError(payload.error_description || payload.error || "Google authorization failed.", 502);
+  }
+  return payload;
+}
+
+async function googleApiRequest(accessToken, url, { method = "GET", body, contentType = "application/json" } = {}) {
+  const headers = { Authorization: `Bearer ${accessToken}` };
+  if (body !== undefined && contentType) headers["Content-Type"] = contentType;
+  const response = await fetch(url, {
+    method,
+    headers,
+    body: body === undefined ? undefined : (contentType === "application/json" ? JSON.stringify(body) : body)
+  });
+  const text = await response.text();
+  const payload = text ? JSON.parse(text) : null;
+  if (!response.ok) {
+    const message = payload && payload.error && (payload.error.message || payload.error_description)
+      || payload && payload.error_description
+      || `Google API request failed with status ${response.status}.`;
+    throw httpError(message, response.status >= 400 && response.status < 500 ? 502 : 500);
+  }
+  return payload;
+}
+
+async function googleAccessTokenForAccount(account) {
+  const drive = account && account.googleDrive && typeof account.googleDrive === "object" ? account.googleDrive : null;
+  if (!drive || !drive.refreshTokenSecret) throw httpError("Connect Google Drive first.", 400);
+  const refreshToken = unprotectGoogleSecret(drive.refreshTokenSecret);
+  const token = await googleTokenRequest({
+    client_id: GOOGLE_CLIENT_ID,
+    client_secret: GOOGLE_CLIENT_SECRET,
+    refresh_token: refreshToken,
+    grant_type: "refresh_token"
+  });
+  return token.access_token;
+}
+
+async function googleUserInfo(accessToken) {
+  return googleApiRequest(accessToken, "https://www.googleapis.com/oauth2/v3/userinfo");
+}
+
+async function createGoogleDriveFolder(accessToken) {
+  return googleApiRequest(accessToken, "https://www.googleapis.com/drive/v3/files?fields=id%2CwebViewLink", {
+    method: "POST",
+    body: {
+      name: GOOGLE_DRIVE_FOLDER_NAME,
+      mimeType: "application/vnd.google-apps.folder"
+    }
+  });
+}
+
+async function createGoogleSpreadsheetFile(accessToken, account, folderId) {
+  const fileName = `Oversee Data - ${account.email || account.name || "Workspace"}`;
+  return googleApiRequest(accessToken, "https://www.googleapis.com/drive/v3/files?fields=id%2CwebViewLink", {
+    method: "POST",
+    body: {
+      name: fileName,
+      mimeType: "application/vnd.google-apps.spreadsheet",
+      parents: folderId ? [folderId] : undefined
+    }
+  });
+}
+
+function quoteSheetName(name) {
+  return `'${String(name).replace(/'/g, "''")}'`;
+}
+
+function sheetCell(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number") return Number.isFinite(value) ? value : "";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function rowsWithHeader(header, rows) {
+  return [header, ...rows.map((row) => header.map((key) => sheetCell(row[key])))];
+}
+
+function projectNameLookup(data) {
+  const projects = Array.isArray(data.projects) ? data.projects : [];
+  return new Map(projects.map((project) => [String(project.id || ""), String(project.name || "")]));
+}
+
+function flattenOverseeDataForSheets(data, workspaceAccount, savedByAccount, updatedAt) {
+  const source = normalizeAccountAppData(data);
+  const projectNames = projectNameLookup(source);
+  const projects = Array.isArray(source.projects) ? source.projects : [];
+  const swa = source.swa && typeof source.swa === "object" ? source.swa : {};
+  const estimateDraft = source.estimateDraft && typeof source.estimateDraft === "object" ? source.estimateDraft : {};
+  const estimateV2Draft = source.estimateV2Draft && typeof source.estimateV2Draft === "object" ? source.estimateV2Draft : {};
+  const materialPrices = source.materialPrices && typeof source.materialPrices === "object" ? source.materialPrices : {};
+  const procurement = source.procurement && typeof source.procurement === "object" ? source.procurement : {};
+  const accounting = source.accounting && typeof source.accounting === "object" ? source.accounting : {};
+
+  const summaryRows = [
+    { Field: "Workspace Owner", Value: workspaceAccount.name || "" },
+    { Field: "Workspace Email", Value: workspaceAccount.email || "" },
+    { Field: "Last Saved By", Value: savedByAccount.name || "" },
+    { Field: "Last Saved Email", Value: savedByAccount.email || "" },
+    { Field: "Last Synced", Value: updatedAt },
+    { Field: "Project Count", Value: projects.length },
+    { Field: "SWA Sheets", Value: Array.isArray(swa.sheets) ? swa.sheets.length : 0 },
+    { Field: "Purchase Requests", Value: Array.isArray(procurement.requests) ? procurement.requests.length : 0 },
+    { Field: "Billings", Value: Array.isArray(accounting.billings) ? accounting.billings.length : 0 }
+  ];
+
+  const projectRows = projects.map((project) => ({
+    Id: project.id,
+    Project: project.name,
+    Type: project.type,
+    Status: project.status,
+    "Actual %": project.actualPercent,
+    "Start Date": project.startDate,
+    "Duration Days": project.duration,
+    "Contract Amount": project.contractAmount,
+    "Entered By": project.enteredByName || "",
+    "Entered Email": project.enteredByEmail || ""
+  }));
+
+  const estimateRows = (Array.isArray(estimateDraft.rows) ? estimateDraft.rows : []).map((row) => ({
+    Title: estimateDraft.title || "Estimate",
+    Project: projectNames.get(String(estimateDraft.selectedProjectId || row.projectId || "")) || "",
+    Description: row.description,
+    Unit: row.unit,
+    Quantity: row.quantity,
+    "Cost Per Unit": row.costPerUnit,
+    "Total Cost": (Number(row.quantity) || 0) * (Number(row.costPerUnit) || 0)
+  }));
+
+  const estimateV2Rows = [
+    ...(Array.isArray(estimateV2Draft.takeoffRows) ? estimateV2Draft.takeoffRows : []).map((row) => ({
+      Source: "Takeoff",
+      Project: projectNames.get(String(row.projectId || estimateV2Draft.selectedProjectId || "")) || "",
+      Description: row.description,
+      Group: row.group || row.type || "",
+      Unit: row.unit,
+      Quantity: row.quantity,
+      "Cost Per Unit": row.costPerUnit,
+      "Total Cost": (Number(row.quantity) || 0) * (Number(row.costPerUnit) || 0),
+      Notes: row.notes || ""
+    })),
+    ...(Array.isArray(estimateV2Draft.materials) ? estimateV2Draft.materials : []).map((row) => ({
+      Source: "Material",
+      Project: projectNames.get(String(estimateV2Draft.selectedProjectId || "")) || "",
+      Description: row.description,
+      Group: row.category || "",
+      Unit: row.unit,
+      Quantity: row.quantity,
+      "Cost Per Unit": row.costPerUnit,
+      "Total Cost": (Number(row.quantity) || 0) * (Number(row.costPerUnit) || 0),
+      Notes: row.notes || row.source || ""
+    }))
+  ];
+
+  const priceStores = Array.isArray(materialPrices.stores) ? materialPrices.stores : [];
+  const materialRows = priceStores.flatMap((store) => (Array.isArray(store.rows) ? store.rows : []).map((row) => ({
+    Store: store.name,
+    Description: row.description,
+    Unit: row.unit,
+    "Cost Per Unit": row.costPerUnit
+  })));
+
+  const swaRows = (Array.isArray(swa.sheets) ? swa.sheets : []).flatMap((sheet) => {
+    const rows = Array.isArray(sheet.rows) ? sheet.rows : [];
+    return rows.map((row) => ({
+      Sheet: sheet.name,
+      Project: projectNames.get(String(sheet.projectId || "")) || "",
+      Description: row.description,
+      Quantity: row.quantity,
+      Unit: row.unit,
+      "Unit Cost": row.unitCost,
+      "This Period Qty": row.thisQty,
+      "This Period Cost": (Number(row.thisQty) || 0) * (Number(row.unitCost) || 0),
+      "Previous Qty": row.previousQty,
+      "Created At": sheet.createdAt
+    }));
+  });
+
+  const requestRows = (Array.isArray(procurement.requests) ? procurement.requests : []).map((row) => ({
+    Project: projectNames.get(String(row.projectId || "")) || "",
+    Item: row.item,
+    Quantity: row.quantity,
+    Unit: row.unit,
+    "Estimated Unit Cost": row.estimatedUnitCost,
+    Status: row.status,
+    Priority: row.priority,
+    "Needed By": row.neededBy,
+    "Submitted At": row.submittedAt,
+    "Entered By": row.enteredByName || row.submittedByName || "",
+    "Entered Email": row.enteredByEmail || row.submittedByEmail || ""
+  }));
+
+  const orderRows = (Array.isArray(procurement.orders) ? procurement.orders : []).map((row) => ({
+    Project: projectNames.get(String(row.projectId || "")) || "",
+    "PO Number": row.poNumber,
+    Supplier: row.supplierId,
+    Item: row.item,
+    Quantity: row.quantity,
+    Unit: row.unit,
+    "Unit Cost": row.unitCost,
+    Status: row.status,
+    "Expected Date": row.expectedDate,
+    "Entered By": row.enteredByName || ""
+  }));
+
+  const billingRows = (Array.isArray(accounting.billings) ? accounting.billings : []).map((row) => ({
+    Project: projectNames.get(String(row.projectId || "")) || "",
+    "Billing Number": row.billingNumber,
+    Description: row.description,
+    Amount: row.amount,
+    Status: row.status,
+    "Due Date": row.dueDate,
+    "Submitted At": row.submittedAt,
+    "Entered By": row.enteredByName || row.submittedByName || "",
+    "Entered Email": row.enteredByEmail || row.submittedByEmail || ""
+  }));
+
+  const expenseRows = (Array.isArray(accounting.expenses) ? accounting.expenses : []).map((row) => ({
+    Project: projectNames.get(String(row.projectId || "")) || "",
+    Date: row.date,
+    Category: row.category,
+    Description: row.description,
+    Payee: row.payee,
+    Amount: row.amount,
+    Status: row.status,
+    "Entered By": row.enteredByName || "",
+    "Entered Email": row.enteredByEmail || ""
+  }));
+
+  return {
+    Summary: rowsWithHeader(["Field", "Value"], summaryRows),
+    Projects: rowsWithHeader(["Id", "Project", "Type", "Status", "Actual %", "Start Date", "Duration Days", "Contract Amount", "Entered By", "Entered Email"], projectRows),
+    "SWA Billings": rowsWithHeader(["Sheet", "Project", "Description", "Quantity", "Unit", "Unit Cost", "This Period Qty", "This Period Cost", "Previous Qty", "Created At"], swaRows),
+    "Estimate V1": rowsWithHeader(["Title", "Project", "Description", "Unit", "Quantity", "Cost Per Unit", "Total Cost"], estimateRows),
+    "Estimate V2": rowsWithHeader(["Source", "Project", "Description", "Group", "Unit", "Quantity", "Cost Per Unit", "Total Cost", "Notes"], estimateV2Rows),
+    "Material Prices": rowsWithHeader(["Store", "Description", "Unit", "Cost Per Unit"], materialRows),
+    Procurement: rowsWithHeader(["Project", "Item", "Quantity", "Unit", "Estimated Unit Cost", "Status", "Priority", "Needed By", "Submitted At", "Entered By", "Entered Email"], requestRows),
+    "Purchase Orders": rowsWithHeader(["Project", "PO Number", "Supplier", "Item", "Quantity", "Unit", "Unit Cost", "Status", "Expected Date", "Entered By"], orderRows),
+    Accounting: rowsWithHeader(["Project", "Billing Number", "Description", "Amount", "Status", "Due Date", "Submitted At", "Entered By", "Entered Email"], billingRows),
+    Expenses: rowsWithHeader(["Project", "Date", "Category", "Description", "Payee", "Amount", "Status", "Entered By", "Entered Email"], expenseRows),
+    RawData: [["JSON"], [JSON.stringify(source)]]
+  };
+}
+
+async function ensureGoogleSpreadsheet(accessToken, account) {
+  const drive = account.googleDrive && typeof account.googleDrive === "object" ? account.googleDrive : {};
+  if (drive.spreadsheetId) return drive;
+
+  const folder = drive.folderId ? { id: drive.folderId } : await createGoogleDriveFolder(accessToken);
+  const spreadsheet = await createGoogleSpreadsheetFile(accessToken, account, folder.id);
+  return {
+    ...drive,
+    folderId: folder.id,
+    spreadsheetId: spreadsheet.id,
+    spreadsheetUrl: spreadsheet.webViewLink || `https://docs.google.com/spreadsheets/d/${spreadsheet.id}/edit`
+  };
+}
+
+async function ensureGoogleSheetTabs(accessToken, spreadsheetId, sheetNames) {
+  const spreadsheet = await googleApiRequest(accessToken, `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?fields=sheets.properties.title`);
+  const existing = new Set((spreadsheet.sheets || []).map((sheet) => sheet.properties && sheet.properties.title).filter(Boolean));
+  const missing = sheetNames.filter((name) => !existing.has(name));
+  if (!missing.length) return;
+  await googleApiRequest(accessToken, `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}:batchUpdate`, {
+    method: "POST",
+    body: {
+      requests: missing.map((title) => ({ addSheet: { properties: { title } } }))
+    }
+  });
+}
+
+async function writeGoogleSheetsValues(accessToken, spreadsheetId, sheets) {
+  const sheetNames = Object.keys(sheets);
+  await ensureGoogleSheetTabs(accessToken, spreadsheetId, sheetNames);
+  await googleApiRequest(accessToken, `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values:batchClear`, {
+    method: "POST",
+    body: {
+      ranges: sheetNames.map((name) => `${quoteSheetName(name)}!A:Z`)
+    }
+  });
+  await googleApiRequest(accessToken, `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values:batchUpdate`, {
+    method: "POST",
+    body: {
+      valueInputOption: "RAW",
+      data: sheetNames.map((name) => ({
+        range: `${quoteSheetName(name)}!A1`,
+        majorDimension: "ROWS",
+        values: sheets[name]
+      }))
+    }
+  });
+}
+
+async function syncWorkspaceToGoogleDrive(store, workspaceAccount, savedByAccount, data, updatedAt) {
+  if (!googleDriveConfigured()) return { skipped: true, reason: "Google Drive is not configured." };
+  if (!workspaceAccount || !workspaceAccount.googleDrive || !workspaceAccount.googleDrive.refreshTokenSecret) {
+    return { skipped: true, reason: "Google Drive is not connected." };
+  }
+
+  const account = store.accounts.find((item) => item.id === workspaceAccount.id) || workspaceAccount;
+  try {
+    const accessToken = await googleAccessTokenForAccount(account);
+    const nextDrive = await ensureGoogleSpreadsheet(accessToken, account);
+    const sheets = flattenOverseeDataForSheets(data, account, savedByAccount || account, updatedAt);
+    await writeGoogleSheetsValues(accessToken, nextDrive.spreadsheetId, sheets);
+    const updatedAccount = accountWithGoogleDrive(account, {
+      ...nextDrive,
+      lastSyncedAt: updatedAt,
+      lastError: ""
+    });
+    updateStoreAccount(store, updatedAccount);
+    return { synced: true, account: updatedAccount, spreadsheetUrl: updatedAccount.googleDrive.spreadsheetUrl };
+  } catch (error) {
+    const updatedAccount = accountWithGoogleDrive(account, {
+      lastError: error && error.message || publicErrorMessage(error) || "Google Drive sync failed."
+    });
+    updateStoreAccount(store, updatedAccount);
+    return { synced: false, account: updatedAccount, error };
+  }
 }
 
 function sessionAccountFromRequest(req, store) {
@@ -1371,6 +1817,152 @@ async function createOwnerInvite(req, res) {
   audit(store, "invite_created", { ownerId: owner.id, email, access: invite.access, meta: requestMeta(req) });
   await writeStore(store);
   jsonResponse(req, res, 201, { ok: true, invite });
+}
+
+async function googleDriveStatus(req, res) {
+  const store = await readStore();
+  const account = sessionAccountFromRequest(req, store);
+  if (!account) return jsonResponse(req, res, 401, { ok: false, error: "Sign in is required." });
+  const workspaceAccount = workspaceAccountFor(account, store);
+  jsonResponse(req, res, 200, {
+    ok: true,
+    configured: googleDriveConfigured(),
+    googleDrive: publicGoogleDrive(workspaceAccount),
+    account: publicAccount(account),
+    workspaceAccountId: workspaceAccount.id
+  });
+}
+
+async function createGoogleDriveAuthUrl(req, res) {
+  if (!googleDriveConfigured()) {
+    return jsonResponse(req, res, 503, {
+      ok: false,
+      error: "Google Drive sync is not configured yet. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on the server."
+    });
+  }
+
+  const store = await readStore();
+  const account = sessionAccountFromRequest(req, store);
+  if (!account) return jsonResponse(req, res, 401, { ok: false, error: "Sign in is required." });
+  const workspaceAccount = workspaceAccountFor(account, store);
+  if (account.id !== workspaceAccount.id && account.role !== "owner") {
+    return jsonResponse(req, res, 403, { ok: false, error: "Only the workspace owner can connect Google Drive storage." });
+  }
+
+  const state = randomId("google_state");
+  googleOAuthStates.set(state, {
+    accountId: workspaceAccount.id,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 10 * 60 * 1000,
+    origin: requestOrigin(req)
+  });
+  jsonResponse(req, res, 200, { ok: true, authUrl: googleAuthUrl(req, state) });
+}
+
+async function handleGoogleOAuthCallback(req, res, url) {
+  if (!googleDriveConfigured()) return redirectResponse(req, res, googleReturnUrl(req, "error", "Google is not configured."));
+  const code = String(url.searchParams.get("code") || "").trim();
+  const state = String(url.searchParams.get("state") || "").trim();
+  const error = String(url.searchParams.get("error") || "").trim();
+  if (error) return redirectResponse(req, res, googleReturnUrl(req, "error", error));
+  const savedState = googleOAuthStates.get(state);
+  googleOAuthStates.delete(state);
+  if (!code || !savedState || savedState.expiresAt < Date.now()) {
+    return redirectResponse(req, res, googleReturnUrl(req, "error", "Google connection expired. Try again."));
+  }
+
+  try {
+    const token = await googleTokenRequest({
+      code,
+      client_id: GOOGLE_CLIENT_ID,
+      client_secret: GOOGLE_CLIENT_SECRET,
+      redirect_uri: googleRedirectUri(req),
+      grant_type: "authorization_code"
+    });
+    if (!token.refresh_token) {
+      return redirectResponse(req, res, googleReturnUrl(req, "error", "Google did not return offline access. Try Connect again."));
+    }
+
+    const profile = token.access_token ? await googleUserInfo(token.access_token).catch(() => ({})) : {};
+    const store = await readStore();
+    const account = store.accounts.find((item) => item.id === savedState.accountId);
+    if (!account) return redirectResponse(req, res, googleReturnUrl(req, "error", "Account was not found."));
+    const updatedAccount = accountWithGoogleDrive(account, {
+      email: profile.email || account.email || "",
+      refreshTokenSecret: protectGoogleSecret(token.refresh_token),
+      connectedAt: new Date().toISOString(),
+      lastError: ""
+    });
+    updateStoreAccount(store, updatedAccount);
+    audit(store, "google_drive_connected", {
+      accountId: updatedAccount.id,
+      accountEmail: updatedAccount.email,
+      googleEmail: profile.email || ""
+    });
+    await writeStore(store);
+    return redirectResponse(req, res, googleReturnUrl(req, "connected"));
+  } catch (callbackError) {
+    console.error(callbackError);
+    return redirectResponse(req, res, googleReturnUrl(req, "error", callbackError.message || "Google connection failed."));
+  }
+}
+
+async function syncGoogleDriveNow(req, res) {
+  const store = await readStore();
+  const account = sessionAccountFromRequest(req, store);
+  if (!account) return jsonResponse(req, res, 401, { ok: false, error: "Sign in is required." });
+  const workspaceAccount = workspaceAccountFor(account, store);
+  const record = await readAccountAppData(workspaceAccount.id, store);
+  if (!record) {
+    return jsonResponse(req, res, 404, { ok: false, error: "Save app data first before syncing to Google Drive." });
+  }
+  const syncedAt = new Date().toISOString();
+  const result = await syncWorkspaceToGoogleDrive(store, workspaceAccount, account, record.data, syncedAt);
+  await writeStore(store);
+  const refreshedAccount = store.accounts.find((item) => item.id === account.id) || account;
+  if (result.skipped) {
+    return jsonResponse(req, res, 200, {
+      ok: true,
+      skipped: true,
+      message: result.reason,
+      account: publicAccount(refreshedAccount),
+      googleDrive: publicGoogleDrive(workspaceAccountFor(refreshedAccount, store))
+    });
+  }
+  if (!result.synced) {
+    return jsonResponse(req, res, 502, {
+      ok: false,
+      error: result.error && result.error.message || "Google Drive sync failed.",
+      account: publicAccount(refreshedAccount)
+    });
+  }
+  jsonResponse(req, res, 200, {
+    ok: true,
+    syncedAt,
+    spreadsheetUrl: result.spreadsheetUrl,
+    account: publicAccount(refreshedAccount),
+    googleDrive: publicGoogleDrive(store.accounts.find((item) => item.id === workspaceAccount.id) || workspaceAccount)
+  });
+}
+
+async function disconnectGoogleDrive(req, res) {
+  const store = await readStore();
+  const account = sessionAccountFromRequest(req, store);
+  if (!account) return jsonResponse(req, res, 401, { ok: false, error: "Sign in is required." });
+  const workspaceAccount = workspaceAccountFor(account, store);
+  if (account.id !== workspaceAccount.id && account.role !== "owner") {
+    return jsonResponse(req, res, 403, { ok: false, error: "Only the workspace owner can disconnect Google Drive storage." });
+  }
+  const updatedAccount = {
+    ...workspaceAccount,
+    googleDrive: {
+      disconnectedAt: new Date().toISOString()
+    }
+  };
+  updateStoreAccount(store, updatedAccount);
+  audit(store, "google_drive_disconnected", { accountId: updatedAccount.id, email: updatedAccount.email });
+  await writeStore(store);
+  jsonResponse(req, res, 200, { ok: true, account: publicAccount(account.id === updatedAccount.id ? updatedAccount : account) });
 }
 
 async function loadAccountAppData(req, res) {
@@ -2424,9 +3016,13 @@ async function routeApi(req, res, url) {
         service: "oversee-backend",
         storage: SUPABASE_ENABLED ? "supabase" : "local-json",
         planStorage: SUPABASE_ENABLED ? SUPABASE_PLAN_BUCKET : null,
+        googleDrive: googleDriveConfigured(),
         email: configuredEmailMode(),
         dataDir: SUPABASE_ENABLED ? null : DATA_DIR
       });
+    }
+    if (req.method === "GET" && url.pathname === "/api/google/oauth/callback") {
+      return await handleGoogleOAuthCallback(req, res, url);
     }
     if (req.method === "POST" && url.pathname === "/api/auth/signup/request-otp") {
       return await requestSignupOtp(req, res);
@@ -2451,6 +3047,18 @@ async function routeApi(req, res, url) {
     }
     if (req.method === "POST" && url.pathname === "/api/invites/create") {
       return await createOwnerInvite(req, res);
+    }
+    if (req.method === "GET" && url.pathname === "/api/google/drive/status") {
+      return await googleDriveStatus(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/google/drive/auth-url") {
+      return await createGoogleDriveAuthUrl(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/google/drive/sync") {
+      return await syncGoogleDriveNow(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/google/drive/disconnect") {
+      return await disconnectGoogleDrive(req, res);
     }
     if (req.method === "POST" && url.pathname === "/api/app-data/load") {
       return await loadAccountAppData(req, res);

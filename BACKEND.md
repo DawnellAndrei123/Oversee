@@ -96,6 +96,41 @@ To migrate your current local `backend/data/store.json` into Supabase after crea
 SUPABASE_URL="https://your-project-ref.supabase.co" SUPABASE_SERVICE_ROLE_KEY="your-service-role-key" node supabase/migrate-store.js
 ```
 
+## Google Drive Customer Storage
+
+Oversee can also sync each owner's project workspace into that owner's Google Drive as an Excel-style Google Sheet. This keeps customer project data in the customer's Google account while the backend keeps account/signup, role, access, and subscription records.
+
+Add these environment variables on the backend server:
+
+```txt
+GOOGLE_CLIENT_ID=your-google-oauth-client-id
+GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
+GOOGLE_REDIRECT_URI=https://overseeconstructions.com/api/google/oauth/callback
+GOOGLE_TOKEN_SECRET=a-long-random-secret-used-to-encrypt-refresh-tokens
+```
+
+In Google Cloud Console:
+
+1. Enable Google Drive API and Google Sheets API.
+2. Create an OAuth Client ID for a Web Application.
+3. Add this authorized redirect URI:
+
+```txt
+https://overseeconstructions.com/api/google/oauth/callback
+```
+
+4. Add your app domain to the OAuth consent screen.
+
+The app requests these scopes:
+
+- `openid`
+- `email`
+- `profile`
+- `https://www.googleapis.com/auth/drive.file`
+- `https://www.googleapis.com/auth/spreadsheets`
+
+When the owner clicks **Connect Google Drive**, the backend creates a folder named `Oversee Construction Data` and a spreadsheet named `Oversee Data - customer@email.com`. Oversee writes tabs for Projects, SWA Billings, Estimate V1, Estimate V2, Material Prices, Procurement, Purchase Orders, Accounting, Expenses, and RawData.
+
 ## Email OTP
 
 For development, OTP emails are written to:

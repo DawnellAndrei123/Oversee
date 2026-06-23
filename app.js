@@ -296,7 +296,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!loaded) return;
     seedProjects();
     render();
+    handleGoogleDriveReturn();
   });
+  handleGoogleDriveReturn();
 });
 
 document.addEventListener("click", (event) => {
@@ -364,6 +366,10 @@ document.addEventListener("click", (event) => {
       render();
     },
     "set-theme": () => setTheme(target.dataset.theme),
+    "connect-google-drive": connectGoogleDrive,
+    "sync-google-drive": () => syncGoogleDriveSnapshot(true),
+    "disconnect-google-drive": disconnectGoogleDrive,
+    "refresh-google-drive-status": () => refreshGoogleDriveStatus(true),
     "close-modal": closeModal,
     "save-project": saveProject,
     "save-filter": saveFilter,
@@ -734,8 +740,10 @@ async function saveCloudAppDataNow() {
   const operation = apiRequest("/app-data/save", { data }, { timeoutMs: 15000 });
   state.cloudSyncInFlight = operation;
   try {
-    await operation;
+    const response = await operation;
+    if (response.account) savePublicAccount(response.account);
     state.cloudSyncSignature = signature;
+    await syncGoogleDriveSnapshot(false);
     return true;
   } catch (error) {
     console.warn(error);
@@ -746,6 +754,92 @@ async function saveCloudAppDataNow() {
       state.cloudSyncQueued = false;
       scheduleCloudAppDataSync();
     }
+  }
+}
+
+function googleDriveStatus(account = getSessionAccount()) {
+  const drive = account && account.googleDrive && typeof account.googleDrive === "object" ? account.googleDrive : null;
+  return drive || { connected: false };
+}
+
+function googleDriveConnected(account = getSessionAccount()) {
+  return Boolean(googleDriveStatus(account).connected);
+}
+
+async function handleGoogleDriveReturn() {
+  const params = new URLSearchParams(window.location.search);
+  const status = params.get("googleDrive");
+  if (!status) return;
+  params.delete("googleDrive");
+  params.delete("message");
+  const nextQuery = params.toString();
+  const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
+  window.history.replaceState({}, "", nextUrl);
+  if (status === "connected") {
+    await refreshGoogleDriveStatus(false);
+    toast("Google Drive connected.");
+    await syncGoogleDriveSnapshot(true);
+  } else if (status === "error") {
+    toast("Google Drive connection failed.");
+  }
+}
+
+async function refreshGoogleDriveStatus(showNotice = false) {
+  if (!sessionToken()) return false;
+  try {
+    const response = await apiRequest("/google/drive/status", null, { method: "GET", timeoutMs: 10000 });
+    if (response.account) savePublicAccount(response.account);
+    if (showNotice) toast(response.googleDrive && response.googleDrive.connected ? "Google Drive is connected." : "Google Drive is not connected.");
+    render();
+    return Boolean(response.googleDrive && response.googleDrive.connected);
+  } catch (error) {
+    if (showNotice) toast(error.message || "Google Drive status could not be checked.");
+    return false;
+  }
+}
+
+async function connectGoogleDrive() {
+  if (!sessionToken()) {
+    toast("Sign in first.");
+    return;
+  }
+  await saveCloudAppDataNow();
+  try {
+    const response = await apiRequest("/google/drive/auth-url", {}, { timeoutMs: 10000 });
+    if (!response.authUrl) throw new Error("Google authorization URL was not created.");
+    window.location.href = response.authUrl;
+  } catch (error) {
+    toast(error.message || "Google Drive connection could not start.");
+  }
+}
+
+async function syncGoogleDriveSnapshot(showNotice = false) {
+  const account = getSessionAccount();
+  if (!sessionToken() || !googleDriveConnected(account)) return false;
+  try {
+    const response = await apiRequest("/google/drive/sync", {}, { timeoutMs: 60000 });
+    if (response.account) savePublicAccount(response.account);
+    if (showNotice) {
+      const linkText = response.spreadsheetUrl ? " Google Sheet updated." : " Google Drive sync complete.";
+      toast(linkText.trim());
+    }
+    return true;
+  } catch (error) {
+    console.warn(error);
+    if (showNotice) toast(error.message || "Google Drive sync failed.");
+    return false;
+  }
+}
+
+async function disconnectGoogleDrive() {
+  if (!window.confirm("Disconnect Google Drive sync for this workspace? Existing Google Sheets will stay in the user's Drive.")) return;
+  try {
+    const response = await apiRequest("/google/drive/disconnect", {}, { timeoutMs: 10000 });
+    if (response.account) savePublicAccount(response.account);
+    render();
+    toast("Google Drive disconnected.");
+  } catch (error) {
+    toast(error.message || "Google Drive could not be disconnected.");
   }
 }
 
@@ -1864,6 +1958,7 @@ function renderAdministrativeWorkspace() {
       ${renderOperationsKpi("Billings", accounting.billings.length)}
       ${renderOperationsKpi("Expenses", accounting.expenses.length)}
     </div>
+    ${renderGoogleDrivePanel()}
     <section class="operations-panel"><span class="eyebrow">Security</span><h3>Module Access Rules</h3><p class="hint">Engineering, Procurement, and Accounting permissions are assigned by the owner. Administrative remains restricted to the owner. Each saved record stores the full name and email of the user who entered it.</p></section>
   `;
 }
@@ -2137,7 +2232,37 @@ function renderSettingsView() {
           </button>
         </div>
       </section>
+      ${renderGoogleDrivePanel()}
     </div>
+  `;
+}
+
+function renderGoogleDrivePanel() {
+  const account = getSessionAccount();
+  const drive = googleDriveStatus(account);
+  const connected = Boolean(drive.connected);
+  const ownerOnly = account && account.role !== "owner";
+  return `
+    <section class="settings-panel google-drive-panel">
+      <div class="settings-panel-headline">
+        <span class="eyebrow">Customer Storage</span>
+        <h3>Google Drive Excel Sync</h3>
+        <p class="hint">Project, estimate, procurement, accounting, and SWA data can be saved into the signed-in user's Google Drive as an Excel-style Google Sheet.</p>
+      </div>
+      <div class="google-drive-status ${connected ? "connected" : ""}">
+        <span>${connected ? "Connected" : "Not Connected"}</span>
+        <strong>${connected ? escapeHtml(drive.email || "Google Drive") : "Connect Google Drive"}</strong>
+        ${drive.lastSyncedAt ? `<small>Last synced ${formatDateTime(drive.lastSyncedAt)}</small>` : ""}
+        ${drive.lastError ? `<small class="danger-text">${escapeHtml(drive.lastError)}</small>` : ""}
+      </div>
+      <div class="google-drive-actions">
+        ${connected && drive.spreadsheetUrl ? `<a class="secondary-btn" href="${escapeHtml(drive.spreadsheetUrl)}" target="_blank" rel="noopener">Open Sheet</a>` : ""}
+        ${connected ? `<button class="primary-btn" data-action="sync-google-drive">Sync Now</button>` : `<button class="primary-btn" data-action="connect-google-drive" ${ownerOnly ? "disabled" : ""}>Connect Google Drive</button>`}
+        <button class="secondary-btn" data-action="refresh-google-drive-status">Refresh</button>
+        ${connected ? `<button class="danger-btn" data-action="disconnect-google-drive" ${ownerOnly ? "disabled" : ""}>Disconnect</button>` : ""}
+      </div>
+      ${ownerOnly ? `<p class="hint">Only the owner can connect the workspace to Google Drive. Members use the owner's connected workspace sheet.</p>` : ""}
+    </section>
   `;
 }
 
