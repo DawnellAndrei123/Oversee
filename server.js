@@ -161,6 +161,8 @@ const MIME_TYPES = {
 
 const PUBLIC_STATIC_FILES = new Set([
   "/index.html",
+  "/privacy-policy.html",
+  "/terms-of-agreement.html",
   "/app.js",
   "/styles.css",
   "/oversee-updates.js",

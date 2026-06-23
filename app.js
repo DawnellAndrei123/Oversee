@@ -1231,9 +1231,20 @@ function renderAuthScreen() {
             <button class="tab-btn ${state.authTab === "login" ? "active" : ""}" data-action="auth-tab" data-tab="login">Log In</button>
           </div>
           ${state.authTab === "signup" ? renderSignupForm(invite) : renderLoginForm()}
+          ${renderLegalLinks()}
         </div>
       </section>
     </main>
+  `;
+}
+
+function renderLegalLinks() {
+  return `
+    <div class="legal-links" aria-label="Legal links">
+      <a href="/privacy-policy.html" target="_blank" rel="noopener">Privacy Policy</a>
+      <span aria-hidden="true">|</span>
+      <a href="/terms-of-agreement.html" target="_blank" rel="noopener">Terms of Agreement</a>
+    </div>
   `;
 }
 
